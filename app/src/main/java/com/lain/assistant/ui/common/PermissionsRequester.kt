@@ -2,11 +2,10 @@ package com.lain.assistant.ui.common
 
 import android.Manifest
 import android.content.ActivityNotFoundException
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
-import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -61,24 +60,23 @@ fun RequestCorePermissionsOnce() {
 }
 
 /**
- * Jumps as directly as possible to the toggle for Lain's own Accessibility
- * Service, instead of dropping the user into the generic list they'd have
- * to scroll through to find "Lain". The highlighted-component extras are
- * what stock/Pixel Settings uses to deep-link straight to one item's detail
- * screen; not every OEM settings app honors them, so this still falls back
- * to the plain Accessibility settings screen if nothing handles it.
+ * Sideloaded apps (installed outside the Play Store) hit Android 13+'s
+ * "Restricted settings" gate: the Accessibility toggle for a freshly
+ * sideloaded app is greyed out/hidden until the user visits the app's own
+ * App Info page and explicitly taps the overflow menu (⋮) → "Allow
+ * restricted settings". There's no Intent that can trigger that tap for
+ * them — it's a deliberate manual security step — so the most useful thing
+ * this can do is land them exactly on that App Info page instead of
+ * dropping them into the generic Accessibility list where the option may
+ * not even be selectable yet.
  */
-fun openAccessibilitySettings(context: Context) {
-    val component = ComponentName(context, LainAccessibilityService::class.java)
-    val deepLink = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-        putExtra(":settings:fragment_args_key", component.flattenToString())
-        putExtra(
-            ":settings:show_fragment_args",
-            Bundle().apply { putString(":settings:fragment_args_key", component.flattenToString()) }
-        )
-    }
+fun openAppInfoForAccessibility(context: Context) {
+    val intent = Intent(
+        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+        Uri.fromParts("package", context.packageName, null)
+    )
     try {
-        context.startActivity(deepLink)
+        context.startActivity(intent)
     } catch (_: ActivityNotFoundException) {
         context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
     }
@@ -108,11 +106,11 @@ fun AccessibilityServiceBanner(modifier: Modifier = Modifier) {
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
             .background(LainNavy)
-            .clickable { openAccessibilitySettings(context) }
+            .clickable { openAppInfoForAccessibility(context) }
             .padding(12.dp)
     ) {
         Text(
-            "Turn on Lain's Accessibility Service to let her read and tap your screen — tap here to jump straight to it, then come back.",
+            "Turn on Lain's Accessibility Service so she can read and tap your screen. Tap here for Lain's app info — if you don't see \"Allow restricted settings\" in the ⋮ menu, skip that and go straight to Accessibility; if you do, tap it first, then open Accessibility and turn Lain on.",
             color = LainCream,
             style = MaterialTheme.typography.bodyMedium
         )

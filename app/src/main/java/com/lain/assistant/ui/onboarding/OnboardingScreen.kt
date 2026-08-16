@@ -27,7 +27,7 @@ import com.lain.assistant.ui.common.PixelBackground
 import com.lain.assistant.ui.common.PixelButton
 import com.lain.assistant.ui.common.PixelChoiceChip
 import com.lain.assistant.ui.common.PixelTextField
-import com.lain.assistant.ui.common.openAccessibilitySettings
+import com.lain.assistant.ui.common.openAppInfoForAccessibility
 import com.lain.assistant.ui.theme.LainCream
 import com.lain.assistant.ui.theme.LainMuted
 import androidx.compose.ui.platform.LocalContext
@@ -140,11 +140,11 @@ private fun PermissionsPrimer() {
         )
         Spacer(Modifier.height(12.dp))
         Text(
-            "One more thing worth doing now: her Accessibility Service, which lets her read and tap your screen (this is also what makes her usable hands-free/eyes-free).",
+            "One more thing worth doing now: her Accessibility Service, which lets her read and tap your screen (this is also what makes her usable hands-free/eyes-free). The button below opens Lain's app info — since she's sideloaded, Android may hide the Accessibility option until you tap the ⋮ menu there and choose \"Allow restricted settings\" first, then go to Accessibility and turn her on.",
             style = MaterialTheme.typography.bodyMedium,
             color = LainCream
         )
         Spacer(Modifier.height(10.dp))
-        PixelButton(text = "Open Accessibility settings", onClick = { openAccessibilitySettings(context) })
+        PixelButton(text = "Open Lain's app info", onClick = { openAppInfoForAccessibility(context) })
     }
 }
