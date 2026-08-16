@@ -87,7 +87,26 @@ class OpenAiCompatibleClient(
                     LlmMessage.Role.ASSISTANT -> "assistant"
                     LlmMessage.Role.TOOL -> "tool"
                 })
-                put("content", msg.text)
+                if (msg.role == LlmMessage.Role.USER && msg.images.isNotEmpty()) {
+                    put("content", buildJsonArray {
+                        if (msg.text.isNotBlank()) {
+                            add(buildJsonObject {
+                                put("type", "text")
+                                put("text", msg.text)
+                            })
+                        }
+                        for (image in msg.images) {
+                            add(buildJsonObject {
+                                put("type", "image_url")
+                                put("image_url", buildJsonObject {
+                                    put("url", "data:image/jpeg;base64,$image")
+                                })
+                            })
+                        }
+                    })
+                } else {
+                    put("content", msg.text)
+                }
                 if (msg.role == LlmMessage.Role.TOOL && msg.toolCallId != null) {
                     put("tool_call_id", msg.toolCallId)
                 }

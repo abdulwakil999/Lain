@@ -81,6 +81,11 @@ object ToolDefinitions {
             parameters = schema { }
         ),
         ToolDefinition(
+            name = "look_at_screen",
+            description = "Take a screenshot and actually look at it (visually, not just the text) — use this for anything that needs seeing layout, images, colors, or a game board rather than just reading labels. Requires the Accessibility Service.",
+            parameters = schema { }
+        ),
+        ToolDefinition(
             name = "tap_screen",
             description = "Tap the screen at a specific coordinate (requires the Accessibility Service). Use read_screen first to find coordinates.",
             parameters = schema {

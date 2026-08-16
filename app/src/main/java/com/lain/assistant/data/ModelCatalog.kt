@@ -33,11 +33,17 @@ object ModelCatalog {
 
     val models: List<ModelInfo> = listOf(
         // --- OpenRouter: free tier, chosen for reasoning + tool-call reliability ---
-        ModelInfo("deepseek/deepseek-r1:free", "DeepSeek R1 (Free)", Provider.OPENROUTER, isFree = true, recommended = true),
-        ModelInfo("deepseek/deepseek-chat:free", "DeepSeek V3 (Free)", Provider.OPENROUTER, isFree = true),
+        // NOTE: OpenRouter pulls models off the free tier with no warning
+        // (deepseek/deepseek-r1:free 404'd mid-testing, "unavailable for
+        // free" — its paid slug still works). Recommended points at the
+        // model that's been most consistently free; if that one also
+        // 404s, the model picker screen lets the user just switch entries
+        // in this list rather than being stuck.
+        ModelInfo("meta-llama/llama-3.3-70b-instruct:free", "Llama 3.3 70B (Free)", Provider.OPENROUTER, isFree = true, recommended = true),
         ModelInfo("qwen/qwen-2.5-72b-instruct:free", "Qwen 2.5 72B (Free)", Provider.OPENROUTER, isFree = true),
-        ModelInfo("meta-llama/llama-3.3-70b-instruct:free", "Llama 3.3 70B (Free)", Provider.OPENROUTER, isFree = true),
         ModelInfo("google/gemini-2.0-flash-exp:free", "Gemini 2.0 Flash (Free)", Provider.OPENROUTER, isFree = true),
+        ModelInfo("deepseek/deepseek-chat:free", "DeepSeek V3 (Free)", Provider.OPENROUTER, isFree = true),
+        ModelInfo("deepseek/deepseek-r1:free", "DeepSeek R1 (Free)", Provider.OPENROUTER, isFree = true),
 
         // --- OpenRouter: paid, top-tier via a single unified key ---
         ModelInfo("anthropic/claude-sonnet-5", "Claude Sonnet 5", Provider.OPENROUTER),

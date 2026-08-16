@@ -27,8 +27,10 @@ import com.lain.assistant.ui.common.PixelBackground
 import com.lain.assistant.ui.common.PixelButton
 import com.lain.assistant.ui.common.PixelChoiceChip
 import com.lain.assistant.ui.common.PixelTextField
+import com.lain.assistant.ui.common.openAccessibilitySettings
 import com.lain.assistant.ui.theme.LainCream
 import com.lain.assistant.ui.theme.LainMuted
+import androidx.compose.ui.platform.LocalContext
 
 @Composable
 fun OnboardingScreen(viewModel: OnboardingViewModel, onFinished: () -> Unit) {
@@ -129,9 +131,20 @@ private fun ApiKeyStep(provider: Provider, value: String, onChange: (String) -> 
 
 @Composable
 private fun PermissionsPrimer() {
-    Text(
-        "Next, Lain will ask for a few permissions — microphone, camera, phone/SMS, and Accessibility Service — so she can actually act on your phone instead of just talking. You can grant them now or later; features that need one will just ask again when you use them.",
-        style = MaterialTheme.typography.bodyMedium,
-        color = LainCream
-    )
+    val context = LocalContext.current
+    androidx.compose.foundation.layout.Column {
+        Text(
+            "Next, Lain will ask for a few permissions — microphone, camera, phone/SMS — so she can actually act on your phone instead of just talking. You can grant them now or later; features that need one will just ask again when you use them.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = LainCream
+        )
+        Spacer(Modifier.height(12.dp))
+        Text(
+            "One more thing worth doing now: her Accessibility Service, which lets her read and tap your screen (this is also what makes her usable hands-free/eyes-free).",
+            style = MaterialTheme.typography.bodyMedium,
+            color = LainCream
+        )
+        Spacer(Modifier.height(10.dp))
+        PixelButton(text = "Open Accessibility settings", onClick = { openAccessibilitySettings(context) })
+    }
 }

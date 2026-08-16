@@ -70,7 +70,28 @@ class AnthropicClient(private val baseUrl: String) : LlmClient {
                 LlmMessage.Role.SYSTEM -> continue // Anthropic takes system separately.
                 LlmMessage.Role.USER -> add(buildJsonObject {
                     put("role", "user")
-                    put("content", msg.text)
+                    if (msg.images.isNotEmpty()) {
+                        put("content", buildJsonArray {
+                            for (image in msg.images) {
+                                add(buildJsonObject {
+                                    put("type", "image")
+                                    put("source", buildJsonObject {
+                                        put("type", "base64")
+                                        put("media_type", "image/jpeg")
+                                        put("data", image)
+                                    })
+                                })
+                            }
+                            if (msg.text.isNotBlank()) {
+                                add(buildJsonObject {
+                                    put("type", "text")
+                                    put("text", msg.text)
+                                })
+                            }
+                        })
+                    } else {
+                        put("content", msg.text)
+                    }
                 })
                 LlmMessage.Role.ASSISTANT -> add(buildJsonObject {
                     put("role", "assistant")

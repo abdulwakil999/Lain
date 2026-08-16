@@ -7,7 +7,9 @@ data class LlmMessage(
     val role: Role,
     val text: String,
     val toolCallId: String? = null,
-    val toolCalls: List<ToolCall> = emptyList()
+    val toolCalls: List<ToolCall> = emptyList(),
+    /** Base64-encoded JPEG frames (no data-URI prefix) attached to a USER turn — screenshots, camera stills. */
+    val images: List<String> = emptyList()
 ) {
     enum class Role { SYSTEM, USER, ASSISTANT, TOOL }
 }

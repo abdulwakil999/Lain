@@ -1,8 +1,12 @@
 package com.lain.assistant.ui.common
 
 import android.Manifest
+import android.content.ActivityNotFoundException
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -56,6 +60,30 @@ fun RequestCorePermissionsOnce() {
     }
 }
 
+/**
+ * Jumps as directly as possible to the toggle for Lain's own Accessibility
+ * Service, instead of dropping the user into the generic list they'd have
+ * to scroll through to find "Lain". The highlighted-component extras are
+ * what stock/Pixel Settings uses to deep-link straight to one item's detail
+ * screen; not every OEM settings app honors them, so this still falls back
+ * to the plain Accessibility settings screen if nothing handles it.
+ */
+fun openAccessibilitySettings(context: Context) {
+    val component = ComponentName(context, LainAccessibilityService::class.java)
+    val deepLink = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+        putExtra(":settings:fragment_args_key", component.flattenToString())
+        putExtra(
+            ":settings:show_fragment_args",
+            Bundle().apply { putString(":settings:fragment_args_key", component.flattenToString()) }
+        )
+    }
+    try {
+        context.startActivity(deepLink)
+    } catch (_: ActivityNotFoundException) {
+        context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+    }
+}
+
 /** Small dismissible banner nudging the user to enable the Accessibility Service Lain needs for on-screen automation. */
 @Composable
 fun AccessibilityServiceBanner(modifier: Modifier = Modifier) {
@@ -80,13 +108,11 @@ fun AccessibilityServiceBanner(modifier: Modifier = Modifier) {
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
             .background(LainNavy)
-            .clickable {
-                context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            }
+            .clickable { openAccessibilitySettings(context) }
             .padding(12.dp)
     ) {
         Text(
-            "Turn on Lain's Accessibility Service to let her read and tap your screen — tap here, then dismiss with back.",
+            "Turn on Lain's Accessibility Service to let her read and tap your screen — tap here to jump straight to it, then come back.",
             color = LainCream,
             style = MaterialTheme.typography.bodyMedium
         )

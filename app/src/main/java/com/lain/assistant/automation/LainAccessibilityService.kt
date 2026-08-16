@@ -2,10 +2,16 @@ package com.lain.assistant.automation
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.graphics.Bitmap
 import android.graphics.Path
+import android.os.Build
+import android.util.Base64
+import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.suspendCancellableCoroutine
+import java.io.ByteArrayOutputStream
 import kotlin.coroutines.resume
 
 /**
@@ -77,6 +83,44 @@ class LainAccessibilityService : AccessibilityService() {
         GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, durationMs))
             .build()
+    }
+
+    /**
+     * A single "let me look" glance for the model — this is
+     * AccessibilityService's own takeScreenshot() (API 30+), which needs
+     * nothing beyond the service already being enabled, unlike
+     * MediaProjection's real-time mirroring which needs a fresh consent
+     * dialog every session. Returns a JPEG-encoded, base64 string ready to
+     * attach to an LLM vision call, or null if unsupported/failed.
+     */
+    suspend fun captureScreenshotBase64(): String? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+        val bitmap = captureScreenshotBitmap() ?: return null
+        return ByteArrayOutputStream().use { out ->
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 80, out)
+            bitmap.recycle()
+            Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+        }
+    }
+
+    private suspend fun captureScreenshotBitmap(): Bitmap? = suspendCancellableCoroutine { cont ->
+        takeScreenshot(
+            Display.DEFAULT_DISPLAY,
+            ContextCompat.getMainExecutor(this),
+            object : TakeScreenshotCallback {
+                override fun onSuccess(result: ScreenshotResult) {
+                    val hardwareBitmap = Bitmap.wrapHardwareBuffer(result.hardwareBuffer, result.colorSpace)
+                    val softwareBitmap = hardwareBitmap?.copy(Bitmap.Config.ARGB_8888, false)
+                    hardwareBitmap?.recycle()
+                    result.hardwareBuffer.close()
+                    if (cont.isActive) cont.resume(softwareBitmap)
+                }
+
+                override fun onFailure(errorCode: Int) {
+                    if (cont.isActive) cont.resume(null)
+                }
+            }
+        )
     }
 
     fun goHome() = performGlobalAction(GLOBAL_ACTION_HOME)

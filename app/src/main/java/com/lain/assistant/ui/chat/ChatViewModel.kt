@@ -12,6 +12,7 @@ import com.lain.assistant.network.LlmMessage
 import com.lain.assistant.network.LlmResult
 import com.lain.assistant.network.ToolCall
 import com.lain.assistant.tools.ToolDefinitions
+import com.lain.assistant.tools.ToolDispatcher
 import com.lain.assistant.tts.TtsEngine
 import com.lain.assistant.tts.TtsEngineProvider
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -99,9 +100,24 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
                     }
                     is LlmResult.ToolCalls -> {
                         conversation.add(LlmMessage(role = LlmMessage.Role.ASSISTANT, text = "", toolCalls = result.calls))
+                        val capturedImages = mutableListOf<String>()
                         for (call: ToolCall in result.calls) {
                             val output = container.toolDispatcher.execute(call)
-                            conversation.add(LlmMessage(role = LlmMessage.Role.TOOL, text = output, toolCallId = call.id))
+                            if (output.startsWith(ToolDispatcher.IMAGE_RESULT_PREFIX)) {
+                                capturedImages += output.removePrefix(ToolDispatcher.IMAGE_RESULT_PREFIX)
+                                conversation.add(
+                                    LlmMessage(role = LlmMessage.Role.TOOL, text = "Captured — attached below.", toolCallId = call.id)
+                                )
+                            } else {
+                                conversation.add(LlmMessage(role = LlmMessage.Role.TOOL, text = output, toolCallId = call.id))
+                            }
+                        }
+                        // Tool results are text-only across these APIs, so an actual image has to ride
+                        // in as its own user turn right after the tool results it belongs to.
+                        if (capturedImages.isNotEmpty()) {
+                            conversation.add(
+                                LlmMessage(role = LlmMessage.Role.USER, text = "(image just captured, see attached)", images = capturedImages)
+                            )
                         }
                     }
                 }
@@ -134,8 +150,10 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             You are Lain — short for "Leave-it-to-Artificial-intelligence-Niceo". You live on the
             user's Android phone and can genuinely act on it, not just describe what you'd do: open
             and close apps, place calls, send SMS, message WhatsApp contacts, set reminders, write
-            notes, read and tap the screen, take photos, and listen through the microphone. Call the
-            tools you're given to actually do these things.
+            notes, read the screen's text, actually look at the screen (use look_at_screen whenever
+            layout/images/colors/a game board matter more than raw text — read_screen alone can't see
+            those), tap and swipe, take photos, and listen through the microphone. Call the tools
+            you're given to actually do these things.
 
             The user goes by "$nickname" — address them that way by default in everything you say.
             Only use their real name, "$name", when a moment genuinely calls for formality: confirming
