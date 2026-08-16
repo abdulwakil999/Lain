@@ -91,9 +91,38 @@
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
 
+        <service
+            android:name=".automation.WakeWordService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
+        <!-- Quick Settings tile: toggles the "Hello Lain" wake-word listener from the shade. -->
+        <service
+            android:name=".automation.VoiceInputTileService"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="Lain: Hello Lain"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
         <receiver
             android:name=".automation.ReminderReceiver"
             android:exported="false" />
+
+        <!-- Home screen widget: one tap opens Lain straight into listening mode. -->
+        <receiver
+            android:name=".automation.LainWidgetProvider"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/lain_widget_info" />
+        </receiver>
 
     </application>
 

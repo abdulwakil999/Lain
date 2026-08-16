@@ -21,7 +21,7 @@ import com.lain.assistant.ui.theme.LainNavyDeep
 import androidx.lifecycle.viewmodel.compose.viewModel
 
 @Composable
-fun LainApp(container: AppContainer) {
+fun LainApp(container: AppContainer, autoListenToken: Long? = null) {
     val isOnboarded by container.userPreferencesRepository.isOnboarded.collectAsState(initial = null)
     val factory = remember { LainViewModelFactory(container) }
 
@@ -35,12 +35,12 @@ fun LainApp(container: AppContainer) {
                     OnboardingScreen(viewModel = onboardingViewModel, onFinished = { justFinished = true })
                 } else {
                     val chatViewModel: ChatViewModel = viewModel(factory = factory)
-                    ChatScreen(viewModel = chatViewModel)
+                    ChatScreen(viewModel = chatViewModel, container = container, autoListenToken = autoListenToken)
                 }
             }
             true -> {
                 val chatViewModel: ChatViewModel = viewModel(factory = factory)
-                ChatScreen(viewModel = chatViewModel)
+                ChatScreen(viewModel = chatViewModel, container = container, autoListenToken = autoListenToken)
             }
         }
     }

@@ -23,27 +23,34 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.lain.assistant.AppContainer
 import com.lain.assistant.data.ChatMessage
 import com.lain.assistant.data.Sender
 import com.lain.assistant.ui.common.AccessibilityServiceBanner
 import com.lain.assistant.ui.common.HoveringPanel
 import com.lain.assistant.ui.common.PixelTextField
 import com.lain.assistant.ui.common.RequestCorePermissionsOnce
+import com.lain.assistant.ui.settings.SettingsScreen
+import com.lain.assistant.ui.settings.SettingsViewModel
 import com.lain.assistant.ui.theme.LainCream
 import com.lain.assistant.ui.theme.LainInk
 import com.lain.assistant.ui.theme.LainSalmon
 import com.lain.assistant.ui.theme.LainSalmonDeep
 
 @Composable
-fun ChatScreen(viewModel: ChatViewModel) {
+fun ChatScreen(viewModel: ChatViewModel, container: AppContainer, autoListenToken: Long? = null) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
     val listState = rememberLazyListState()
+    var showSettings by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         viewModel.attachTts(context)
@@ -54,7 +61,18 @@ fun ChatScreen(viewModel: ChatViewModel) {
         if (state.messages.isNotEmpty()) listState.animateScrollToItem(state.messages.lastIndex)
     }
 
+    LaunchedEffect(autoListenToken) {
+        if (autoListenToken != null) viewModel.startVoiceInput()
+    }
+
     RequestCorePermissionsOnce()
+
+    if (showSettings) {
+        val settingsFactory = remember { com.lain.assistant.ui.LainViewModelFactory(container) }
+        val settingsViewModel: SettingsViewModel = androidx.lifecycle.viewmodel.compose.viewModel(factory = settingsFactory)
+        SettingsScreen(viewModel = settingsViewModel, onBack = { showSettings = false })
+        return
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         AwakeningBackground(awake = state.hasAwakened)
@@ -72,12 +90,34 @@ fun ChatScreen(viewModel: ChatViewModel) {
             }
         }
 
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 44.dp, end = 16.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(LainSalmonDeep.copy(alpha = 0.85f))
+                .clickable { showSettings = true }
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+        ) {
+            Text("Settings", color = LainCream, style = MaterialTheme.typography.labelLarge)
+        }
+
         HoveringPanel(modifier = Modifier.align(Alignment.BottomCenter)) {
             state.error?.let {
                 Text(it, color = LainSalmon, style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.padding(2.dp))
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (state.isListening) LainSalmonDeep else LainSalmon.copy(alpha = 0.85f))
+                        .clickable(enabled = !state.isListening && !state.isSending) { viewModel.startVoiceInput() }
+                        .padding(horizontal = 14.dp, vertical = 14.dp)
+                ) {
+                    Text(if (state.isListening) "..." else "MIC", color = LainInk, style = MaterialTheme.typography.labelLarge)
+                }
+                Spacer(Modifier.padding(horizontal = 4.dp))
                 PixelTextField(
                     value = state.input,
                     onValueChange = viewModel::onInputChange,

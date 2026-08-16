@@ -26,12 +26,13 @@ data class ChatUiState(
     val messages: List<ChatMessage> = emptyList(),
     val input: String = "",
     val isSending: Boolean = false,
+    val isListening: Boolean = false,
     val hasAwakened: Boolean = false, // flips once, triggers the strip-transition + background swap
     val profile: UserProfile? = null,
     val error: String? = null
 )
 
-private const val MAX_TOOL_ROUNDS = 5
+private const val MAX_TOOL_ROUNDS = 8
 
 class ChatViewModel(private val container: AppContainer) : ViewModel() {
 
@@ -58,6 +59,23 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun onInputChange(value: String) = _state.update { it.copy(input = value) }
+
+    /** Mic button, wake-word service, and the widget all land here — listen once, then send what was heard. */
+    fun startVoiceInput() {
+        if (_state.value.isListening || _state.value.isSending) return
+        _state.update { it.copy(isListening = true, error = null) }
+        viewModelScope.launch {
+            container.voiceInputController.listenOnce().fold(
+                onSuccess = { heard ->
+                    _state.update { it.copy(isListening = false, input = heard) }
+                    send()
+                },
+                onFailure = { err ->
+                    _state.update { it.copy(isListening = false, error = "Didn't catch that: ${err.message}") }
+                }
+            )
+        }
+    }
 
     /** Called once when the chat screen first appears — fires the strip-transition + spoken/shown greeting. */
     fun onAwaken() {
@@ -152,8 +170,17 @@ class ChatViewModel(private val container: AppContainer) : ViewModel() {
             and close apps, place calls, send SMS, message WhatsApp contacts, set reminders, write
             notes, read the screen's text, actually look at the screen (use look_at_screen whenever
             layout/images/colors/a game board matter more than raw text — read_screen alone can't see
-            those), tap and swipe, take photos, and listen through the microphone. Call the tools
-            you're given to actually do these things.
+            those), tap and swipe, take photos, and listen through the microphone.
+
+            When a request calls for one of those, call the tool immediately in the same turn — don't
+            narrate what you're about to do, don't ask permission for routine actions, don't say
+            "I would" or "I can't" when a tool exists for exactly that. If a tool needs a coordinate
+            you don't have yet, call read_screen or look_at_screen first, then act on what you find —
+            chain multiple tool calls across turns until the request is actually done, not just
+            planned. Only stop to ask the user something when the request is genuinely ambiguous
+            (which contact, which app, confirming something irreversible like sending a message) or a
+            tool comes back reporting a missing permission/Accessibility Service — then say plainly
+            what's blocking it.
 
             The user goes by "$nickname" — address them that way by default in everything you say.
             Only use their real name, "$name", when a moment genuinely calls for formality: confirming
