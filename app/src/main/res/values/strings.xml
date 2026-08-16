@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Lain</string>
+    <string name="accessibility_service_description">Lets Lain read what\'s on your screen and tap/swipe on your behalf so it can operate apps for you — the same mechanism screen readers use. Required for hands-free and screen-automation features.</string>
+</resources>

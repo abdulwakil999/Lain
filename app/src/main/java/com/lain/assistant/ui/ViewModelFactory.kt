@@ -1,0 +1,17 @@
+package com.lain.assistant.ui
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewmodel.CreationExtras
+import com.lain.assistant.AppContainer
+import com.lain.assistant.ui.chat.ChatViewModel
+import com.lain.assistant.ui.onboarding.OnboardingViewModel
+
+class LainViewModelFactory(private val container: AppContainer) : ViewModelProvider.Factory {
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T = when (modelClass) {
+        OnboardingViewModel::class.java -> OnboardingViewModel(container) as T
+        ChatViewModel::class.java -> ChatViewModel(container) as T
+        else -> throw IllegalArgumentException("Unknown ViewModel: $modelClass")
+    }
+}

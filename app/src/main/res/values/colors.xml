@@ -1,0 +1,9 @@
+<resources>
+    <color name="lain_ink">#14161C</color>
+    <color name="lain_navy">#333F52</color>
+    <color name="lain_navy_deep">#1B222E</color>
+    <color name="lain_salmon">#E08F82</color>
+    <color name="lain_salmon_deep">#C97367</color>
+    <color name="lain_cream">#F3EEDF</color>
+    <color name="lain_muted">#8891A1</color>
+</resources>
