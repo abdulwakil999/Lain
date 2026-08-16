@@ -2,6 +2,7 @@ package com.lain.assistant.ui.onboarding
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,7 +21,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.lain.assistant.data.Gender
-import com.lain.assistant.data.ModelCatalog
 import com.lain.assistant.data.Provider
 import com.lain.assistant.ui.common.HoveringPanel
 import com.lain.assistant.ui.common.PixelBackground
@@ -40,9 +40,14 @@ fun OnboardingScreen(viewModel: OnboardingViewModel, onFinished: () -> Unit) {
         if (state.complete) onFinished()
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        // The portrait square is exactly maxWidth tall (it's fit to screen width — see
+        // PixelBackground); anchor the panel to a fraction of that measured height instead of
+        // a hardcoded dp guess, so it actually sits over the image's base on every screen size
+        // rather than drifting mid-face on wide devices or past the image on narrow ones.
+        val panelTopOffset = maxWidth * 0.62f
         PixelBackground()
-        HoveringPanel(modifier = Modifier.padding(top = 220.dp)) {
+        HoveringPanel(modifier = Modifier.padding(top = panelTopOffset)) {
             Text(
                 text = questionFor(state.step),
                 style = MaterialTheme.typography.headlineMedium,
@@ -57,7 +62,7 @@ fun OnboardingScreen(viewModel: OnboardingViewModel, onFinished: () -> Unit) {
                     OnboardingStep.GENDER -> GenderChoice(state.gender, viewModel::setGender)
                     OnboardingStep.NICKNAME -> PixelTextField(state.nickname, viewModel::setNickname, "What should Lain call you?")
                     OnboardingStep.PROVIDER -> ProviderChoice(state.provider, viewModel::setProvider)
-                    OnboardingStep.MODEL -> ModelChoice(state.provider, state.modelId, viewModel::setModelId)
+                    OnboardingStep.MODEL -> ModelChoice(state.availableModels, state.isLoadingModels, state.modelId, viewModel::setModelId)
                     OnboardingStep.API_KEY -> ApiKeyStep(state.provider, state.apiKey, viewModel::setApiKey)
                     OnboardingStep.PERMISSIONS -> PermissionsPrimer()
                 }
@@ -103,9 +108,17 @@ private fun ProviderChoice(selected: Provider, onSelect: (Provider) -> Unit) {
 }
 
 @Composable
-private fun ModelChoice(provider: Provider, selectedId: String?, onSelect: (String) -> Unit) {
-    val models = ModelCatalog.forProvider(provider)
+private fun ModelChoice(
+    models: List<com.lain.assistant.data.ModelInfo>,
+    isLoading: Boolean,
+    selectedId: String?,
+    onSelect: (String) -> Unit
+) {
     androidx.compose.foundation.layout.Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (isLoading) {
+            Text("Checking what's actually free right now…", style = MaterialTheme.typography.bodyMedium, color = LainMuted)
+            Spacer(Modifier.height(4.dp))
+        }
         models.forEach { model ->
             PixelChoiceChip(
                 text = model.label + if (model.isFree) "  ·  FREE" else "",

@@ -33,17 +33,18 @@ object ModelCatalog {
 
     val models: List<ModelInfo> = listOf(
         // --- OpenRouter: free tier, chosen for reasoning + tool-call reliability ---
-        // NOTE: OpenRouter pulls models off the free tier with no warning
-        // (deepseek/deepseek-r1:free 404'd mid-testing, "unavailable for
-        // free" — its paid slug still works). Recommended points at the
-        // model that's been most consistently free; if that one also
-        // 404s, the model picker screen lets the user just switch entries
-        // in this list rather than being stuck.
-        ModelInfo("meta-llama/llama-3.3-70b-instruct:free", "Llama 3.3 70B (Free)", Provider.OPENROUTER, isFree = true, recommended = true),
-        ModelInfo("qwen/qwen-2.5-72b-instruct:free", "Qwen 2.5 72B (Free)", Provider.OPENROUTER, isFree = true),
-        ModelInfo("google/gemini-2.0-flash-exp:free", "Gemini 2.0 Flash (Free)", Provider.OPENROUTER, isFree = true),
-        ModelInfo("deepseek/deepseek-chat:free", "DeepSeek V3 (Free)", Provider.OPENROUTER, isFree = true),
-        ModelInfo("deepseek/deepseek-r1:free", "DeepSeek R1 (Free)", Provider.OPENROUTER, isFree = true),
+        // NOTE: this list is a fallback only. OpenRouter's free tier rotates
+        // hard and fast — the previous version of this list (deepseek-r1,
+        // llama-3.3-70b, qwen-2.5-72b, gemini-2.0-flash-exp, all :free) was
+        // 100% dead within weeks, all 404ing. The app fetches the live list
+        // from OpenRouter at runtime (see OpenRouterModelsClient) and only
+        // falls back to these hardcoded entries if that call fails, so this
+        // set existing works today is a nice-to-have, not load-bearing.
+        ModelInfo("openai/gpt-oss-20b:free", "GPT-OSS 20B (Free)", Provider.OPENROUTER, isFree = true, recommended = true),
+        ModelInfo("nvidia/nemotron-3-nano-30b-a3b:free", "Nemotron 3 Nano 30B (Free)", Provider.OPENROUTER, isFree = true),
+        ModelInfo("nvidia/nemotron-3-super-120b-a12b:free", "Nemotron 3 Super 120B (Free)", Provider.OPENROUTER, isFree = true),
+        ModelInfo("google/gemma-4-31b-it:free", "Gemma 4 31B (Free)", Provider.OPENROUTER, isFree = true),
+        ModelInfo("nvidia/nemotron-nano-9b-v2:free", "Nemotron Nano 9B (Free)", Provider.OPENROUTER, isFree = true),
 
         // --- OpenRouter: paid, top-tier via a single unified key ---
         ModelInfo("anthropic/claude-sonnet-5", "Claude Sonnet 5", Provider.OPENROUTER),

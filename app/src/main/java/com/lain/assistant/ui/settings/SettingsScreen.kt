@@ -22,9 +22,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.lain.assistant.automation.LainAccessibilityService
-import com.lain.assistant.data.ModelCatalog
+import com.lain.assistant.data.Gender
 import com.lain.assistant.data.Provider
 import com.lain.assistant.ui.common.PixelButton
 import com.lain.assistant.ui.common.PixelChoiceChip
@@ -65,6 +66,25 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             Text("Settings", style = MaterialTheme.typography.displayMedium, color = LainCream)
             Spacer(Modifier.height(24.dp))
 
+            SectionLabel("Your name")
+            PixelTextField(state.name, viewModel::setName, "Your name")
+
+            Spacer(Modifier.height(20.dp))
+            SectionLabel("Age")
+            PixelTextField(state.age, viewModel::setAge, "Your age", keyboardType = KeyboardType.Number)
+
+            Spacer(Modifier.height(20.dp))
+            SectionLabel("Gender")
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                PixelChoiceChip("Male", state.gender == Gender.MALE, { viewModel.setGender(Gender.MALE) }, modifier = Modifier.weight(1f))
+                PixelChoiceChip("Female", state.gender == Gender.FEMALE, { viewModel.setGender(Gender.FEMALE) }, modifier = Modifier.weight(1f))
+            }
+
+            Spacer(Modifier.height(20.dp))
+            SectionLabel("Nickname (what Lain calls you)")
+            PixelTextField(state.nickname, viewModel::setNickname, "Nickname")
+
+            Spacer(Modifier.height(24.dp))
             SectionLabel("Provider")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Provider.entries.forEach { provider ->
@@ -75,7 +95,10 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             Spacer(Modifier.height(24.dp))
             SectionLabel("Model")
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                ModelCatalog.forProvider(state.provider).forEach { model ->
+                if (state.isLoadingModels) {
+                    Text("Checking what's actually free right now…", style = MaterialTheme.typography.bodyMedium, color = LainMuted)
+                }
+                state.availableModels.forEach { model ->
                     PixelChoiceChip(
                         text = model.label + if (model.isFree) "  ·  FREE" else "",
                         selected = state.modelId == model.id,
@@ -108,7 +131,7 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             PixelButton(text = "Open Lain's app info", onClick = { openAppInfoForAccessibility(context) })
 
             Spacer(Modifier.height(28.dp))
-            PixelButton(text = if (state.justSaved) "Saved" else "Save", onClick = viewModel::save, enabled = state.loaded)
+            PixelButton(text = if (state.justSaved) "Saved" else "Save", onClick = viewModel::save, enabled = state.loaded && state.canSave)
             Spacer(Modifier.height(40.dp))
         }
     }

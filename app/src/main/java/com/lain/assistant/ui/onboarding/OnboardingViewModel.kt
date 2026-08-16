@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.lain.assistant.AppContainer
 import com.lain.assistant.data.Gender
 import com.lain.assistant.data.ModelCatalog
+import com.lain.assistant.data.ModelInfo
 import com.lain.assistant.data.Provider
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,8 +24,19 @@ data class OnboardingUiState(
     val provider: Provider = ModelCatalog.defaultProvider,
     val modelId: String? = ModelCatalog.recommendedFor(ModelCatalog.defaultProvider)?.id,
     val apiKey: String = "",
-    val complete: Boolean = false
+    val complete: Boolean = false,
+    /** null = use the static fallback catalog; non-null = live models fetched from OpenRouter. */
+    val liveOpenRouterModels: List<ModelInfo>? = null,
+    val isLoadingModels: Boolean = false
 ) {
+    /** What the model-picker step should actually show. */
+    val availableModels: List<ModelInfo>
+        get() = if (provider == Provider.OPENROUTER) {
+            liveOpenRouterModels ?: ModelCatalog.forProvider(provider)
+        } else {
+            ModelCatalog.forProvider(provider)
+        }
+
     val canAdvance: Boolean
         get() = when (step) {
             OnboardingStep.NAME -> name.isNotBlank()
@@ -45,15 +57,42 @@ class OnboardingViewModel(private val container: AppContainer) : ViewModel() {
 
     private val stepOrder = OnboardingStep.entries
 
+    init {
+        fetchLiveModelsIfNeeded()
+    }
+
     fun setName(v: String) = _state.update { it.copy(name = v) }
     fun setAge(v: String) = _state.update { it.copy(age = v.filter { c -> c.isDigit() }) }
     fun setGender(v: Gender) = _state.update { it.copy(gender = v) }
     fun setNickname(v: String) = _state.update { it.copy(nickname = v) }
     fun setProvider(v: Provider) = _state.update {
         it.copy(provider = v, modelId = ModelCatalog.recommendedFor(v)?.id)
-    }
+    }.also { fetchLiveModelsIfNeeded() }
     fun setModelId(v: String) = _state.update { it.copy(modelId = v) }
     fun setApiKey(v: String) = _state.update { it.copy(apiKey = v) }
+
+    /** OpenRouter's free tier rotates too fast for a hardcoded list — pull the live one instead. */
+    private fun fetchLiveModelsIfNeeded() {
+        val s = _state.value
+        if (s.provider != Provider.OPENROUTER || s.liveOpenRouterModels != null || s.isLoadingModels) return
+        _state.update { it.copy(isLoadingModels = true) }
+        viewModelScope.launch {
+            container.openRouterModelsClient.fetchFreeToolCapableModels().fold(
+                onSuccess = { fetched ->
+                    _state.update { current ->
+                        val models = fetched.ifEmpty { ModelCatalog.forProvider(Provider.OPENROUTER) }
+                        val stillValidSelection = current.modelId != null && models.any { it.id == current.modelId }
+                        current.copy(
+                            liveOpenRouterModels = models,
+                            isLoadingModels = false,
+                            modelId = if (stillValidSelection) current.modelId else models.firstOrNull()?.id
+                        )
+                    }
+                },
+                onFailure = { _state.update { it.copy(isLoadingModels = false) } } // falls back to the static list
+            )
+        }
+    }
 
     fun next() {
         val current = _state.value

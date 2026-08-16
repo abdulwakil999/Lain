@@ -75,18 +75,23 @@ fun ChatScreen(viewModel: ChatViewModel, container: AppContainer, autoListenToke
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        AwakeningBackground(awake = state.hasAwakened)
+        // The portrait is a fixed square docked to the top; the chat list lives strictly
+        // below it in its own weighted region, so messages/banners can never overlap the
+        // art the way they could when both were independently-sized layers in one Box.
+        Column(modifier = Modifier.fillMaxSize()) {
+            AwakeningBackground(awake = state.hasAwakened)
 
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(top = 48.dp, bottom = 160.dp, start = 16.dp, end = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            item { AccessibilityServiceBanner(modifier = Modifier.fillMaxWidth()) }
-            items(state.messages, key = { it.id }) { message -> MessageBubble(message) }
-            if (state.isSending) {
-                item { ThinkingBubble() }
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentPadding = PaddingValues(top = 12.dp, bottom = 160.dp, start = 16.dp, end = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                item { AccessibilityServiceBanner(modifier = Modifier.fillMaxWidth()) }
+                items(state.messages, key = { it.id }) { message -> MessageBubble(message) }
+                if (state.isSending) {
+                    item { ThinkingBubble() }
+                }
             }
         }
 
