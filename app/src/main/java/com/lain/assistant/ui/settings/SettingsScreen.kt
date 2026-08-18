@@ -22,9 +22,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.lain.assistant.automation.LainAccessibilityService
+import com.lain.assistant.automation.OverlayBubbleService
 import com.lain.assistant.data.Gender
 import com.lain.assistant.data.Provider
 import com.lain.assistant.ui.common.PixelButton
@@ -119,6 +123,48 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = LainMuted
             )
+
+            Spacer(Modifier.height(24.dp))
+            SectionLabel("Control Lain from anywhere")
+            Text(
+                "Puts a small draggable bubble over other apps so you can give Lain an order without leaving what you're doing. Needs the \"Display over other apps\" permission.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = LainMuted
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                PixelChoiceChip("On", state.overlayEnabled, {
+                    if (OverlayBubbleService.canDrawOverlays(context)) {
+                        viewModel.setOverlayEnabled(true)
+                        OverlayBubbleService.start(context)
+                    } else {
+                        // Special permission — can't be granted by a runtime prompt.
+                        context.startActivity(
+                            Intent(
+                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:${context.packageName}")
+                            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    }
+                }, modifier = Modifier.weight(1f))
+                PixelChoiceChip("Off", !state.overlayEnabled, {
+                    viewModel.setOverlayEnabled(false)
+                    OverlayBubbleService.stop(context)
+                }, modifier = Modifier.weight(1f))
+            }
+
+            Spacer(Modifier.height(24.dp))
+            SectionLabel("Battery saver")
+            Text(
+                "Stops \"Hello Lain\" listening while the screen is off. Leaving this on costs you hands-free wake-ups in your pocket, but saves a lot of battery — continuous listening is genuinely expensive.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = LainMuted
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                PixelChoiceChip("On", state.batterySaver, { viewModel.setBatterySaver(true) }, modifier = Modifier.weight(1f))
+                PixelChoiceChip("Off", !state.batterySaver, { viewModel.setBatterySaver(false) }, modifier = Modifier.weight(1f))
+            }
 
             Spacer(Modifier.height(24.dp))
             SectionLabel("Accessibility Service")

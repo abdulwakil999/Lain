@@ -13,8 +13,8 @@ android {
         applicationId = "com.lain.assistant"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.5.0"
+        versionCode = 6
+        versionName = "0.6.0"
     }
 
     buildTypes {
@@ -73,6 +73,7 @@ dependencies {
     implementation("androidx.camera:camera-camera2:1.4.1")
     implementation("androidx.camera:camera-lifecycle:1.4.1")
     implementation("androidx.lifecycle:lifecycle-process:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-service:2.8.7")
 
     testImplementation("junit:junit:4.13.2")
 }

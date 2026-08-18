@@ -23,6 +23,8 @@ data class SettingsUiState(
     val modelId: String? = null,
     val apiKey: String = "",
     val kokoroEndpoint: String = "",
+    val overlayEnabled: Boolean = false,
+    val batterySaver: Boolean = true,
     val loaded: Boolean = false,
     val justSaved: Boolean = false,
     /** null = use the static fallback catalog; non-null = live models fetched from OpenRouter. */
@@ -53,6 +55,8 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             val modelId = container.userPreferencesRepository.selectedModelId.first()
             val apiKey = container.secureKeyStore.getApiKey(provider).orEmpty()
             val kokoroEndpoint = container.userPreferencesRepository.kokoroEndpoint.first().orEmpty()
+            val overlayEnabled = container.userPreferencesRepository.isOverlayEnabled.first()
+            val batterySaver = container.userPreferencesRepository.isBatterySaver.first()
             _state.update {
                 it.copy(
                     name = profile.name,
@@ -63,6 +67,8 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
                     modelId = modelId,
                     apiKey = apiKey,
                     kokoroEndpoint = kokoroEndpoint,
+                    overlayEnabled = overlayEnabled,
+                    batterySaver = batterySaver,
                     loaded = true
                 )
             }
@@ -90,6 +96,20 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     fun setModelId(modelId: String) = _state.update { it.copy(modelId = modelId, justSaved = false) }
     fun setApiKey(value: String) = _state.update { it.copy(apiKey = value, justSaved = false) }
     fun setKokoroEndpoint(value: String) = _state.update { it.copy(kokoroEndpoint = value, justSaved = false) }
+
+    /**
+     * Applied immediately rather than on Save — the bubble is a visible, running
+     * thing, so the toggle should reflect reality the moment it's flipped.
+     */
+    fun setOverlayEnabled(enabled: Boolean) {
+        _state.update { it.copy(overlayEnabled = enabled) }
+        viewModelScope.launch { container.userPreferencesRepository.setOverlayEnabled(enabled) }
+    }
+
+    fun setBatterySaver(enabled: Boolean) {
+        _state.update { it.copy(batterySaver = enabled) }
+        viewModelScope.launch { container.userPreferencesRepository.setBatterySaver(enabled) }
+    }
 
     private fun fetchLiveModelsIfNeeded() {
         val s = _state.value

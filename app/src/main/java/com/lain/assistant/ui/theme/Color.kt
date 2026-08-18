@@ -11,3 +11,12 @@ val LainSalmon = Color(0xFFE08F82)
 val LainSalmonDeep = Color(0xFFC97367)
 val LainCream = Color(0xFFF3EEDF)
 val LainMuted = Color(0xFF8891A1)
+
+/**
+ * The exact slate the pixel-art's own backdrop is painted in, sampled from the
+ * source images' edge pixels (#393D4F / #3A3E4A). Anything placed around the
+ * artwork must use THIS, not LainNavyDeep — using the darker navy is what drew
+ * a hard horizontal line across the screen where the image ended and made the
+ * portrait look sliced in half.
+ */
+val LainArtBackdrop = Color(0xFF393C4E)

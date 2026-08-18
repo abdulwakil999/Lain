@@ -1,8 +1,21 @@
 <resources>
     <style name="Theme.Lain" parent="android:Theme.Material.NoActionBar">
-        <item name="android:statusBarColor">#1B222E</item>
-        <item name="android:navigationBarColor">#1B222E</item>
-        <item name="android:windowBackground">#1B222E</item>
+        <!-- Matches the artwork's own backdrop slate so there's no colour step
+             between the system bars and the portrait behind them. -->
+        <item name="android:statusBarColor">#393C4E</item>
+        <item name="android:navigationBarColor">#393C4E</item>
+        <item name="android:windowBackground">#393C4E</item>
         <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+    <!-- Mini surface: floats over whatever app is already on screen. -->
+    <style name="Theme.Lain.Mini" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
 </resources>

@@ -1,7 +1,9 @@
 package com.lain.assistant
 
 import android.content.Context
+import com.lain.assistant.agent.ChatEngine
 import com.lain.assistant.automation.VoiceInputController
+import com.lain.assistant.data.MemoryRepository
 import com.lain.assistant.data.SecureKeyStore
 import com.lain.assistant.data.UserPreferencesRepository
 import com.lain.assistant.network.OpenRouterModelsClient
@@ -11,8 +13,23 @@ import com.lain.assistant.tools.ToolDispatcher
 class AppContainer(context: Context) {
     private val appContext = context.applicationContext
     val userPreferencesRepository = UserPreferencesRepository(appContext)
+    val memoryRepository = MemoryRepository(appContext)
     val secureKeyStore = SecureKeyStore(appContext)
     val toolDispatcher = ToolDispatcher(appContext)
     val voiceInputController = VoiceInputController(appContext)
     val openRouterModelsClient = OpenRouterModelsClient()
+
+    /**
+     * Application-scoped so a running task survives screen lock, rotation and
+     * the app being backgrounded, and so the main app, mini surface and floating
+     * bubble all share one continuous conversation.
+     */
+    val chatEngine = ChatEngine(
+        appContext = appContext,
+        prefs = userPreferencesRepository,
+        memory = memoryRepository,
+        keyStore = secureKeyStore,
+        toolDispatcher = toolDispatcher,
+        voiceInput = voiceInputController
+    )
 }

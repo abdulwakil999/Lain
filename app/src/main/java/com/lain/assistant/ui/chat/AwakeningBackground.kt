@@ -4,13 +4,12 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
@@ -20,65 +19,84 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.lain.assistant.R
+import com.lain.assistant.ui.theme.LainArtBackdrop
 import kotlinx.coroutines.delay
 
 private const val STRIP_COUNT = 6
-private const val REVEAL_DELAY_MS = 300L
+private const val HOLD_BEFORE_REVEAL_MS = 900L
+private const val STRIP_DURATION_MS = 1100
+private const val STRIP_STAGGER_MS = 130
 
 /**
- * The reveal: Lain's "awake" portrait sits as the background first — held
- * there just long enough to register — then slices into six vertical
- * strips. Odd strips (1st, 3rd, 5th) slide up and out; even strips (2nd,
- * 4th, 6th) slide down and out, staggered, uncovering her "focused"
- * portrait sitting behind the whole time. Plays once per [awake] flip.
+ * Full-bleed backdrop for the chat screen.
  *
- * Both source images are square (1:1). This composable is a fixed
- * `fillMaxWidth().aspectRatio(1f)` square — NOT the full screen — so its
- * caller must stack it above the scrollable chat content in a Column
- * rather than layering everything in one full-screen Box. That's the fix
- * for messages/banners rendering on top of the portrait instead of below
- * it: previously this drew across the whole screen while the chat list
- * used a guessed, unrelated top-padding, so the two independently-sized
- * things could easily overlap.
+ * Lain's "awake" portrait is held long enough to actually register, then
+ * slices into six vertical strips: odd strips (1st, 3rd, 5th) slide up and
+ * out, even strips (2nd, 4th, 6th) slide down and out, staggered, uncovering
+ * her "focused" portrait that was sitting behind the whole time.
+ *
+ * The square artwork is drawn at full screen width and top-aligned, and the
+ * *entire* composable is painted in [LainArtBackdrop] — the exact slate the
+ * art's own background uses — so the area below the square is indistinguishable
+ * from the picture instead of showing a hard seam. Both layers are sized off
+ * the measured constraints, so this scales to any screen without fixed dp.
  */
 @Composable
-fun AwakeningBackground(awake: Boolean, modifier: Modifier = Modifier) {
+fun AwakeningBackground(
+    awake: Boolean,
+    modifier: Modifier = Modifier,
+    artHeightFraction: Float = 1f
+) {
     var revealed by remember { mutableStateOf(false) }
 
     LaunchedEffect(awake) {
         if (awake) {
-            delay(REVEAL_DELAY_MS) // let the static "awake" frame actually be seen first
+            delay(HOLD_BEFORE_REVEAL_MS)
             revealed = true
         } else {
             revealed = false
         }
     }
 
-    BoxWithConstraints(modifier = modifier.fillMaxWidth().aspectRatio(1f)) {
-        val artSize = maxWidth // == maxHeight, guaranteed square by aspectRatio(1f)
+    BoxWithConstraints(modifier = modifier.fillMaxSize().background(LainArtBackdrop)) {
+        val artSize: Dp = maxWidth * artHeightFraction
         val stripWidth = artSize / STRIP_COUNT
+        val travel = maxHeight + artSize // guarantees a strip fully clears the viewport
 
         Image(
             painter = painterResource(id = R.drawable.bg_lain_focus),
             contentDescription = null,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .width(artSize)
+                .height(artSize)
+                .align(Alignment.TopCenter),
             contentScale = ContentScale.FillBounds
         )
 
-        Row(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .width(artSize)
+                .height(artSize)
+                .align(Alignment.TopCenter)
+        ) {
             repeat(STRIP_COUNT) { i ->
                 val goesUp = i % 2 == 0
-                // Moving a strip by its own height fully clears its original bounds either way.
-                val target = if (revealed) (if (goesUp) -artSize else artSize) else 0.dp
+                val target = if (revealed) (if (goesUp) -travel else travel) else 0.dp
                 val offsetY by animateDpAsState(
                     targetValue = target,
-                    animationSpec = tween(durationMillis = 650, delayMillis = i * 70, easing = FastOutSlowInEasing),
+                    animationSpec = tween(
+                        durationMillis = STRIP_DURATION_MS,
+                        delayMillis = i * STRIP_STAGGER_MS,
+                        easing = FastOutSlowInEasing
+                    ),
                     label = "strip_$i"
                 )
                 Box(
@@ -91,9 +109,9 @@ fun AwakeningBackground(awake: Boolean, modifier: Modifier = Modifier) {
                     Image(
                         painter = painterResource(id = R.drawable.bg_lain_awake),
                         contentDescription = null,
-                        // Fixed to the FULL artSize (not fillMaxSize/stripWidth) and shifted left —
-                        // this is what makes each narrow clipped strip show its correct slice of the
-                        // whole image rather than a squished stripWidth-wide copy of the whole thing.
+                        // Sized to the FULL artwork and shifted left by this strip's index, so each
+                        // narrow clipped window shows its own correct slice of the picture rather
+                        // than a squashed copy of the whole thing.
                         modifier = Modifier
                             .width(artSize)
                             .height(artSize)

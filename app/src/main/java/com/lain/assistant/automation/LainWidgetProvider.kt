@@ -6,17 +6,21 @@ import android.appwidget.AppWidgetProvider
 import android.content.Context
 import android.content.Intent
 import android.widget.RemoteViews
-import com.lain.assistant.MainActivity
+import com.lain.assistant.MiniActivity
 import com.lain.assistant.R
 
-/** One tap on the home-screen widget opens Lain straight into listening mode. */
+/**
+ * One tap on the home-screen widget drops straight into listening mode — via
+ * the compact mini surface rather than launching the entire app, so asking a
+ * quick question doesn't take over the screen.
+ */
 class LainWidgetProvider : AppWidgetProvider() {
 
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
         for (id in appWidgetIds) {
-            val launchIntent = Intent(context, MainActivity::class.java).apply {
+            val launchIntent = Intent(context, MiniActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                putExtra(MainActivity.EXTRA_AUTO_LISTEN, true)
+                putExtra(MiniActivity.EXTRA_AUTO_LISTEN, true)
             }
             val pendingIntent = PendingIntent.getActivity(
                 context, id, launchIntent,

@@ -23,6 +23,14 @@
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- Floating bubble so Lain can be commanded from outside the app -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+    <!-- Keeps a task running with the screen locked -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
     <!-- Screen sharing / on-screen automation -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
@@ -70,6 +78,16 @@
             </intent-filter>
         </activity>
 
+        <!-- Compact surface for the widget/tile/bubble/wake word: a message bar and
+             recent messages over a translucent scrim, instead of the whole app. -->
+        <activity
+            android:name=".MiniActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Lain.Mini"
+            android:launchMode="singleTask"
+            android:excludeFromRecents="true"
+            android:windowSoftInputMode="adjustResize" />
+
         <!-- Accessibility Service: powers screen reading + simulated taps, the
              same mechanism assistive tools like TalkBack rely on. This is what
              lets Lain act as a full screen-reader/control layer for blind users
@@ -95,6 +113,22 @@
             android:name=".automation.WakeWordService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!-- Runs only while a task is in flight, holding a wake lock so the tool
+             loop keeps executing with the screen off. -->
+        <service
+            android:name=".agent.AgentForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <service
+            android:name=".automation.OverlayBubbleService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Persistent assistant bubble the user explicitly enables, so Lain can be commanded from any screen." />
+        </service>
 
         <!-- Quick Settings tile: toggles the "Hello Lain" wake-word listener from the shade. -->
         <service

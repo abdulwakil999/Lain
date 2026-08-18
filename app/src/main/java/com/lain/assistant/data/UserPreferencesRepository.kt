@@ -22,6 +22,9 @@ class UserPreferencesRepository(private val context: Context) {
         val PROVIDER = stringPreferencesKey("provider")
         val MODEL_ID = stringPreferencesKey("model_id")
         val KOKORO_ENDPOINT = stringPreferencesKey("kokoro_endpoint")
+        val MUTED = booleanPreferencesKey("muted")
+        val OVERLAY_ENABLED = booleanPreferencesKey("overlay_enabled")
+        val BATTERY_SAVER = booleanPreferencesKey("battery_saver")
     }
 
     val isOnboarded: Flow<Boolean> = context.dataStore.data.map { it[Keys.ONBOARDED] ?: false }
@@ -48,6 +51,30 @@ class UserPreferencesRepository(private val context: Context) {
         context.dataStore.edit { prefs ->
             if (url.isNullOrBlank()) prefs.remove(Keys.KOKORO_ENDPOINT) else prefs[Keys.KOKORO_ENDPOINT] = url
         }
+    }
+
+    /** Silences Lain's voice without disabling voice input. */
+    val isMuted: Flow<Boolean> = context.dataStore.data.map { it[Keys.MUTED] ?: false }
+
+    suspend fun setMuted(muted: Boolean) {
+        context.dataStore.edit { it[Keys.MUTED] = muted }
+    }
+
+    /** Floating bubble so Lain can be commanded from outside the app. */
+    val isOverlayEnabled: Flow<Boolean> = context.dataStore.data.map { it[Keys.OVERLAY_ENABLED] ?: false }
+
+    suspend fun setOverlayEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.OVERLAY_ENABLED] = enabled }
+    }
+
+    /**
+     * When on, the wake-word listener stops entirely while the screen is off
+     * rather than looping the recognizer in the user's pocket.
+     */
+    val isBatterySaver: Flow<Boolean> = context.dataStore.data.map { it[Keys.BATTERY_SAVER] ?: true }
+
+    suspend fun setBatterySaver(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.BATTERY_SAVER] = enabled }
     }
 
     suspend fun saveProfileStep(name: String? = null, age: Int? = null, gender: Gender? = null, nickname: String? = null) {
