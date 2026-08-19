@@ -27,6 +27,8 @@ data class SettingsUiState(
     val batterySaver: Boolean = true,
     val loaded: Boolean = false,
     val justSaved: Boolean = false,
+    val testResult: String? = null,
+    val isTesting: Boolean = false,
     /** null = use the static fallback catalog; non-null = live models fetched from OpenRouter. */
     val liveOpenRouterModels: List<ModelInfo>? = null,
     val isLoadingModels: Boolean = false
@@ -135,6 +137,22 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
                 },
                 onFailure = { _state.update { it.copy(isLoadingModels = false) } }
             )
+        }
+    }
+
+    /**
+     * Saves first, then sends a real request — so what's tested is exactly what
+     * Lain will use, not whatever was configured before the edits.
+     */
+    fun testConnection() {
+        if (_state.value.isTesting) return
+        _state.update { it.copy(isTesting = true, testResult = null) }
+        viewModelScope.launch {
+            val s = _state.value
+            container.secureKeyStore.saveApiKey(s.provider, s.apiKey.trim())
+            s.modelId?.let { container.userPreferencesRepository.saveModelSelection(s.provider, it) }
+            val result = container.connectionTester.test(s.provider, s.modelId, s.apiKey.trim())
+            _state.update { it.copy(isTesting = false, testResult = result) }
         }
     }
 

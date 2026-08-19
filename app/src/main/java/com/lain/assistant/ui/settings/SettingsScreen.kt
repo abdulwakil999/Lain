@@ -126,6 +126,21 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             SectionLabel("${state.provider.displayName} API key")
             PixelTextField(state.apiKey, viewModel::setApiKey, "API key", isPassword = true)
 
+            Spacer(Modifier.height(16.dp))
+            PixelButton(
+                text = if (state.isTesting) "Testing…" else "Test connection",
+                onClick = viewModel::testConnection,
+                enabled = !state.isTesting
+            )
+            state.testResult?.let { result ->
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    result,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (result.startsWith("Working")) LainCream else LainSalmon
+                )
+            }
+
             Spacer(Modifier.height(24.dp))
             SectionLabel("Kokoro TTS endpoint (optional)")
             PixelTextField(state.kokoroEndpoint, viewModel::setKokoroEndpoint, "https://your-kokoro-server")

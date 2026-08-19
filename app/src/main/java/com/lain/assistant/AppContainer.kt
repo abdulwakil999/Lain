@@ -6,6 +6,7 @@ import com.lain.assistant.automation.VoiceInputController
 import com.lain.assistant.data.MemoryRepository
 import com.lain.assistant.data.SecureKeyStore
 import com.lain.assistant.data.UserPreferencesRepository
+import com.lain.assistant.network.ConnectionTester
 import com.lain.assistant.network.OpenRouterModelsClient
 import com.lain.assistant.tools.ToolDispatcher
 
@@ -18,6 +19,7 @@ class AppContainer(context: Context) {
     val toolDispatcher = ToolDispatcher(appContext)
     val voiceInputController = VoiceInputController(appContext)
     val openRouterModelsClient = OpenRouterModelsClient()
+    val connectionTester = ConnectionTester(appContext)
 
     /**
      * Application-scoped so a running task survives screen lock, rotation and

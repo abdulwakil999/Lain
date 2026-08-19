@@ -51,17 +51,23 @@ class AnthropicClient(private val baseUrl: String) : LlmClient {
             .post(body.toString().toRequestBody("application/json".toMediaType()))
             .build()
 
-        try {
-            http.newCall(request).execute().use { response ->
-                val raw = response.body?.string().orEmpty()
-                if (!response.isSuccessful) {
-                    return@withContext LlmResult.Error("HTTP ${response.code}: ${raw.take(500)}")
+        http.executeWithRetry(request).fold(
+            onSuccess = { response ->
+                response.use {
+                    val raw = it.body?.string().orEmpty()
+                    if (!it.isSuccessful) {
+                        LlmResult.Error("HTTP ${it.code}: ${raw.take(500)}")
+                    } else {
+                        try {
+                            parseResponse(raw)
+                        } catch (t: Throwable) {
+                            LlmResult.Error("Couldn't read the model's reply: ${t.message}")
+                        }
+                    }
                 }
-                parseResponse(raw)
-            }
-        } catch (t: Throwable) {
-            LlmResult.Error(t.message ?: "Network error")
-        }
+            },
+            onFailure = { LlmResult.Error(describeNetworkFailure(it)) }
+        )
     }
 
     private fun buildMessagesArray(history: List<LlmMessage>): JsonArray = buildJsonArray {

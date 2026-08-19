@@ -61,17 +61,23 @@ class OpenAiCompatibleClient(
         httpReferer?.let { requestBuilder.addHeader("HTTP-Referer", it) }
         appTitle?.let { requestBuilder.addHeader("X-Title", it) }
 
-        try {
-            http.newCall(requestBuilder.build()).execute().use { response ->
-                val raw = response.body?.string().orEmpty()
-                if (!response.isSuccessful) {
-                    return@withContext LlmResult.Error("HTTP ${response.code}: ${raw.take(500)}")
+        http.executeWithRetry(requestBuilder.build()).fold(
+            onSuccess = { response ->
+                response.use {
+                    val raw = it.body?.string().orEmpty()
+                    if (!it.isSuccessful) {
+                        LlmResult.Error("HTTP ${it.code}: ${raw.take(500)}")
+                    } else {
+                        try {
+                            parseResponse(raw)
+                        } catch (t: Throwable) {
+                            LlmResult.Error("Couldn't read the model's reply: ${t.message}")
+                        }
+                    }
                 }
-                parseResponse(raw)
-            }
-        } catch (t: Throwable) {
-            LlmResult.Error(t.message ?: "Network error")
-        }
+            },
+            onFailure = { LlmResult.Error(describeNetworkFailure(it)) }
+        )
     }
 
     private fun buildMessagesArray(systemPrompt: String, history: List<LlmMessage>): JsonArray = buildJsonArray {
