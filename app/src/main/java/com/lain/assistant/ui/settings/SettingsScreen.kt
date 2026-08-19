@@ -98,13 +98,24 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
 
             Spacer(Modifier.height(24.dp))
             SectionLabel("Model")
+            Text(
+                "★ models reliably chain multi-step phone tasks. Free models can accept the same tools but often stall, repeat themselves, or describe an action instead of doing it — if Lain feels dumb, this is usually why.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = LainMuted
+            )
+            Spacer(Modifier.height(8.dp))
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (state.isLoadingModels) {
                     Text("Checking what's actually free right now…", style = MaterialTheme.typography.bodyMedium, color = LainMuted)
                 }
                 state.availableModels.forEach { model ->
+                    val badge = when {
+                        model.strongAtTools -> "  ★"
+                        model.isFree -> "  ·  FREE"
+                        else -> ""
+                    }
                     PixelChoiceChip(
-                        text = model.label + if (model.isFree) "  ·  FREE" else "",
+                        text = model.label + badge,
                         selected = state.modelId == model.id,
                         onClick = { viewModel.setModelId(model.id) }
                     )

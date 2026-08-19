@@ -40,7 +40,7 @@ object ToolDefinitions {
         // ------------------------------------------------- screen perception
         ToolDefinition(
             name = "read_screen",
-            description = "Read what's on screen right now as a list of labelled elements with tap coordinates. Each line is marked [INPUT] (a text field), [BUTTON] (tappable) or [text]. Use this constantly while operating an app — after every tap, every app launch, every screen change.",
+            description = "Read what's on screen right now as a list of labelled elements with tap coordinates, each marked [INPUT] (text field), [BUTTON] (tappable) or [text]. NOTE: every action tool already returns the updated screen for you, so you do NOT need to call this after tapping, typing or opening something — only use it to look before acting.",
             parameters = schema { }
         ),
         ToolDefinition(

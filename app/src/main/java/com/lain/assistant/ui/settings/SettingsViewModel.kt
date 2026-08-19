@@ -31,9 +31,14 @@ data class SettingsUiState(
     val liveOpenRouterModels: List<ModelInfo>? = null,
     val isLoadingModels: Boolean = false
 ) {
+    /**
+     * The live fetch only returns free models, so the curated strong (paid) ones
+     * are kept in front of it — otherwise the models that actually drive
+     * multi-step automation would vanish from the picker entirely.
+     */
     val availableModels: List<ModelInfo>
-        get() = if (provider == Provider.OPENROUTER) {
-            liveOpenRouterModels ?: ModelCatalog.forProvider(provider)
+        get() = if (provider == Provider.OPENROUTER && liveOpenRouterModels != null) {
+            ModelCatalog.forProvider(provider).filter { it.strongAtTools } + liveOpenRouterModels
         } else {
             ModelCatalog.forProvider(provider)
         }

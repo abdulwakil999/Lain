@@ -17,7 +17,14 @@ data class ModelInfo(
     val provider: Provider,
     val isFree: Boolean = false,
     val recommended: Boolean = false,
-    val supportsTools: Boolean = true
+    val supportsTools: Boolean = true,
+    /**
+     * Whether this model is actually strong enough to drive multi-step phone
+     * automation. Free models can *accept* tool definitions and still be poor at
+     * chaining them — they stall, repeat calls, or narrate instead of acting.
+     * This is what separates "it works" from "it works reliably".
+     */
+    val strongAtTools: Boolean = false
 )
 
 /**
@@ -40,33 +47,35 @@ object ModelCatalog {
         // from OpenRouter at runtime (see OpenRouterModelsClient) and only
         // falls back to these hardcoded entries if that call fails, so this
         // set existing works today is a nice-to-have, not load-bearing.
-        ModelInfo("openai/gpt-oss-20b:free", "GPT-OSS 20B (Free)", Provider.OPENROUTER, isFree = true, recommended = true),
+        ModelInfo("openai/gpt-oss-20b:free", "GPT-OSS 20B (Free)", Provider.OPENROUTER, isFree = true),
         ModelInfo("nvidia/nemotron-3-nano-30b-a3b:free", "Nemotron 3 Nano 30B (Free)", Provider.OPENROUTER, isFree = true),
         ModelInfo("nvidia/nemotron-3-super-120b-a12b:free", "Nemotron 3 Super 120B (Free)", Provider.OPENROUTER, isFree = true),
         ModelInfo("google/gemma-4-31b-it:free", "Gemma 4 31B (Free)", Provider.OPENROUTER, isFree = true),
         ModelInfo("nvidia/nemotron-nano-9b-v2:free", "Nemotron Nano 9B (Free)", Provider.OPENROUTER, isFree = true),
 
-        // --- OpenRouter: paid, top-tier via a single unified key ---
-        ModelInfo("anthropic/claude-sonnet-5", "Claude Sonnet 5", Provider.OPENROUTER),
-        ModelInfo("openai/gpt-5", "GPT-5", Provider.OPENROUTER),
-        ModelInfo("google/gemini-3-pro", "Gemini 3 Pro", Provider.OPENROUTER),
+        // --- OpenRouter: paid, and the only tier that reliably drives multi-step
+        // automation. Slugs verified against OpenRouter's live catalogue. ---
+        ModelInfo("anthropic/claude-sonnet-5", "Claude Sonnet 5", Provider.OPENROUTER, recommended = true, strongAtTools = true),
+        ModelInfo("openai/gpt-5", "GPT-5", Provider.OPENROUTER, strongAtTools = true),
+        ModelInfo("openai/gpt-5-mini", "GPT-5 Mini (cheap)", Provider.OPENROUTER, strongAtTools = true),
+        ModelInfo("anthropic/claude-opus-5", "Claude Opus 5", Provider.OPENROUTER, strongAtTools = true),
+        ModelInfo("google/gemini-3.7-flash", "Gemini 3.7 Flash", Provider.OPENROUTER, strongAtTools = true),
+        ModelInfo("x-ai/grok-4.6", "Grok 4.6", Provider.OPENROUTER, strongAtTools = true),
 
         // --- Anthropic direct ---
-        ModelInfo("claude-opus-5", "Claude Opus 5", Provider.ANTHROPIC, recommended = true),
-        ModelInfo("claude-sonnet-5", "Claude Sonnet 5", Provider.ANTHROPIC),
-        ModelInfo("claude-haiku-4-5-20251001", "Claude Haiku 4.5", Provider.ANTHROPIC),
+        ModelInfo("claude-sonnet-5", "Claude Sonnet 5", Provider.ANTHROPIC, recommended = true, strongAtTools = true),
+        ModelInfo("claude-opus-5", "Claude Opus 5", Provider.ANTHROPIC, strongAtTools = true),
+        ModelInfo("claude-haiku-4-5-20251001", "Claude Haiku 4.5", Provider.ANTHROPIC, strongAtTools = true),
 
         // --- OpenAI direct ---
-        ModelInfo("gpt-5", "GPT-5", Provider.OPENAI, recommended = true),
-        ModelInfo("gpt-5-mini", "GPT-5 Mini", Provider.OPENAI),
+        ModelInfo("gpt-5", "GPT-5", Provider.OPENAI, recommended = true, strongAtTools = true),
+        ModelInfo("gpt-5-mini", "GPT-5 Mini", Provider.OPENAI, strongAtTools = true),
 
         // --- Gemini direct ---
-        ModelInfo("gemini-3-pro", "Gemini 3 Pro", Provider.GEMINI, recommended = true),
-        ModelInfo("gemini-3-flash", "Gemini 3 Flash", Provider.GEMINI),
+        ModelInfo("gemini-3.7-flash", "Gemini 3.7 Flash", Provider.GEMINI, recommended = true, strongAtTools = true),
 
         // --- Grok direct ---
-        ModelInfo("grok-4", "Grok 4", Provider.GROK, recommended = true),
-        ModelInfo("grok-4-mini", "Grok 4 Mini", Provider.GROK)
+        ModelInfo("grok-4.6", "Grok 4.6", Provider.GROK, recommended = true, strongAtTools = true)
     )
 
     fun forProvider(provider: Provider): List<ModelInfo> = models.filter { it.provider == provider }

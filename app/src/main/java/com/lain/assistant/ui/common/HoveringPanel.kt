@@ -5,6 +5,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -25,14 +27,23 @@ fun HoveringPanel(
     modifier: Modifier = Modifier,
     content: ColumnScopeContent
 ) {
-    Box(modifier = modifier.fillMaxWidth(), contentAlignment = Alignment.BottomCenter) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            // imePadding lifts the whole bar above the on-screen keyboard instead of
+            // letting it sit underneath; navigationBarsPadding keeps it clear of the
+            // gesture bar when the keyboard is closed.
+            .imePadding()
+            .navigationBarsPadding(),
+        contentAlignment = Alignment.BottomCenter
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
                 .background(LainNavyDeep.copy(alpha = 0.92f))
                 .border(3.dp, LainCream.copy(alpha = 0.15f), RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
-                .padding(horizontal = 24.dp, vertical = 20.dp)
+                .padding(horizontal = 16.dp, vertical = 14.dp)
         ) {
             content()
         }

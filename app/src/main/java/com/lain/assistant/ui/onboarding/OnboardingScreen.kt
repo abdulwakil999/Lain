@@ -119,9 +119,20 @@ private fun ModelChoice(
             Text("Checking what's actually free right now…", style = MaterialTheme.typography.bodyMedium, color = LainMuted)
             Spacer(Modifier.height(4.dp))
         }
+        Text(
+            "★ = reliably handles multi-step phone tasks. Free models often stall or just describe actions instead of doing them.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = LainMuted
+        )
+        Spacer(Modifier.height(4.dp))
         models.forEach { model ->
+            val badge = when {
+                model.strongAtTools -> "  ★"
+                model.isFree -> "  ·  FREE"
+                else -> ""
+            }
             PixelChoiceChip(
-                text = model.label + if (model.isFree) "  ·  FREE" else "",
+                text = model.label + badge,
                 selected = selectedId == model.id,
                 onClick = { onSelect(model.id) }
             )

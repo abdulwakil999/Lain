@@ -12,8 +12,10 @@ import com.lain.assistant.automation.RemindersRepository
 import com.lain.assistant.automation.VoiceInputController
 import com.lain.assistant.data.MemoryRepository
 import com.lain.assistant.network.ToolCall
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -47,16 +49,33 @@ class ToolDispatcher(context: Context) {
     private val memory = MemoryRepository(appContext)
     private val json = Json { ignoreUnknownKeys = true }
 
-    suspend fun execute(call: ToolCall): String {
+    /**
+     * Runs off the main thread. Walking an app's accessibility tree is not free,
+     * and doing it on the UI thread (which the engine's scope lives on) shows up
+     * as jank or, on a dense screen, an ANR.
+     */
+    suspend fun execute(call: ToolCall): String = withContext(Dispatchers.Default) {
         val args = runCatching { json.parseToJsonElement(call.argumentsJson) as JsonObject }.getOrNull()
-            ?: return "Failed: couldn't parse arguments"
+            ?: return@withContext "Failed: couldn't parse arguments"
 
         val result = try {
             when (call.name) {
                 // ------------------------------------------------------ apps
-                "open_app" -> apps.openApp(args.str("app_name")).toToolOutput()
+                "open_app" -> {
+                    val opened = apps.openApp(args.str("app_name")).toToolOutput()
+                    // Apps need a beat to draw; wait here and hand back the loaded screen so
+                    // the model doesn't burn two more rounds on wait + read_screen.
+                    delay(1600)
+                    val screen = LainAccessibilityService.instance?.readScreenText()
+                    if (screen != null) "$opened\n\nScreen now:\n$screen" else opened
+                }
                 "close_app" -> closeApp(args.str("app_name"))
-                "open_url" -> phone.openUrl(args.str("url")).toToolOutput()
+                "open_url" -> {
+                    val opened = phone.openUrl(args.str("url")).toToolOutput()
+                    delay(2200)
+                    val screen = LainAccessibilityService.instance?.readScreenText()
+                    if (screen != null) "$opened\n\nScreen now:\n$screen" else opened
+                }
 
                 // -------------------------------------------------- perception
                 "read_screen" -> withService { it.readScreenText() }
@@ -67,51 +86,67 @@ class ToolDispatcher(context: Context) {
                 }
 
                 // ----------------------------------------------------- control
+                // Every action below returns the resulting screen inline. Making the model
+                // spend a whole extra round on read_screen after each tap was the main reason
+                // it ran out of steps halfway through a task — and it doubled the tokens and
+                // request count for no benefit, since it always needs the new screen anyway.
                 "tap_text" -> withService { service ->
                     val label = args.str("text")
                     val point = service.findTapPointByText(label)
-                        ?: return@withService "Couldn't find \"$label\" on screen. Call read_screen to see what's actually there, then try a label from that list."
+                        ?: return@withService "Couldn't find \"$label\" on screen.\n\nHere's what IS on screen — pick a label from this list:\n" +
+                            service.readScreenText()
                     service.tap(point.first.toFloat(), point.second.toFloat())
-                    delay(600)
-                    "Tapped \"$label\". The screen has probably changed — call read_screen to see the new state and continue."
+                    delay(700)
+                    "Tapped \"$label\".\n\nScreen now:\n" + service.readScreenText()
                 }
                 "tap_screen" -> withService { service ->
                     service.tap(args.num("x"), args.num("y"))
-                    delay(600)
-                    "Tapped (${args.num("x").toInt()}, ${args.num("y").toInt()}). The screen has probably changed — call read_screen to see the new state and continue."
+                    delay(700)
+                    "Tapped (${args.num("x").toInt()}, ${args.num("y").toInt()}).\n\nScreen now:\n" + service.readScreenText()
                 }
                 "type_text" -> withService { service ->
                     val text = args.str("text")
                     if (service.typeText(text)) {
-                        "Typed \"$text\". Call read_screen to confirm it landed in the right field and to find the send/next button."
+                        delay(400)
+                        "Typed \"$text\".\n\nScreen now:\n" + service.readScreenText()
                     } else {
-                        "Couldn't find a text field to type into. Call read_screen, tap the [INPUT] element you want first, then type again."
+                        "Couldn't find a text field to type into. Tap the [INPUT] element you want first, then type again.\n\nScreen now:\n" +
+                            service.readScreenText()
                     }
                 }
                 "press_key" -> withService { service ->
-                    when (args.str("key").lowercase()) {
+                    val label = when (args.str("key").lowercase()) {
                         "back" -> { service.goBack(); "Pressed back." }
                         "home" -> { service.goHome(); "Went to the home screen." }
                         "recents" -> { service.openRecents(); "Opened recents." }
                         "notifications" -> { service.openNotifications(); "Opened the notification shade." }
                         "enter" -> {
-                            // No global ENTER action exists; the reliable equivalent is the IME's
-                            // own action button, which is on-screen and tappable.
-                            service.findTapPointByText("Send")?.let { service.tap(it.first.toFloat(), it.second.toFloat()) }
-                            "Tried to confirm via the on-screen Send/Go button. Call read_screen to check it worked."
+                            // There's no global ENTER action; submitting means pressing the app's
+                            // own confirm control, so try the usual labels before giving up.
+                            val hit = listOf("Search", "Go", "Send", "Done", "Enter")
+                                .firstNotNullOfOrNull { service.findTapPointByText(it) }
+                            if (hit != null) {
+                                service.tap(hit.first.toFloat(), hit.second.toFloat())
+                                "Submitted."
+                            } else {
+                                "No submit button found — tap the app's own Search/Send control instead."
+                            }
                         }
-                        else -> "Unknown key. Use one of: back, home, recents, notifications, enter."
+                        else -> return@withService "Unknown key. Use one of: back, home, recents, notifications, enter."
                     }
+                    delay(700)
+                    "$label\n\nScreen now:\n" + service.readScreenText()
                 }
                 "swipe_screen" -> withService { service ->
                     service.swipe(args.num("x1"), args.num("y1"), args.num("x2"), args.num("y2"))
-                    delay(500)
-                    "Swiped. Call read_screen to see the new state."
+                    delay(600)
+                    "Swiped.\n\nScreen now:\n" + service.readScreenText()
                 }
                 "wait" -> {
                     val seconds = args.num("seconds").coerceIn(0.5f, 5f)
                     delay((seconds * 1000).toLong())
-                    "Waited ${seconds}s. Call read_screen to see the current state."
+                    val screen = LainAccessibilityService.instance?.readScreenText()
+                    if (screen != null) "Waited ${seconds}s.\n\nScreen now:\n$screen" else "Waited ${seconds}s."
                 }
 
                 // ----------------------------------------------- communication
@@ -152,7 +187,7 @@ class ToolDispatcher(context: Context) {
         }
 
         // Images are passed through whole; only prose gets clipped.
-        return if (result.startsWith(IMAGE_RESULT_PREFIX) || result.length <= MAX_RESULT_CHARS) {
+        if (result.startsWith(IMAGE_RESULT_PREFIX) || result.length <= MAX_RESULT_CHARS) {
             result
         } else {
             result.take(MAX_RESULT_CHARS) + "\n… (truncated)"

@@ -44,8 +44,15 @@ data class ChatState(
     val isBusy: Boolean get() = isSending || isListening
 }
 
-private const val MAX_TOOL_ROUNDS = 14
+/**
+ * Each action now returns the resulting screen inline, so a round does roughly
+ * twice the work it used to and real tasks finish well inside this.
+ */
+private const val MAX_TOOL_ROUNDS = 22
 private const val MAX_HISTORY_MESSAGES = 40
+
+/** How many identical calls in a row before we assume the model is stuck in a loop. */
+private const val REPEAT_LIMIT = 3
 
 /**
  * The brain, deliberately living on the Application and not in a ViewModel.
@@ -205,6 +212,8 @@ class ChatEngine(
 
         var rounds = 0
         var finalText: String? = null
+        var lastSignature: String? = null
+        var repeatCount = 0
 
         while (rounds < MAX_TOOL_ROUNDS && finalText == null) {
             rounds++
@@ -219,6 +228,30 @@ class ChatEngine(
                 }
                 is LlmResult.ToolCalls -> {
                     conversation.add(LlmMessage(role = LlmMessage.Role.ASSISTANT, text = "", toolCalls = result.calls))
+
+                    // Weaker models get stuck re-issuing the same call forever and burn the whole
+                    // budget without moving. Catch it early and tell the model plainly, rather
+                    // than letting it spin until the loop gives up.
+                    val signature = result.calls.joinToString("|") { "${it.name}(${it.argumentsJson})" }
+                    if (signature == lastSignature) repeatCount++ else repeatCount = 0
+                    lastSignature = signature
+
+                    if (repeatCount >= REPEAT_LIMIT) {
+                        for (call in result.calls) {
+                            conversation.add(
+                                LlmMessage(
+                                    role = LlmMessage.Role.TOOL,
+                                    text = "You have now called this exact thing ${repeatCount + 1} times and the screen isn't changing. " +
+                                        "Stop repeating it. Either do something different — a different label, scroll, go back — " +
+                                        "or stop and tell the user what's blocking you.",
+                                    toolCallId = call.id
+                                )
+                            )
+                        }
+                        repeatCount = 0
+                        continue
+                    }
+
                     val capturedImages = mutableListOf<String>()
 
                     for (call: ToolCall in result.calls) {
@@ -247,7 +280,7 @@ class ChatEngine(
         }
 
         val replyText = finalText
-            ?: "I got partway through that and ran out of steps. Tell me what you can see and I'll pick it up."
+            ?: "That's taking more steps than I'd expect — I've paused so I don't keep going in circles. Tell me what's on your screen and I'll take it from there."
         conversation.add(LlmMessage(role = LlmMessage.Role.ASSISTANT, text = replyText))
         _state.update {
             it.copy(
@@ -333,14 +366,19 @@ class ChatEngine(
             actions; you take them.
 
             HOW YOU OPERATE THE PHONE
-            You drive apps the way a person does: look, act, look again. The loop is always
-            read_screen (or look_at_screen) -> act (tap_text / type_text / swipe) -> read_screen
-            again to confirm what changed -> continue. Never fire one action and assume it worked;
-            the screen is the source of truth.
+            Every action you take — tap_text, tap_screen, type_text, press_key, swipe, open_app,
+            open_url — hands you back the resulting screen automatically, under "Screen now:". So
+            do NOT call read_screen after an action; you already have the result. Read it, decide
+            the next move, and take it in the same turn. Only call read_screen on its own when you
+            need to look at something without touching it first.
 
-            Typing is two moves: tap_text the field so it takes focus, then type_text. Prefer
-            tap_text over tap_screen — matching a visible label beats guessing pixels. After
-            opening an app, call wait, then read_screen; apps need a beat to draw.
+            Screen lines are marked [INPUT] (a text field), [BUTTON] (tappable) or [text], each
+            with a tap point. Typing is two moves: tap_text the field so it takes focus, then
+            type_text. Prefer tap_text over tap_screen — matching a visible label beats guessing
+            pixels. To submit a search, use press_key("enter").
+
+            If a label you want isn't in the list, don't guess and don't repeat yourself — scroll
+            with swipe_screen, or press_key("back") and try another route.
 
             YOU ARE OFTEN MID-CONVERSATION WHILE THE USER IS INSIDE ANOTHER APP
             They talk to you in short steps: "open chrome", then "search anime heaven", then "open
