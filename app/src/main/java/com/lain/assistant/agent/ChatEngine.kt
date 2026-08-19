@@ -214,6 +214,10 @@ class ChatEngine(
         var finalText: String? = null
         var lastSignature: String? = null
         var repeatCount = 0
+        // Opening/closing apps is the most visible and most disruptive thing Lain can do,
+        // so it gets a hard ceiling per request. A confused model should never be able to
+        // cycle the user's apps more than a couple of times before being cut off.
+        var appSwitches = 0
 
         while (rounds < MAX_TOOL_ROUNDS && finalText == null) {
             rounds++
@@ -255,6 +259,18 @@ class ChatEngine(
                     val capturedImages = mutableListOf<String>()
 
                     for (call: ToolCall in result.calls) {
+                        if (call.name == "open_app" || call.name == "close_app") appSwitches++
+                        if (appSwitches > 4) {
+                            conversation.add(
+                                LlmMessage(
+                                    role = LlmMessage.Role.TOOL,
+                                    text = "Refused: you've opened or closed apps too many times for one request. " +
+                                        "Stop switching apps. Read the screen you're on and finish there, or tell the user what's blocking you.",
+                                    toolCallId = call.id
+                                )
+                            )
+                            continue
+                        }
                         setStatus(statusFor(call))
                         val output = toolDispatcher.execute(call)
                         if (output.startsWith(ToolDispatcher.IMAGE_RESULT_PREFIX)) {
@@ -379,6 +395,16 @@ class ChatEngine(
 
             If a label you want isn't in the list, don't guess and don't repeat yourself — scroll
             with swipe_screen, or press_key("back") and try another route.
+
+            HARD RULES — breaking these is worse than failing the task
+            1. Never close an app unless the user explicitly asked you to close it. "Open X" never
+               means close anything.
+            2. Open an app at most once per request. If you're already in the right app, stay there.
+            3. Only tap coordinates that appear in the screen listing you were just given. Never
+               invent coordinates, and never tap when the screen listing is empty or says there's
+               nothing to operate — read again or stop and say what's wrong.
+            4. If you don't understand what's on screen, say so and stop. Do not tap around to
+               find out.
 
             YOU ARE OFTEN MID-CONVERSATION WHILE THE USER IS INSIDE ANOTHER APP
             They talk to you in short steps: "open chrome", then "search anime heaven", then "open

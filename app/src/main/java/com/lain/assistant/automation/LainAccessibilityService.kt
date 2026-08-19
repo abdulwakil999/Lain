@@ -15,6 +15,7 @@ import android.util.Base64
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.ByteArrayOutputStream
@@ -98,17 +99,39 @@ class LainAccessibilityService : AccessibilityService() {
      * the user is actually looking at.
      */
     private fun targetRoot(): AccessibilityNodeInfo? {
-        val self = packageName
-        val fromWindows = runCatching {
-            windows
-                .asSequence()
-                .mapNotNull { it.root }
-                .firstOrNull { it.packageName != null && it.packageName != self }
-        }.getOrNull()
-        if (fromWindows != null) return fromWindows
+        val self = packageName?.toString()
 
-        val active = rootInActiveWindow ?: return null
-        return if (active.packageName == self) null else active
+        // The focused window is the right answer almost always — check it FIRST.
+        rootInActiveWindow?.let { active ->
+            val pkg = active.packageName?.toString()
+            if (pkg != null && pkg != self && !isSystemChrome(pkg)) return active
+        }
+
+        // Only fall back to scanning. getWindows() is NOT in z-order, so an unsorted
+        // firstOrNull{} happily returns the status bar, nav bar, wallpaper or IME —
+        // which is what made Lain "read" the system chrome instead of the app and then
+        // tap at nonsense coordinates. Restrict to real application windows and take
+        // the frontmost by layer.
+        return runCatching {
+            windows
+                .filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+                .sortedByDescending { it.layer }
+                .mapNotNull { it.root }
+                .firstOrNull { root ->
+                    val pkg = root.packageName?.toString()
+                    pkg != null && pkg != self && !isSystemChrome(pkg)
+                }
+        }.getOrNull()
+    }
+
+    /** System UI surfaces are never a task target — they're decoration around one. */
+    private fun isSystemChrome(pkg: String): Boolean =
+        pkg == "com.android.systemui" || pkg == "android" || pkg.endsWith(".inputmethod.latin")
+
+    /** True when Lain's own UI is what's on screen, so there's no other app to drive. */
+    fun isOwnUiInForeground(): Boolean {
+        val pkg = rootInActiveWindow?.packageName?.toString() ?: return false
+        return pkg == packageName?.toString()
     }
 
     /**
@@ -117,7 +140,12 @@ class LainAccessibilityService : AccessibilityService() {
      * is far more reliable than asking it to guess pixel coordinates.
      */
     fun readScreenText(): String {
-        val root = targetRoot() ?: return "(nothing readable on screen right now)"
+        val root = targetRoot() ?: return if (isOwnUiInForeground()) {
+            "Lain's own chat screen is what's on display — there is no other app to operate. " +
+                "If the task needs an app, call open_app first. Do NOT tap or swipe: there is nothing here to tap."
+        } else {
+            "Can't read the screen right now. Do NOT tap or swipe blindly — wait a moment and read again."
+        }
         val out = StringBuilder()
         val counter = intArrayOf(0)
         out.append("App: ${root.packageName ?: "unknown"}\n")
