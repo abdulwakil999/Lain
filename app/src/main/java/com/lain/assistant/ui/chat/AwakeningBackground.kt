@@ -22,6 +22,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
@@ -121,5 +123,23 @@ fun AwakeningBackground(
                 }
             }
         }
+
+        // The artwork's bottom edge is the character's near-black clothing while the page
+        // around it is light slate; butted together that hard line is what read as the
+        // portrait being cut in half. Dissolve the lower part of the square into the
+        // backdrop instead. Drawn last so it fades both portraits during the reveal.
+        Box(
+            modifier = Modifier
+                .width(artSize)
+                .height(artSize)
+                .align(Alignment.TopCenter)
+                .background(
+                    Brush.verticalGradient(
+                        0.55f to Color.Transparent,
+                        0.82f to LainArtBackdrop.copy(alpha = 0.65f),
+                        1.0f to LainArtBackdrop
+                    )
+                )
+        )
     }
 }

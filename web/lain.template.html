@@ -1,0 +1,941 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Lain</title>
+<style>
+  :root{
+    --ink:#14161C;
+    --navy:#333F52;
+    --navy-deep:#1B222E;
+    --backdrop:#393C4E;   /* exact slate sampled from the artwork's own background */
+    --salmon:#E08F82;
+    --salmon-deep:#C97367;
+    --cream:#F3EEDF;
+    --muted:#8891A1;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;margin:0}
+  body{
+    background:var(--backdrop);
+    color:var(--cream);
+    font-family:ui-rounded,"Segoe UI Rounded","Comic Sans MS",system-ui,-apple-system,sans-serif;
+    overflow:hidden;
+  }
+  #app{position:relative;height:100dvh;width:100%;max-width:520px;margin:0 auto;overflow:hidden}
+
+  /* ---------- backdrop + strip reveal ---------- */
+  .stage{position:absolute;inset:0;background:var(--backdrop)}
+  .art{
+    position:absolute;top:0;left:0;width:100%;aspect-ratio:1/1;
+    background-size:100% 100%;background-repeat:no-repeat;
+    image-rendering:pixelated;
+  }
+  .art.focus{background-image:var(--img-focus)}
+  /* The artwork's bottom edge is the character's near-black clothing, while the
+     surrounding page is light slate — butted together that reads as the portrait
+     being sliced in half. This dissolves the lower part of the square into the
+     backdrop so there's no edge to see. Sits above the strips so it fades both
+     portraits during the reveal. */
+  .fade{
+    position:absolute;top:0;left:0;width:100%;aspect-ratio:1/1;z-index:2;pointer-events:none;
+    background:linear-gradient(to bottom,
+      rgba(57,60,78,0) 55%,
+      rgba(57,60,78,.65) 82%,
+      var(--backdrop) 100%);
+  }
+  .strips{position:absolute;top:0;left:0;width:100%;aspect-ratio:1/1;display:flex;overflow:hidden}
+  .strip{position:relative;flex:1 1 0;height:100%;overflow:hidden;transition:transform 1.1s cubic-bezier(.4,0,.2,1)}
+  .strip i{
+    position:absolute;top:0;height:100%;width:600%;
+    background-image:var(--img-awake);background-size:100% 100%;background-repeat:no-repeat;
+    image-rendering:pixelated;display:block;
+  }
+  .strip:nth-child(1) i{left:0}
+  .strip:nth-child(2) i{left:-100%}
+  .strip:nth-child(3) i{left:-200%}
+  .strip:nth-child(4) i{left:-300%}
+  .strip:nth-child(5) i{left:-400%}
+  .strip:nth-child(6) i{left:-500%}
+  .revealed .strip:nth-child(odd){transform:translateY(-140vh)}
+  .revealed .strip:nth-child(even){transform:translateY(140vh)}
+  .revealed .strip:nth-child(1){transition-delay:0ms}
+  .revealed .strip:nth-child(2){transition-delay:130ms}
+  .revealed .strip:nth-child(3){transition-delay:260ms}
+  .revealed .strip:nth-child(4){transition-delay:390ms}
+  .revealed .strip:nth-child(5){transition-delay:520ms}
+  .revealed .strip:nth-child(6){transition-delay:650ms}
+
+  /* ---------- shared controls ---------- */
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;
+    background:var(--salmon);color:var(--ink);border:2px solid var(--salmon-deep);
+    border-radius:6px;padding:12px 16px;font:inherit;font-weight:700;font-size:15px;
+    cursor:pointer;user-select:none;
+  }
+  .btn:disabled{background:var(--muted);border-color:var(--muted);cursor:default;opacity:.7}
+  .btn.wide{width:100%}
+  .btn.ghost{background:transparent;border-color:var(--muted);color:var(--cream)}
+  .btn.ghost.on{background:var(--salmon);border-color:var(--salmon-deep);color:var(--ink)}
+  .btn.dark{background:var(--salmon-deep);border-color:var(--salmon-deep);color:var(--cream)}
+  input,textarea,select{
+    width:100%;background:rgba(20,22,28,.55);color:var(--cream);
+    border:2px solid var(--muted);border-radius:6px;padding:12px;font:inherit;font-size:15px;
+  }
+  input:focus,select:focus{outline:none;border-color:var(--salmon)}
+  input::placeholder{color:var(--muted)}
+  .row{display:flex;gap:8px;align-items:center}
+  .wrap{display:flex;gap:8px;flex-wrap:wrap}
+  .muted{color:var(--muted);font-size:13px;line-height:1.45}
+  h1{font-size:26px;margin:0 0 14px}
+  h2{font-size:15px;color:var(--salmon);margin:0 0 8px;font-weight:700}
+
+  /* ---------- panel docked to the bottom ---------- */
+  .panel{
+    position:absolute;left:0;right:0;bottom:0;
+    background:rgba(27,34,46,.94);
+    border-top:3px solid rgba(243,238,223,.15);
+    border-radius:18px 18px 0 0;
+    padding:16px 16px calc(16px + env(safe-area-inset-bottom));
+    backdrop-filter:blur(6px);
+    max-height:88%;overflow-y:auto;
+  }
+
+  /* ---------- chat ---------- */
+  #chatScroll{
+    position:absolute;left:0;right:0;overflow-y:auto;padding:10px 14px 12px;
+    display:flex;flex-direction:column;gap:10px;
+  }
+  .bubble{max-width:80%;padding:10px 14px;border-radius:10px;font-size:15px;line-height:1.4;white-space:pre-wrap;word-wrap:break-word}
+  .bubble.lain{background:rgba(201,115,103,.94);color:var(--cream);align-self:flex-start}
+  .bubble.user{background:rgba(243,238,223,.94);color:var(--ink);align-self:flex-end}
+  .bubble.tool{background:rgba(51,63,82,.9);color:var(--muted);align-self:flex-start;font-size:12.5px;font-family:ui-monospace,Menlo,monospace}
+  .topbar{position:absolute;top:0;right:0;padding:10px 12px;display:flex;gap:8px;z-index:5}
+  .pill{
+    background:rgba(201,115,103,.88);color:var(--cream);border:0;border-radius:6px;
+    padding:7px 11px;font:inherit;font-size:12px;font-weight:700;cursor:pointer;
+  }
+  .pill.off{background:rgba(201,115,103,.45)}
+  .status{color:var(--muted);font-size:13px;margin-bottom:8px;min-height:18px}
+  .err{color:var(--salmon);font-size:13px;margin-bottom:8px;line-height:1.4}
+
+  .hidden{display:none !important}
+  .center{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+  .banner{
+    background:var(--navy);border-radius:8px;padding:10px 12px;font-size:12.5px;
+    color:var(--cream);line-height:1.45;margin-bottom:4px;
+  }
+  .banner b{color:var(--salmon)}
+  ::-webkit-scrollbar{width:0;height:0}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ============ BOOT ============ -->
+  <div id="boot" class="center"><div class="muted">…</div></div>
+
+  <!-- ============ ONBOARDING ============ -->
+  <div id="onboarding" class="hidden">
+    <div class="stage">
+      <div class="art" style="background-image:var(--img-awake)"></div>
+      <div class="fade"></div>
+    </div>
+    <div class="panel" id="obPanel">
+      <h1 id="obQuestion">What's your name?</h1>
+      <div id="obBody"></div>
+      <div style="height:16px"></div>
+      <button class="btn wide" id="obNext">Continue</button>
+      <div style="height:6px"></div>
+      <div class="muted" id="obHint"></div>
+    </div>
+  </div>
+
+  <!-- ============ CHAT ============ -->
+  <div id="chat" class="hidden">
+    <div class="stage" id="stage">
+      <div class="art focus"></div>
+      <div class="strips" id="strips">
+        <div class="strip"><i></i></div><div class="strip"><i></i></div><div class="strip"><i></i></div>
+        <div class="strip"><i></i></div><div class="strip"><i></i></div><div class="strip"><i></i></div>
+      </div>
+      <div class="fade"></div>
+    </div>
+
+    <div class="topbar">
+      <button class="pill off" id="handsFree">TAP-TO-TALK</button>
+      <button class="pill" id="muteBtn">VOICE</button>
+      <button class="pill" id="settingsBtn">Settings</button>
+    </div>
+
+    <div id="chatScroll"></div>
+
+    <div class="panel" id="chatPanel">
+      <div class="banner" id="webBanner">
+        <b>Web demo.</b> Chat, voice, memory and tool-calling all run here.
+        Phone control — opening apps, tapping, calls, SMS — needs the Android build,
+        since a browser has no access to the operating system.
+      </div>
+      <div class="status" id="status"></div>
+      <div class="err hidden" id="error"></div>
+      <div class="row">
+        <button class="btn dark hidden" id="stopBtn">STOP</button>
+        <button class="btn" id="micBtn">MIC</button>
+        <input id="input" placeholder="what's up niceo" autocomplete="off">
+        <button class="btn" id="sendBtn">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ SETTINGS ============ -->
+  <div id="settings" class="hidden" style="position:absolute;inset:0;background:var(--navy-deep);overflow-y:auto;padding:20px 18px 40px">
+    <button class="pill" id="backBtn" style="background:transparent;color:var(--salmon);padding-left:0">&lt; Back</button>
+    <h1 style="margin-top:12px">Settings</h1>
+
+    <h2>Your name</h2><input id="sName">
+    <div style="height:14px"></div>
+    <h2>Age</h2><input id="sAge" inputmode="numeric">
+    <div style="height:14px"></div>
+    <h2>Gender</h2><div class="wrap" id="sGender"></div>
+    <div style="height:14px"></div>
+    <h2>Nickname (what Lain calls you)</h2><input id="sNick">
+    <div style="height:20px"></div>
+
+    <h2>Provider</h2><div class="wrap" id="sProvider"></div>
+    <div style="height:16px"></div>
+    <h2>Model</h2>
+    <div class="muted" style="margin-bottom:8px">★ models reliably chain multi-step tasks. Free models often stall or describe an action instead of doing it.</div>
+    <div class="wrap" id="sModel"></div>
+    <div style="height:16px"></div>
+    <h2 id="sKeyLabel">API key</h2><input id="sKey" type="password" placeholder="API key">
+    <div class="muted" style="margin-top:6px">Stored only in this browser's localStorage.</div>
+    <div style="height:14px"></div>
+    <button class="btn wide" id="testBtn">Test connection</button>
+    <div class="muted" id="testResult" style="margin-top:8px"></div>
+
+    <div style="height:20px"></div>
+    <h2>Memory</h2>
+    <div class="muted" id="memList">Nothing saved yet.</div>
+    <div style="height:8px"></div>
+    <button class="btn ghost" id="clearMem">Clear memory</button>
+
+    <div style="height:24px"></div>
+    <button class="btn wide" id="saveBtn">Save</button>
+    <div style="height:10px"></div>
+    <button class="btn ghost wide" id="resetBtn">Reset everything</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* =======================================================================
+   Lain — single-file web build.
+   Mirrors the Android app's onboarding, chat, agent loop, memory, voice
+   and settings. Device automation is deliberately absent: a browser cannot
+   read or tap other apps, so those tools report that honestly rather than
+   pretending to work.
+   ======================================================================= */
+
+const IMG_AWAKE = "__IMG_AWAKE__";
+const IMG_FOCUS = "__IMG_FOCUS__";
+document.documentElement.style.setProperty('--img-awake', `url(${IMG_AWAKE})`);
+document.documentElement.style.setProperty('--img-focus', `url(${IMG_FOCUS})`);
+
+const $ = id => document.getElementById(id);
+
+/* ----------------------------- providers ----------------------------- */
+const PROVIDERS = {
+  openrouter:{ name:"OpenRouter", base:"https://openrouter.ai/api/v1/", anthropic:false },
+  anthropic: { name:"Anthropic",  base:"https://api.anthropic.com/v1/",  anthropic:true  },
+  openai:    { name:"OpenAI",     base:"https://api.openai.com/v1/",     anthropic:false },
+  gemini:    { name:"Gemini",     base:"https://generativelanguage.googleapis.com/v1beta/openai/", anthropic:false },
+  grok:      { name:"Grok",       base:"https://api.x.ai/v1/",           anthropic:false },
+};
+
+/* Slugs verified against OpenRouter's live catalogue. */
+const MODELS = {
+  openrouter:[
+    {id:"anthropic/claude-sonnet-5", label:"Claude Sonnet 5", strong:true},
+    {id:"openai/gpt-5",              label:"GPT-5",           strong:true},
+    {id:"openai/gpt-5-mini",         label:"GPT-5 Mini",      strong:true},
+    {id:"anthropic/claude-opus-5",   label:"Claude Opus 5",   strong:true},
+    {id:"google/gemini-3.7-flash",   label:"Gemini 3.7 Flash",strong:true},
+    {id:"x-ai/grok-4.6",             label:"Grok 4.6",        strong:true},
+    {id:"openai/gpt-oss-20b:free",   label:"GPT-OSS 20B",     free:true},
+    {id:"nvidia/nemotron-3-nano-30b-a3b:free", label:"Nemotron 3 Nano 30B", free:true},
+    {id:"google/gemma-4-31b-it:free",label:"Gemma 4 31B",     free:true},
+  ],
+  anthropic:[
+    {id:"claude-sonnet-5", label:"Claude Sonnet 5", strong:true},
+    {id:"claude-opus-5",   label:"Claude Opus 5",   strong:true},
+    {id:"claude-haiku-4-5-20251001", label:"Claude Haiku 4.5", strong:true},
+  ],
+  openai:[
+    {id:"gpt-5",      label:"GPT-5",      strong:true},
+    {id:"gpt-5-mini", label:"GPT-5 Mini", strong:true},
+  ],
+  gemini:[ {id:"gemini-3.7-flash", label:"Gemini 3.7 Flash", strong:true} ],
+  grok:[   {id:"grok-4.6",         label:"Grok 4.6",         strong:true} ],
+};
+
+/* ------------------------------- state ------------------------------- */
+const DEFAULTS = {
+  onboarded:false, name:"", age:"", gender:"", nickname:"",
+  provider:"openrouter", model:"anthropic/claude-sonnet-5", key:"",
+  muted:false, memory:{}, notes:[]
+};
+let S = load();
+
+function load(){
+  try{
+    const raw = localStorage.getItem("lain.state");
+    return raw ? Object.assign({}, DEFAULTS, JSON.parse(raw)) : Object.assign({}, DEFAULTS);
+  }catch(e){ return Object.assign({}, DEFAULTS); }
+}
+function save(){ try{ localStorage.setItem("lain.state", JSON.stringify(S)); }catch(e){} }
+
+/* Conversation is in-memory only; it is not part of persisted state. */
+let convo = [];
+let messages = [];
+let busy = false, listening = false, handsFree = false, abortCtl = null;
+
+/* ------------------------------- tools -------------------------------
+   Only things a browser can genuinely do. Anything phone-specific returns
+   a clear explanation instead of a fake success — a demo that lies is
+   worse than one with a stated boundary.                                */
+const TOOLS = [
+  { name:"remember", description:"Permanently remember a fact about the user — a nickname, a preference, who someone is. Save these whenever you learn one, without being asked.",
+    parameters:{type:"object",properties:{key:{type:"string",description:"Short identifier"},value:{type:"string",description:"The fact"}},required:["key","value"]} },
+  { name:"forget", description:"Delete something previously remembered.",
+    parameters:{type:"object",properties:{key:{type:"string"}},required:["key"]} },
+  { name:"write_note", description:"Save a note for the user.",
+    parameters:{type:"object",properties:{text:{type:"string"}},required:["text"]} },
+  { name:"list_notes", description:"List saved notes.", parameters:{type:"object",properties:{}} },
+  { name:"set_reminder", description:"Set a reminder that fires a browser notification.",
+    parameters:{type:"object",properties:{text:{type:"string"},minutes_from_now:{type:"number"}},required:["text","minutes_from_now"]} },
+  { name:"get_time", description:"Get the current date and time.", parameters:{type:"object",properties:{}} },
+  { name:"open_url", description:"Open a web page in a new tab.",
+    parameters:{type:"object",properties:{url:{type:"string"}},required:["url"]} },
+  { name:"control_phone", description:"Attempt a phone action: open/close an app, tap or type on screen, place a call, send SMS or WhatsApp. Only works in the Android build.",
+    parameters:{type:"object",properties:{action:{type:"string",description:"What you were asked to do"}},required:["action"]} },
+];
+
+async function runTool(name, args){
+  switch(name){
+    case "remember":{
+      const k = String(args.key||"").trim().toLowerCase();
+      if(!k) return "Failed: no key given.";
+      S.memory[k] = String(args.value||"").slice(0,200); save(); renderMemory();
+      return `Remembered — ${k}: ${S.memory[k]}`;
+    }
+    case "forget":{
+      const k = String(args.key||"").trim().toLowerCase();
+      if(S.memory[k]){ delete S.memory[k]; save(); renderMemory(); return `Forgot "${k}".`; }
+      return `Nothing remembered under "${k}".`;
+    }
+    case "write_note":{
+      S.notes.push({text:String(args.text||""), at:Date.now()}); save();
+      return `Saved note: "${args.text}"`;
+    }
+    case "list_notes":
+      return S.notes.length ? S.notes.map(n=>"- "+n.text).join("\n") : "No notes yet.";
+    case "set_reminder":{
+      const mins = Math.max(0, Number(args.minutes_from_now)||0);
+      const text = String(args.text||"");
+      if("Notification" in window && Notification.permission === "default"){
+        try{ await Notification.requestPermission(); }catch(e){}
+      }
+      setTimeout(()=>{
+        if("Notification" in window && Notification.permission === "granted"){
+          new Notification("Lain", {body:text});
+        }else{
+          pushMessage("lain", `Reminder: ${text}`);
+        }
+      }, mins*60000);
+      return `Reminder set for ${mins} minute(s): "${text}"`;
+    }
+    case "get_time":
+      return new Date().toString();
+    case "open_url":{
+      let u = String(args.url||"");
+      if(!/^https?:\/\//i.test(u)) u = "https://" + u;
+      window.open(u, "_blank", "noopener");
+      return `Opened ${u} in a new tab.`;
+    }
+    case "control_phone":
+      return "Not available in the web version. This browser has no access to the phone's apps, screen, dialler or messages — that requires the Android build, where the Accessibility Service does the work. Tell the user this plainly and briefly; do not pretend it worked or retry.";
+    default:
+      return "Unknown tool: " + name;
+  }
+}
+
+/* ------------------------------ prompt ------------------------------- */
+function systemPrompt(){
+  const nick = S.nickname || "you";
+  const name = S.name || "the user";
+  const mem = Object.keys(S.memory).length
+    ? "What you already know about them:\n" + Object.entries(S.memory).map(([k,v])=>`- ${k}: ${v}`).join("\n")
+    : "You haven't saved anything about them yet. When you learn something durable, call `remember` straight away, without being asked.";
+
+  return `You are Lain — short for "Leave-it-to-Artificial-intelligence-Niceo". This is your web build,
+running in a browser.
+
+WHAT YOU CAN DO HERE
+Remember and recall facts, keep notes, set reminders, tell the time, and open web pages. Use the tools
+rather than describing what you'd do.
+
+WHAT YOU CANNOT DO HERE
+A browser has no access to the operating system, so you cannot open phone apps, read or tap the screen,
+place calls, or send SMS/WhatsApp. If asked for any of those, call control_phone once so the limit is
+recorded, then say plainly and in one line that it needs the Android build. Never fake it, never retry it.
+
+WHO YOU'RE TALKING TO
+They go by "${nick}" — use that. Their real name, "${name}", is for moments that call for formality:
+something official, something serious, or writing in their name.${S.age ? " They're "+S.age+"." : ""}${S.gender ? " Gender: "+S.gender+"." : ""}
+
+${mem}
+
+VOICE
+Cool, capable, a little dry. Talk like someone already handling it, not a service announcing itself.
+Short sentences — often one or two lines, and they may be read aloud. No "I'd be happy to", no repeating
+the request back, no bullet-point reports unless asked.`;
+}
+
+/* ------------------------------ network ------------------------------ */
+async function callModel(){
+  const p = PROVIDERS[S.provider];
+  const url = p.base.replace(/\/$/,"") + (p.anthropic ? "/messages" : "/chat/completions");
+  abortCtl = new AbortController();
+
+  let body, headers = {"Content-Type":"application/json"};
+
+  if(p.anthropic){
+    headers["x-api-key"] = S.key;
+    headers["anthropic-version"] = "2023-06-01";
+    // Anthropic blocks browser calls unless this opt-in header is present.
+    headers["anthropic-dangerous-direct-browser-access"] = "true";
+    body = {
+      model:S.model, max_tokens:1024, system:systemPrompt(),
+      messages:convo, tools:TOOLS.map(t=>({name:t.name,description:t.description,input_schema:t.parameters}))
+    };
+  }else{
+    headers["Authorization"] = "Bearer " + S.key;
+    if(S.provider === "openrouter"){
+      headers["HTTP-Referer"] = location.origin || "https://lain.app";
+      headers["X-Title"] = "Lain";
+    }
+    body = {
+      model:S.model,
+      messages:[{role:"system",content:systemPrompt()}, ...convo],
+      tools:TOOLS.map(t=>({type:"function",function:{name:t.name,description:t.description,parameters:t.parameters}})),
+      tool_choice:"auto"
+    };
+  }
+
+  // Mobile/flaky DNS fails intermittently; one attempt turns that into a hard failure.
+  let lastErr = null;
+  for(let attempt=0; attempt<3; attempt++){
+    try{
+      const res = await fetch(url,{method:"POST",headers,body:JSON.stringify(body),signal:abortCtl.signal});
+      const raw = await res.text();
+      if(!res.ok) return {error:`HTTP ${res.status}: ${raw.slice(0,400)}`};
+      return parseReply(JSON.parse(raw), p.anthropic);
+    }catch(e){
+      if(e.name === "AbortError") throw e;
+      lastErr = e;
+      if(attempt < 2) await sleep(600*(attempt+1));
+    }
+  }
+  return {error: describeNetErr(lastErr)};
+}
+
+function describeNetErr(e){
+  const m = (e && e.message) || "Network error";
+  if(/failed to fetch|networkerror|load failed/i.test(m)){
+    return "Couldn't reach the API. Check the internet connection. If it's on, this is usually CORS — "+
+           "OpenRouter allows browser calls, some providers don't.";
+  }
+  return m;
+}
+
+function parseReply(json, isAnthropic){
+  if(isAnthropic){
+    const blocks = json.content || [];
+    const calls = blocks.filter(b=>b.type==="tool_use")
+      .map(b=>({id:b.id,name:b.name,args:b.input||{}}));
+    const text = blocks.filter(b=>b.type==="text").map(b=>b.text).join("");
+    return calls.length ? {calls, text} : {text};
+  }
+  const msg = (json.choices && json.choices[0] && json.choices[0].message) || {};
+  if(msg.tool_calls && msg.tool_calls.length){
+    return {
+      calls: msg.tool_calls.map(c=>({
+        id:c.id, name:c.function.name,
+        args: safeParse(c.function.arguments)
+      })),
+      text: msg.content || ""
+    };
+  }
+  return {text: msg.content || ""};
+}
+const safeParse = s => { try{ return JSON.parse(s||"{}"); }catch(e){ return {}; } };
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+
+/* ---------------------------- agent loop ----------------------------- */
+const MAX_ROUNDS = 10;
+
+async function send(text){
+  text = (text || $("input").value || "").trim();
+  if(!text || busy) return;
+  if(!S.key){ showError("No API key saved. Open Settings."); return; }
+
+  $("input").value = "";
+  pushMessage("user", text);
+  convo.push({role:"user", content:text});
+
+  setBusy(true, "Thinking…");
+  hideError();
+
+  try{
+    let rounds = 0, finalText = null, lastSig = null, repeats = 0;
+
+    while(rounds < MAX_ROUNDS && finalText === null){
+      rounds++;
+      if(rounds > 1) setStatus(`Working… (step ${rounds})`);
+
+      const res = await callModel();
+      if(res.error){ showError(res.error); break; }
+
+      if(res.calls && res.calls.length){
+        // Catch a model looping on the same call instead of letting it burn the budget.
+        const sig = res.calls.map(c=>c.name+JSON.stringify(c.args)).join("|");
+        repeats = (sig === lastSig) ? repeats+1 : 0;
+        lastSig = sig;
+
+        pushAssistantCalls(res);
+
+        if(repeats >= 2){
+          for(const c of res.calls) pushToolResult(c, "You've called this repeatedly with no change. Stop repeating it — do something different, or tell the user what's blocking you.");
+          repeats = 0;
+          continue;
+        }
+
+        for(const c of res.calls){
+          setStatus(statusFor(c.name));
+          const out = await runTool(c.name, c.args);
+          pushToolResult(c, out);
+        }
+      }else{
+        finalText = res.text || "";
+      }
+    }
+
+    if(finalText !== null){
+      const reply = finalText || "…";
+      convo.push({role:"assistant", content:reply});
+      pushMessage("lain", reply);
+      speak(reply);
+    }else if(rounds >= MAX_ROUNDS){
+      pushMessage("lain","That's taking more steps than I'd expect, so I've stopped rather than spin. Try asking a smaller piece of it.");
+    }
+  }catch(e){
+    if(e.name !== "AbortError") showError(e.message || String(e));
+  }finally{
+    setBusy(false);
+    trim();
+    if(handsFree && !busy){ await sleep(900); if(handsFree) startVoice(); }
+  }
+}
+
+function pushAssistantCalls(res){
+  const p = PROVIDERS[S.provider];
+  if(p.anthropic){
+    const content = [];
+    if(res.text) content.push({type:"text",text:res.text});
+    for(const c of res.calls) content.push({type:"tool_use",id:c.id,name:c.name,input:c.args});
+    convo.push({role:"assistant", content});
+  }else{
+    convo.push({
+      role:"assistant", content:res.text||"",
+      tool_calls:res.calls.map(c=>({id:c.id,type:"function",function:{name:c.name,arguments:JSON.stringify(c.args)}}))
+    });
+  }
+}
+
+function pushToolResult(call, out){
+  const p = PROVIDERS[S.provider];
+  if(p.anthropic){
+    convo.push({role:"user", content:[{type:"tool_result", tool_use_id:call.id, content:out}]});
+  }else{
+    convo.push({role:"tool", tool_call_id:call.id, content:out});
+  }
+  pushMessage("tool", `${call.name} → ${out}`);
+}
+
+function statusFor(n){
+  return ({remember:"Saving that…",forget:"Forgetting…",write_note:"Writing a note…",
+    list_notes:"Checking notes…",set_reminder:"Setting a reminder…",get_time:"Checking the time…",
+    open_url:"Opening the page…",control_phone:"Checking what's possible…"})[n] || "Working…";
+}
+
+/* Keeps the payload bounded so long sessions don't blow the context window. */
+function trim(){
+  const MAX = 30;
+  if(convo.length <= MAX) return;
+  let cut = convo.length - MAX;
+  while(cut < convo.length && convo[cut].role !== "user") cut++;
+  if(cut < convo.length) convo = convo.slice(cut);
+}
+
+/* ------------------------------- voice ------------------------------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recog = null;
+
+function startVoice(){
+  if(busy || listening) return;
+  if(!SR){ showError("This browser has no speech recognition. Chrome or Edge support it; Firefox doesn't."); return; }
+  recog = new SR();
+  recog.lang = "en-US"; recog.interimResults = false; recog.maxAlternatives = 1;
+  listening = true; setStatus("Listening…"); $("micBtn").textContent = "…";
+
+  recog.onresult = e => {
+    const heard = e.results[0][0].transcript;
+    listening = false; $("micBtn").textContent = "MIC";
+    send(heard);
+  };
+  recog.onerror = e => {
+    listening = false; $("micBtn").textContent = "MIC"; setStatus("");
+    if(e.error !== "aborted") showError("Didn't catch that ("+e.error+").");
+  };
+  recog.onend = () => { listening = false; $("micBtn").textContent = "MIC"; if(!busy) setStatus(""); };
+  try{ recog.start(); }catch(e){ listening = false; }
+}
+
+let lainVoice = null;
+function pickVoice(){
+  const vs = speechSynthesis.getVoices();
+  if(!vs.length) return;
+  // One consistent female voice, chosen once — Lain shouldn't sound different per device.
+  lainVoice = vs.find(v=>/en/i.test(v.lang) && /female|samantha|zira|aria|jenny|google uk english female/i.test(v.name))
+           || vs.find(v=>/^en-GB/i.test(v.lang))
+           || vs.find(v=>/^en/i.test(v.lang)) || vs[0];
+}
+if("speechSynthesis" in window){
+  pickVoice();
+  speechSynthesis.onvoiceschanged = pickVoice;
+}
+function speak(t){
+  if(S.muted || !("speechSynthesis" in window) || !t) return;
+  try{
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(t.slice(0,500));
+    if(lainVoice) u.voice = lainVoice;
+    u.rate = 1.02; u.pitch = 1.05;
+    speechSynthesis.speak(u);
+  }catch(e){}
+}
+
+/* --------------------------- chat rendering -------------------------- */
+function pushMessage(who, text){
+  messages.push({who, text});
+  const el = document.createElement("div");
+  el.className = "bubble " + who;
+  el.textContent = text;
+  $("chatScroll").appendChild(el);
+  $("chatScroll").scrollTop = $("chatScroll").scrollHeight;
+}
+function setStatus(t){ $("status").textContent = t || ""; }
+function showError(t){ const e=$("error"); e.textContent=t; e.classList.remove("hidden"); setStatus(""); }
+function hideError(){ $("error").classList.add("hidden"); }
+function setBusy(b, status){
+  busy = b;
+  $("stopBtn").classList.toggle("hidden", !b && !listening);
+  $("sendBtn").disabled = b;
+  setStatus(b ? (status||"Working…") : "");
+}
+
+function stopAll(){
+  if(abortCtl) try{ abortCtl.abort(); }catch(e){}
+  if(recog) try{ recog.abort(); }catch(e){}
+  if("speechSynthesis" in window) speechSynthesis.cancel();
+  handsFree = false; listening = false;
+  $("handsFree").textContent = "TAP-TO-TALK"; $("handsFree").classList.add("off");
+  setBusy(false);
+}
+
+/* --------------------------- layout sizing --------------------------- */
+/* The artwork is a square pinned to the top; the transcript occupies exactly
+   what's left between it and the input panel, so messages can never cover her. */
+function layout(){
+  const app = $("app");
+  const w = app.clientWidth, h = app.clientHeight;
+  const panelH = $("chatPanel").offsetHeight;
+  const top = Math.min(w, h - panelH - 60);
+  const scroll = $("chatScroll");
+  scroll.style.top = top + "px";
+  scroll.style.bottom = panelH + "px";
+}
+window.addEventListener("resize", layout);
+if(window.visualViewport){
+  // Keeps the input above the on-screen keyboard on mobile.
+  visualViewport.addEventListener("resize", ()=>{
+    $("app").style.height = visualViewport.height + "px";
+    layout();
+  });
+}
+
+/* ---------------------------- onboarding ----------------------------- */
+const STEPS = ["name","age","gender","nickname","provider","model","key"];
+let stepIx = 0, draft = {};
+
+const QUESTIONS = {
+  name:"What's your name?", age:"How old are you?", gender:"Are you male or female?",
+  nickname:"What should I call you?", provider:"Which AI provider?",
+  model:"Pick a model", key:"Enter your API key"
+};
+
+function renderStep(){
+  const step = STEPS[stepIx];
+  $("obQuestion").textContent = QUESTIONS[step];
+  const body = $("obBody");
+  body.innerHTML = "";
+  $("obHint").textContent = "";
+  $("obNext").textContent = (stepIx === STEPS.length-1) ? "Let's go" : "Continue";
+
+  if(step==="name" || step==="nickname"){
+    const i=document.createElement("input");
+    i.placeholder = step==="name" ? "Your name" : "What should Lain call you?";
+    i.value = draft[step]||"";
+    i.oninput = ()=>{ draft[step]=i.value; validate(); };
+    body.appendChild(i); setTimeout(()=>i.focus(),50);
+  }
+  else if(step==="age"){
+    const i=document.createElement("input");
+    i.inputMode="numeric"; i.placeholder="Your age"; i.value=draft.age||"";
+    i.oninput = ()=>{ draft.age=i.value.replace(/\D/g,""); i.value=draft.age; validate(); };
+    body.appendChild(i); setTimeout(()=>i.focus(),50);
+  }
+  else if(step==="gender"){
+    const wrap=document.createElement("div"); wrap.className="wrap";
+    ["Male","Female"].forEach(g=>{
+      const b=document.createElement("button");
+      b.className="btn ghost"+(draft.gender===g?" on":"");
+      b.style.flex="1"; b.textContent=g;
+      b.onclick=()=>{ draft.gender=g; renderStep(); validate(); };
+      wrap.appendChild(b);
+    });
+    body.appendChild(wrap);
+  }
+  else if(step==="provider"){
+    const wrap=document.createElement("div"); wrap.className="wrap";
+    Object.entries(PROVIDERS).forEach(([k,v])=>{
+      const b=document.createElement("button");
+      b.className="btn ghost"+((draft.provider||"openrouter")===k?" on":"");
+      b.textContent=v.name;
+      b.onclick=()=>{
+        draft.provider=k;
+        draft.model=(MODELS[k].find(m=>m.strong)||MODELS[k][0]).id;
+        renderStep(); validate();
+      };
+      wrap.appendChild(b);
+    });
+    body.appendChild(wrap);
+    $("obHint").textContent = "OpenRouter is the default — one key reaches every model, and it's the only one that reliably allows browser requests.";
+  }
+  else if(step==="model"){
+    const prov = draft.provider||"openrouter";
+    const wrap=document.createElement("div");
+    wrap.style.display="flex"; wrap.style.flexDirection="column"; wrap.style.gap="8px";
+    MODELS[prov].forEach(m=>{
+      const b=document.createElement("button");
+      b.className="btn ghost"+(draft.model===m.id?" on":"");
+      b.textContent=m.label + (m.strong?"  ★":(m.free?"  ·  FREE":""));
+      b.onclick=()=>{ draft.model=m.id; renderStep(); validate(); };
+      wrap.appendChild(b);
+    });
+    body.appendChild(wrap);
+    $("obHint").textContent = "★ handles multi-step tool use reliably. Free models often stall or just describe an action.";
+  }
+  else if(step==="key"){
+    const i=document.createElement("input");
+    i.type="password"; i.placeholder=PROVIDERS[draft.provider||"openrouter"].name+" API key";
+    i.value=draft.key||"";
+    i.oninput=()=>{ draft.key=i.value; validate(); };
+    body.appendChild(i); setTimeout(()=>i.focus(),50);
+    $("obHint").textContent = "Stored only in this browser's localStorage, and sent only to the provider you picked.";
+  }
+  validate();
+}
+
+function validate(){
+  const step = STEPS[stepIx];
+  let ok = false;
+  if(step==="name") ok = !!(draft.name||"").trim();
+  else if(step==="age"){ const n=parseInt(draft.age||"",10); ok = n>0 && n<121; }
+  else if(step==="gender") ok = !!draft.gender;
+  else if(step==="nickname") ok = !!(draft.nickname||"").trim();
+  else if(step==="provider") ok = true;
+  else if(step==="model") ok = !!draft.model;
+  else if(step==="key") ok = !!(draft.key||"").trim();
+  $("obNext").disabled = !ok;
+}
+
+$("obNext").onclick = ()=>{
+  if(stepIx < STEPS.length-1){ stepIx++; renderStep(); return; }
+  Object.assign(S,{
+    onboarded:true, name:(draft.name||"").trim(), age:draft.age||"",
+    gender:draft.gender||"", nickname:(draft.nickname||"").trim(),
+    provider:draft.provider||"openrouter", model:draft.model, key:(draft.key||"").trim()
+  });
+  save(); showChat();
+};
+
+/* ----------------------------- settings ------------------------------ */
+function openSettings(){
+  $("chat").classList.add("hidden");
+  $("settings").classList.remove("hidden");
+  $("sName").value=S.name; $("sAge").value=S.age; $("sNick").value=S.nickname; $("sKey").value=S.key;
+  $("testResult").textContent="";
+  renderGender(); renderProviders(); renderModels(); renderMemory();
+  $("sKeyLabel").textContent = PROVIDERS[S.provider].name + " API key";
+}
+function renderGender(){
+  const w=$("sGender"); w.innerHTML="";
+  ["Male","Female"].forEach(g=>{
+    const b=document.createElement("button");
+    b.className="btn ghost"+(S.gender===g?" on":""); b.style.flex="1"; b.textContent=g;
+    b.onclick=()=>{ S.gender=g; renderGender(); };
+    w.appendChild(b);
+  });
+}
+function renderProviders(){
+  const w=$("sProvider"); w.innerHTML="";
+  Object.entries(PROVIDERS).forEach(([k,v])=>{
+    const b=document.createElement("button");
+    b.className="btn ghost"+(S.provider===k?" on":""); b.textContent=v.name;
+    b.onclick=()=>{
+      S.provider=k; S.model=(MODELS[k].find(m=>m.strong)||MODELS[k][0]).id;
+      $("sKeyLabel").textContent = v.name + " API key";
+      renderProviders(); renderModels();
+    };
+    w.appendChild(b);
+  });
+}
+function renderModels(){
+  const w=$("sModel"); w.innerHTML="";
+  w.style.display="flex"; w.style.flexDirection="column"; w.style.gap="8px";
+  MODELS[S.provider].forEach(m=>{
+    const b=document.createElement("button");
+    b.className="btn ghost"+(S.model===m.id?" on":"");
+    b.textContent=m.label + (m.strong?"  ★":(m.free?"  ·  FREE":""));
+    b.onclick=()=>{ S.model=m.id; renderModels(); };
+    w.appendChild(b);
+  });
+}
+function renderMemory(){
+  const keys=Object.keys(S.memory);
+  $("memList").textContent = keys.length
+    ? keys.map(k=>`• ${k}: ${S.memory[k]}`).join("\n")
+    : "Nothing saved yet.";
+  $("memList").style.whiteSpace="pre-wrap";
+}
+
+$("testBtn").onclick = async ()=>{
+  S.key=$("sKey").value.trim(); save();
+  $("testResult").textContent="Testing…";
+  const p=PROVIDERS[S.provider];
+  const url=p.base.replace(/\/$/,"")+(p.anthropic?"/messages":"/chat/completions");
+  const headers={"Content-Type":"application/json"};
+  let body;
+  if(p.anthropic){
+    headers["x-api-key"]=S.key; headers["anthropic-version"]="2023-06-01";
+    headers["anthropic-dangerous-direct-browser-access"]="true";
+    body={model:S.model,max_tokens:8,messages:[{role:"user",content:"hi"}]};
+  }else{
+    headers["Authorization"]="Bearer "+S.key;
+    body={model:S.model,max_tokens:8,messages:[{role:"user",content:"hi"}]};
+  }
+  try{
+    const res=await fetch(url,{method:"POST",headers,body:JSON.stringify(body)});
+    const raw=await res.text();
+    if(res.ok) $("testResult").textContent = `Working — ${p.name} replied on ${S.model}.`;
+    else if(res.status===401||res.status===403) $("testResult").textContent = `Key rejected (HTTP ${res.status}).`;
+    else if(res.status===404) $("testResult").textContent = `Model "${S.model}" not found on this account (404).`;
+    else if(res.status===402) $("testResult").textContent = "Out of credit (402).";
+    else if(res.status===429) $("testResult").textContent = "Rate limited (429) — common on free models. Try a ★ one.";
+    else $("testResult").textContent = `HTTP ${res.status}: ${raw.slice(0,200)}`;
+  }catch(e){
+    $("testResult").textContent = describeNetErr(e);
+  }
+};
+
+$("saveBtn").onclick = ()=>{
+  S.name=$("sName").value.trim();
+  S.age=$("sAge").value.replace(/\D/g,"");
+  S.nickname=$("sNick").value.trim();
+  S.key=$("sKey").value.trim();
+  save();
+  $("testResult").textContent="Saved.";
+};
+$("clearMem").onclick = ()=>{ S.memory={}; save(); renderMemory(); };
+$("resetBtn").onclick = ()=>{
+  if(!confirm("Wipe everything — profile, key, memory, notes?")) return;
+  localStorage.removeItem("lain.state");
+  location.reload();
+};
+$("backBtn").onclick = ()=>{ save(); $("settings").classList.add("hidden"); $("chat").classList.remove("hidden"); layout(); };
+
+/* ------------------------------ wiring ------------------------------- */
+$("sendBtn").onclick = ()=>send();
+$("input").addEventListener("keydown", e=>{ if(e.key==="Enter") send(); });
+$("micBtn").onclick = ()=>startVoice();
+$("stopBtn").onclick = ()=>stopAll();
+$("settingsBtn").onclick = ()=>openSettings();
+$("muteBtn").onclick = ()=>{
+  S.muted=!S.muted; save();
+  if(S.muted && "speechSynthesis" in window) speechSynthesis.cancel();
+  $("muteBtn").textContent = S.muted ? "MUTED" : "VOICE";
+  $("muteBtn").classList.toggle("off", S.muted);
+};
+$("handsFree").onclick = ()=>{
+  handsFree = !handsFree;
+  $("handsFree").textContent = handsFree ? "HANDS-FREE" : "TAP-TO-TALK";
+  $("handsFree").classList.toggle("off", !handsFree);
+  if(handsFree && !busy) startVoice();
+};
+
+/* ------------------------------- boot -------------------------------- */
+function showChat(){
+  $("boot").classList.add("hidden");
+  $("onboarding").classList.add("hidden");
+  $("chat").classList.remove("hidden");
+  $("muteBtn").textContent = S.muted ? "MUTED" : "VOICE";
+  $("muteBtn").classList.toggle("off", S.muted);
+  layout();
+
+  if(!messages.length){
+    const greeting = "What's up niceo?";
+    pushMessage("lain", greeting);
+    // Hold the first portrait long enough to register, then run the reveal.
+    setTimeout(()=>{ $("stage").classList.add("revealed"); }, 900);
+    setTimeout(()=>speak(greeting), 400);
+  }
+  setTimeout(layout, 60);
+}
+
+function boot(){
+  $("boot").classList.add("hidden");
+  if(S.onboarded && S.key){
+    showChat();
+  }else{
+    draft = {provider:"openrouter", model:"anthropic/claude-sonnet-5"};
+    $("onboarding").classList.remove("hidden");
+    renderStep();
+  }
+}
+boot();
+</script>
+</body>
+</html>
