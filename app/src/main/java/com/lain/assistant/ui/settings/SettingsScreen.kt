@@ -151,6 +151,54 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             )
 
             Spacer(Modifier.height(24.dp))
+            SectionLabel("Automatic model fallback")
+            Text(
+                "If the selected model is rate limited or unavailable, try another one instead of failing. Lain always tells you when this happened — she never switches silently.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = LainMuted
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                PixelChoiceChip("On", state.modelFallback, { viewModel.setModelFallback(true) }, modifier = Modifier.weight(1f))
+                PixelChoiceChip("Off", !state.modelFallback, { viewModel.setModelFallback(false) }, modifier = Modifier.weight(1f))
+            }
+
+            Spacer(Modifier.height(24.dp))
+            SectionLabel("What Lain remembers (${state.memories.size})")
+            Text(
+                "Durable facts Lain saved on her own or because you asked. Only the ones relevant to what you're saying get used in any given message.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = LainMuted
+            )
+            Spacer(Modifier.height(8.dp))
+            if (state.memories.isEmpty()) {
+                Text("Nothing saved yet.", style = MaterialTheme.typography.bodyMedium, color = LainMuted)
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    state.memories.take(40).forEach { m ->
+                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                            Text(
+                                "[${m.category.lowercase()}] ${m.fact}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = LainCream,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                "Forget",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = LainSalmon,
+                                modifier = Modifier
+                                    .clickable { viewModel.deleteMemory(m.id) }
+                                    .padding(start = 10.dp, top = 4.dp, bottom = 4.dp)
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                PixelButton(text = "Clear all memories", onClick = viewModel::clearMemories)
+            }
+
+            Spacer(Modifier.height(24.dp))
             SectionLabel("Control Lain from anywhere")
             Text(
                 "Puts a small draggable bubble over other apps so you can give Lain an order without leaving what you're doing. Needs the \"Display over other apps\" permission.",

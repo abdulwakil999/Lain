@@ -30,10 +30,106 @@ object ToolDefinitions {
         ),
         ToolDefinition(
             name = "open_url",
-            description = "Open a web address in the browser.",
+            description = "Open a web address in the browser FOR THE USER TO SEE. This does not give you the page contents — use web_search or fetch_page if you need to read it yourself.",
             parameters = schema {
                 property("url", "string", "Full URL including https://")
                 required("url")
+            }
+        ),
+        ToolDefinition(
+            name = "open_settings_page",
+            description = "Open a specific Android Settings screen (wifi, bluetooth, display, sound, battery, apps, accessibility, location, storage, security, date, keyboard, notifications).",
+            parameters = schema {
+                property("page", "string", "Which settings screen")
+                required("page")
+            }
+        ),
+        ToolDefinition(
+            name = "current_app",
+            description = "Report which app is currently in the foreground. Use this to confirm an app actually opened before acting on it.",
+            parameters = schema { }
+        ),
+
+        // ------------------------------------------------- web research
+        ToolDefinition(
+            name = "web_search",
+            description = "Search the web and read the top pages. Use whenever the answer depends on current information — news, prices, releases, live documentation, APIs, anything that may have changed since your training. Returns extracts with URLs; cite them. Do NOT use for casual conversation or things you already know.",
+            parameters = schema {
+                property("query", "string", "What to search for")
+                required("query")
+            }
+        ),
+        ToolDefinition(
+            name = "fetch_page",
+            description = "Read the text of a specific web page yourself.",
+            parameters = schema {
+                property("url", "string", "Page URL")
+                required("url")
+            }
+        ),
+
+        // ---------------------------------------------------- device
+        ToolDefinition(
+            name = "device_status",
+            description = "Battery level and charging state, network connectivity, media volume, Android version and device model.",
+            parameters = schema { }
+        ),
+        ToolDefinition(
+            name = "set_volume",
+            description = "Set the media volume as a percentage.",
+            parameters = schema {
+                property("percent", "number", "0-100")
+                required("percent")
+            }
+        ),
+        ToolDefinition(
+            name = "clipboard",
+            description = "Read the clipboard, or write to it. Reading only works while Lain is the focused app — an Android restriction, not a bug.",
+            parameters = schema {
+                property("action", "string", "\"read\" or \"write\"")
+                property("text", "string", "Text to copy, when writing")
+                required("action")
+            }
+        ),
+        ToolDefinition(
+            name = "open_contacts",
+            description = "Open the Contacts app.",
+            parameters = schema { }
+        ),
+
+        // ----------------------------------------------------- files
+        ToolDefinition(
+            name = "list_files",
+            description = "List files in Lain's storage folder. Android sandboxes apps, so this is Lain's own directory rather than the whole device.",
+            parameters = schema {
+                property("path", "string", "Sub-folder, or empty for the root")
+            }
+        ),
+        ToolDefinition(
+            name = "read_file",
+            description = "Read a text file from Lain's storage.",
+            parameters = schema {
+                property("path", "string", "File path")
+                required("path")
+            }
+        ),
+        ToolDefinition(
+            name = "write_file",
+            description = "Create or overwrite a text file in Lain's storage.",
+            parameters = schema {
+                property("path", "string", "File path")
+                property("content", "string", "File contents")
+                property("append", "boolean", "true to append instead of overwrite")
+                required("path", "content")
+            }
+        ),
+        ToolDefinition(
+            name = "rename_file",
+            description = "Rename or move a file within Lain's storage.",
+            parameters = schema {
+                property("from", "string", "Existing path")
+                property("to", "string", "New path")
+                required("from", "to")
             }
         ),
 
@@ -187,13 +283,42 @@ object ToolDefinitions {
         ),
         ToolDefinition(
             name = "forget",
-            description = "Delete something previously remembered.",
+            description = "Delete remembered facts matching a query. Use when the user asks you to forget something.",
             parameters = schema {
-                property("key", "string", "The identifier to forget")
+                property("key", "string", "What to forget")
                 required("key")
+            }
+        ),
+        ToolDefinition(
+            name = "recall",
+            description = "Search your long-term memory. Relevant memories are already provided each turn, so only use this when you need something specific that wasn't included.",
+            parameters = schema {
+                property("query", "string", "What to look for")
+                required("query")
             }
         )
     )
+
+    /**
+     * Weak models degrade when handed a large tool surface, so the low tier sees a
+     * focused subset. Everything remains available to stronger models — nothing is
+     * removed from the app, only from that request's menu.
+     */
+    fun forTier(compact: Boolean, visionCapable: Boolean): List<ToolDefinition> {
+        var tools = all
+        if (!visionCapable) {
+            tools = tools.filterNot { it.name == "look_at_screen" || it.name == "take_photo" }
+        }
+        if (!compact) return tools
+
+        val essentials = setOf(
+            "open_app", "read_screen", "tap_text", "type_text", "press_key", "swipe_screen", "wait",
+            "current_app", "make_call", "send_sms", "lookup_contact", "send_whatsapp_message",
+            "set_reminder", "write_note", "list_notes", "web_search", "device_status",
+            "remember", "forget", "open_url"
+        )
+        return tools.filter { it.name in essentials }
+    }
 
     private class SchemaBuilder {
         val properties = mutableListOf<Triple<String, String, String>>()

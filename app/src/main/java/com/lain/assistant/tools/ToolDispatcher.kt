@@ -4,14 +4,18 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.util.Base64
 import com.lain.assistant.automation.AppLauncher
+import com.lain.assistant.automation.AutomationResult
 import com.lain.assistant.automation.CameraController
+import com.lain.assistant.automation.DeviceController
 import com.lain.assistant.automation.LainAccessibilityService
 import com.lain.assistant.automation.NotesRepository
 import com.lain.assistant.automation.PhoneController
 import com.lain.assistant.automation.RemindersRepository
 import com.lain.assistant.automation.VoiceInputController
-import com.lain.assistant.data.MemoryRepository
+import com.lain.assistant.data.MemoryCategory
+import com.lain.assistant.data.MemoryStore
 import com.lain.assistant.network.ToolCall
+import com.lain.assistant.network.WebResearch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -23,19 +27,17 @@ import kotlinx.serialization.json.floatOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.ByteArrayOutputStream
 
-/** Executes a [ToolCall] the model asked for and turns the outcome into text the model can read back. */
+/**
+ * Executes a [ToolCall] and returns a [ToolResult] the agent can reason about.
+ *
+ * The important property here is that success is never assumed. Each branch
+ * reports what actually happened — attempted, succeeded, or failed and why — so
+ * the model cannot mistake "I sent the intent" for "the thing is done".
+ */
 class ToolDispatcher(context: Context) {
 
     companion object {
-        /**
-         * A tool result that starts with this carries a base64 JPEG after the
-         * prefix. ChatViewModel watches for it and attaches the image to a
-         * follow-up turn so vision-capable models actually see it, rather than
-         * reading a wall of base64 as text.
-         */
-        const val IMAGE_RESULT_PREFIX = "IMAGE_BASE64:"
-
-        /** Ceiling on any single textual tool result, so one dense screen can't blow the context window. */
+        /** Ceiling on any single textual result, so one dense screen can't blow the context window. */
         private const val MAX_RESULT_CHARS = 3500
     }
 
@@ -46,170 +48,281 @@ class ToolDispatcher(context: Context) {
     private val reminders = RemindersRepository(appContext)
     private val camera = CameraController(appContext)
     private val voice = VoiceInputController(appContext)
-    private val memory = MemoryRepository(appContext)
+    private val device = DeviceController(appContext)
+    private val web = WebResearch()
+    private val memory = MemoryStore(appContext)
     private val json = Json { ignoreUnknownKeys = true }
 
+    /** Set by the engine so memories can record where they were learned. */
+    var currentConversationId: String? = null
+
     /**
-     * Runs off the main thread. Walking an app's accessibility tree is not free,
-     * and doing it on the UI thread (which the engine's scope lives on) shows up
-     * as jank or, on a dense screen, an ANR.
+     * Runs off the main thread — walking an accessibility tree or fetching a page on
+     * the UI thread shows up as jank or an ANR.
      */
-    suspend fun execute(call: ToolCall): String = withContext(Dispatchers.Default) {
+    suspend fun execute(call: ToolCall): ToolResult = withContext(Dispatchers.Default) {
         val args = runCatching { json.parseToJsonElement(call.argumentsJson) as JsonObject }.getOrNull()
-            ?: return@withContext "Failed: couldn't parse arguments"
+            ?: return@withContext ToolResult.fail(FailureKind.INVALID_INPUT, "Couldn't parse the arguments for ${call.name}")
 
         val result = try {
-            when (call.name) {
-                // ------------------------------------------------------ apps
-                "open_app" -> {
-                    val opened = apps.openApp(args.str("app_name")).toToolOutput()
-                    // Apps need a beat to draw; wait here and hand back the loaded screen so
-                    // the model doesn't burn two more rounds on wait + read_screen.
-                    delay(1600)
-                    val screen = LainAccessibilityService.instance?.readScreenText()
-                    if (screen != null) "$opened\n\nScreen now:\n$screen" else opened
-                }
-                "close_app" -> closeApp(args.str("app_name"))
-                "open_url" -> {
-                    val opened = phone.openUrl(args.str("url")).toToolOutput()
-                    delay(2200)
-                    val screen = LainAccessibilityService.instance?.readScreenText()
-                    if (screen != null) "$opened\n\nScreen now:\n$screen" else opened
-                }
-
-                // -------------------------------------------------- perception
-                "read_screen" -> withService { it.readScreenText() }
-                "look_at_screen" -> withService { service ->
-                    service.captureScreenshotBase64()
-                        ?.let { IMAGE_RESULT_PREFIX + it }
-                        ?: "Failed: couldn't capture a screenshot (needs Android 11+)"
-                }
-
-                // ----------------------------------------------------- control
-                // Every action below returns the resulting screen inline. Making the model
-                // spend a whole extra round on read_screen after each tap was the main reason
-                // it ran out of steps halfway through a task — and it doubled the tokens and
-                // request count for no benefit, since it always needs the new screen anyway.
-                "tap_text" -> withService { service ->
-                    val label = args.str("text")
-                    val point = service.findTapPointByText(label)
-                        ?: return@withService "Couldn't find \"$label\" on screen.\n\nHere's what IS on screen — pick a label from this list:\n" +
-                            service.readScreenText()
-                    service.tap(point.first.toFloat(), point.second.toFloat())
-                    delay(700)
-                    "Tapped \"$label\".\n\nScreen now:\n" + service.readScreenText()
-                }
-                "tap_screen" -> withService { service ->
-                    service.tap(args.num("x"), args.num("y"))
-                    delay(700)
-                    "Tapped (${args.num("x").toInt()}, ${args.num("y").toInt()}).\n\nScreen now:\n" + service.readScreenText()
-                }
-                "type_text" -> withService { service ->
-                    val text = args.str("text")
-                    if (service.typeText(text)) {
-                        delay(400)
-                        "Typed \"$text\".\n\nScreen now:\n" + service.readScreenText()
-                    } else {
-                        "Couldn't find a text field to type into. Tap the [INPUT] element you want first, then type again.\n\nScreen now:\n" +
-                            service.readScreenText()
-                    }
-                }
-                "press_key" -> withService { service ->
-                    val label = when (args.str("key").lowercase()) {
-                        "back" -> { service.goBack(); "Pressed back." }
-                        "home" -> { service.goHome(); "Went to the home screen." }
-                        "recents" -> { service.openRecents(); "Opened recents." }
-                        "notifications" -> { service.openNotifications(); "Opened the notification shade." }
-                        "enter" -> {
-                            // There's no global ENTER action; submitting means pressing the app's
-                            // own confirm control, so try the usual labels before giving up.
-                            val hit = listOf("Search", "Go", "Send", "Done", "Enter")
-                                .firstNotNullOfOrNull { service.findTapPointByText(it) }
-                            if (hit != null) {
-                                service.tap(hit.first.toFloat(), hit.second.toFloat())
-                                "Submitted."
-                            } else {
-                                "No submit button found — tap the app's own Search/Send control instead."
-                            }
-                        }
-                        else -> return@withService "Unknown key. Use one of: back, home, recents, notifications, enter."
-                    }
-                    delay(700)
-                    "$label\n\nScreen now:\n" + service.readScreenText()
-                }
-                "swipe_screen" -> withService { service ->
-                    service.swipe(args.num("x1"), args.num("y1"), args.num("x2"), args.num("y2"))
-                    delay(600)
-                    "Swiped.\n\nScreen now:\n" + service.readScreenText()
-                }
-                "wait" -> {
-                    val seconds = args.num("seconds").coerceIn(0.5f, 5f)
-                    delay((seconds * 1000).toLong())
-                    val screen = LainAccessibilityService.instance?.readScreenText()
-                    if (screen != null) "Waited ${seconds}s.\n\nScreen now:\n$screen" else "Waited ${seconds}s."
-                }
-
-                // ----------------------------------------------- communication
-                "send_sms" -> phone.sendSms(args.str("phone_number"), args.str("message")).toToolOutput()
-                "make_call" -> phone.placeCall(args.str("phone_number")).toToolOutput()
-                "lookup_contact" -> phone.lookupContact(args.str("name")).toToolOutput()
-                "send_whatsapp_message" -> phone.openWhatsAppChat(args.str("phone_number"), args.str("message")).toToolOutput()
-
-                // --------------------------------------------------- utility
-                "set_reminder" -> reminders.schedule(
-                    text = args.str("text"),
-                    triggerAtMillis = System.currentTimeMillis() + (args.num("minutes_from_now") * 60_000).toLong()
-                ).toToolOutput()
-                "write_note" -> notes.addNote(args.str("text")).let { "Saved note: \"${it.text}\"" }
-                "list_notes" -> notes.notes.first().joinToString("\n") { "- ${it.text}" }.ifBlank { "No notes yet" }
-                "take_photo" -> camera.capturePhoto(args.bool("use_front_camera")).fold(
-                    onSuccess = { bitmap -> IMAGE_RESULT_PREFIX + bitmap.toJpegBase64() },
-                    onFailure = { "Failed: ${it.message}" }
-                )
-                "listen_microphone" -> voice.listenOnce().fold(
-                    onSuccess = { "Heard: \"$it\"" },
-                    onFailure = { "Failed: ${it.message}" }
-                )
-
-                // ---------------------------------------------------- memory
-                "remember" -> memory.remember(args.str("key"), args.str("value"))
-                    .let { "Remembered — ${it.key}: ${it.value}" }
-                "forget" -> if (memory.forget(args.str("key"))) {
-                    "Forgot \"${args.str("key")}\"."
-                } else {
-                    "Nothing remembered under \"${args.str("key")}\"."
-                }
-
-                else -> "Unknown tool: ${call.name}"
-            }
+            dispatch(call.name, args)
         } catch (t: Throwable) {
-            "Failed: ${t.message}"
+            ToolResult.fail(FailureKind.TOOL_FAILURE, "${call.name} threw an exception", t.message)
         }
 
-        // Images are passed through whole; only prose gets clipped.
-        if (result.startsWith(IMAGE_RESULT_PREFIX) || result.length <= MAX_RESULT_CHARS) {
-            result
-        } else {
-            result.take(MAX_RESULT_CHARS) + "\n… (truncated)"
-        }
+        // Clip prose, never images or structured payloads.
+        if (result.result.length <= MAX_RESULT_CHARS) result
+        else result.copy(result = result.result.take(MAX_RESULT_CHARS) + "\n… (truncated)")
     }
 
-    private suspend fun closeApp(appName: String): String {
-        val service = LainAccessibilityService.instance
-            ?: return LainAccessibilityService.unavailableReason(appContext)
-        service.closeCurrentApp()
-        return "Closed $appName"
+    private suspend fun dispatch(name: String, args: JsonObject): ToolResult = when (name) {
+
+        // ---------------------------------------------------------- apps
+        "open_app" -> {
+            val target = args.str("app_name")
+            val launch = apps.openApp(target)
+            if (launch is AutomationResult.Success) {
+                delay(1600) // let the app draw before reporting what's there
+                val service = LainAccessibilityService.instance
+                val foreground = service?.foregroundApp()
+                val screen = service?.readScreenText()
+                // Confirm it actually came to the front rather than trusting the intent.
+                if (foreground != null) {
+                    ToolResult.ok(
+                        "Opened ${foreground.second}. It is now in the foreground.",
+                        data = screen?.let { mapOf("screen" to it) } ?: emptyMap()
+                    )
+                } else {
+                    ToolResult.ok(
+                        "Launched $target. Couldn't verify the foreground app (Accessibility Service off), so confirm before acting.",
+                        data = screen?.let { mapOf("screen" to it) } ?: emptyMap()
+                    )
+                }
+            } else {
+                launch.asFailure(FailureKind.APP_UNAVAILABLE)
+            }
+        }
+
+        "close_app" -> withService { service ->
+            service.closeCurrentApp()
+            ToolResult.ok("Closed ${args.str("app_name")}.")
+        }
+
+        "open_url" -> phone.openUrl(args.str("url")).asResult(FailureKind.APP_UNAVAILABLE)
+
+        "open_settings_page" -> device.openSettingsPage(args.str("page"))
+
+        "current_app" -> withService { service ->
+            val fg = service.foregroundApp()
+            if (fg == null) ToolResult.ok("Lain's own screen is in the foreground — no other app is open.")
+            else ToolResult.ok("Foreground app: ${fg.second} (${fg.first})")
+        }
+
+        // ---------------------------------------------------- perception
+        "read_screen" -> withService { ToolResult.ok(it.readScreenText()) }
+
+        "look_at_screen" -> withService { service ->
+            val shot = service.captureScreenshotBase64()
+            if (shot == null) {
+                ToolResult.fail(
+                    FailureKind.CAPABILITY_UNAVAILABLE,
+                    "Screenshot unavailable — this needs Android 11 or newer, or the app is blocking capture. Use read_screen instead."
+                )
+            } else {
+                ToolResult.ok("Screen captured.", image = shot)
+            }
+        }
+
+        // ------------------------------------------------------- control
+        "tap_text" -> withService { service ->
+            val label = args.str("text")
+            val point = service.findTapPointByText(label)
+            if (point == null) {
+                ToolResult.fail(
+                    FailureKind.INVALID_INPUT,
+                    "No element labelled \"$label\" on screen. Pick a label from the listing below.",
+                    data = mapOf("screen" to service.readScreenText())
+                )
+            } else {
+                val tapped = service.tap(point.first.toFloat(), point.second.toFloat())
+                delay(700)
+                if (tapped) {
+                    ToolResult.ok("Tapped \"$label\".", data = mapOf("screen" to service.readScreenText()))
+                } else {
+                    ToolResult.fail(FailureKind.TOOL_FAILURE, "The tap gesture was rejected by the system.")
+                }
+            }
+        }
+
+        "tap_screen" -> withService { service ->
+            val x = args.num("x"); val y = args.num("y")
+            val tapped = service.tap(x, y)
+            delay(700)
+            if (tapped) ToolResult.ok("Tapped (${x.toInt()}, ${y.toInt()}).", data = mapOf("screen" to service.readScreenText()))
+            else ToolResult.fail(FailureKind.TOOL_FAILURE, "The tap gesture was rejected.")
+        }
+
+        "type_text" -> withService { service ->
+            val text = args.str("text")
+            if (service.typeText(text)) {
+                delay(400)
+                ToolResult.ok("Typed \"$text\".", data = mapOf("screen" to service.readScreenText()))
+            } else {
+                ToolResult.fail(
+                    FailureKind.TOOL_FAILURE,
+                    "No editable field had focus, so nothing was typed. Tap the [INPUT] element first.",
+                    data = mapOf("screen" to service.readScreenText())
+                )
+            }
+        }
+
+        "press_key" -> withService { service ->
+            val key = args.str("key").lowercase()
+            val label = when (key) {
+                "back" -> { service.goBack(); "Pressed back." }
+                "home" -> { service.goHome(); "Went home." }
+                "recents" -> { service.openRecents(); "Opened recents." }
+                "notifications" -> { service.openNotifications(); "Opened notifications." }
+                "enter" -> {
+                    val hit = listOf("Search", "Go", "Send", "Done", "Enter")
+                        .firstNotNullOfOrNull { service.findTapPointByText(it) }
+                    if (hit == null) {
+                        return@withService ToolResult.fail(
+                            FailureKind.INVALID_INPUT,
+                            "No submit control found on screen.",
+                            data = mapOf("screen" to service.readScreenText())
+                        )
+                    }
+                    service.tap(hit.first.toFloat(), hit.second.toFloat())
+                    "Submitted."
+                }
+                else -> return@withService ToolResult.fail(
+                    FailureKind.INVALID_INPUT, "Unknown key \"$key\". Use back, home, recents, notifications or enter."
+                )
+            }
+            delay(700)
+            ToolResult.ok(label, data = mapOf("screen" to service.readScreenText()))
+        }
+
+        "swipe_screen" -> withService { service ->
+            service.swipe(args.num("x1"), args.num("y1"), args.num("x2"), args.num("y2"))
+            delay(600)
+            ToolResult.ok("Swiped.", data = mapOf("screen" to service.readScreenText()))
+        }
+
+        "wait" -> {
+            val seconds = args.num("seconds").coerceIn(0.5f, 5f)
+            delay((seconds * 1000).toLong())
+            val screen = LainAccessibilityService.instance?.readScreenText()
+            ToolResult.ok("Waited ${seconds}s.", data = screen?.let { mapOf("screen" to it) } ?: emptyMap())
+        }
+
+        // ------------------------------------------------ communication
+        "send_sms" -> phone.sendSms(args.str("phone_number"), args.str("message")).asResult(FailureKind.PERMISSION)
+        "make_call" -> phone.placeCall(args.str("phone_number")).asResult(FailureKind.PERMISSION)
+        "lookup_contact" -> phone.lookupContact(args.str("name")).asResult(FailureKind.PERMISSION)
+        "send_whatsapp_message" ->
+            phone.openWhatsAppChat(args.str("phone_number"), args.str("message")).asResult(FailureKind.APP_UNAVAILABLE)
+        "open_contacts" -> device.openContacts()
+
+        // ------------------------------------------------- web research
+        "web_search" -> web.search(args.str("query"))
+        "fetch_page" -> web.fetchPage(args.str("url"))
+
+        // ------------------------------------------------------ device
+        "device_status" -> device.deviceStatus()
+        "set_volume" -> device.setMediaVolume(args.num("percent").toInt())
+        "clipboard" -> when (args.str("action").lowercase()) {
+            "write" -> device.writeClipboard(args.str("text"))
+            else -> device.readClipboard()
+        }
+
+        // ------------------------------------------------------- files
+        "list_files" -> device.listFiles(args.str("path"))
+        "read_file" -> device.readFile(args.str("path"))
+        "write_file" -> device.writeFile(args.str("path"), args.str("content"), args.bool("append"))
+        "rename_file" -> device.renameFile(args.str("from"), args.str("to"))
+
+        // ----------------------------------------------------- utility
+        "set_reminder" -> reminders.schedule(
+            text = args.str("text"),
+            triggerAtMillis = System.currentTimeMillis() + (args.num("minutes_from_now") * 60_000).toLong()
+        ).asResult(FailureKind.PERMISSION)
+
+        "write_note" -> notes.addNote(args.str("text")).let { ToolResult.ok("Saved note: \"${it.text}\"") }
+        "list_notes" -> notes.notes.first()
+            .joinToString("\n") { "- ${it.text}" }
+            .ifBlank { "No notes yet." }
+            .let { ToolResult.ok(it) }
+
+        "take_photo" -> camera.capturePhoto(args.bool("use_front_camera")).fold(
+            onSuccess = { ToolResult.ok("Photo captured.", image = it.toJpegBase64()) },
+            onFailure = { ToolResult.fail(FailureKind.PERMISSION, "Camera capture failed", it.message) }
+        )
+
+        "listen_microphone" -> voice.listenOnce().fold(
+            onSuccess = { ToolResult.ok("Heard: \"$it\"") },
+            onFailure = { ToolResult.fail(FailureKind.TOOL_FAILURE, "Didn't catch anything", it.message) }
+        )
+
+        // ------------------------------------------------------ memory
+        "remember" -> {
+            val subject = args.str("key").ifBlank { args.str("subject") }
+            val fact = args.str("value").ifBlank { args.str("fact") }
+            if (subject.isBlank() || fact.isBlank()) {
+                ToolResult.fail(FailureKind.INVALID_INPUT, "remember needs both a key and a value.")
+            } else {
+                val saved = memory.remember(
+                    subject = subject,
+                    fact = fact,
+                    category = MemoryCategory.parse(args.str("category")),
+                    importance = args.num("importance").toInt().takeIf { it in 1..5 } ?: 3,
+                    sourceConversationId = currentConversationId
+                )
+                ToolResult.ok("Remembered — ${saved.subject}: ${saved.fact}")
+            }
+        }
+
+        "forget" -> {
+            val removed = memory.forget(args.str("key"))
+            if (removed > 0) ToolResult.ok("Forgot $removed memory item(s) matching \"${args.str("key")}\".")
+            else ToolResult.ok("Nothing stored matched \"${args.str("key")}\".")
+        }
+
+        "recall" -> {
+            val hits = memory.retrieveRelevant(args.str("query"), limit = 8)
+            if (hits.isEmpty()) ToolResult.ok("Nothing relevant in memory.")
+            else ToolResult.ok(hits.joinToString("\n") { "- [${it.category.lowercase()}] ${it.fact}" })
+        }
+
+        else -> ToolResult.fail(FailureKind.INVALID_INPUT, "Unknown tool: $name")
     }
 
     /**
-     * Single gate for everything needing the Accessibility Service. When it isn't
-     * usable the message distinguishes "switched off" from "on but not connected",
-     * instead of always claiming it's off.
+     * Single gate for anything needing the Accessibility Service, so the agent gets
+     * a precise reason (off vs. enabled-but-not-bound) instead of a generic refusal.
      */
-    private suspend fun withService(block: suspend (LainAccessibilityService) -> String): String {
+    private suspend fun withService(block: suspend (LainAccessibilityService) -> ToolResult): ToolResult {
         val service = LainAccessibilityService.instance
-            ?: return LainAccessibilityService.unavailableReason(appContext)
+            ?: return ToolResult.fail(
+                FailureKind.PERMISSION,
+                LainAccessibilityService.unavailableReason(appContext)
+            )
         return block(service)
+    }
+
+    private fun AutomationResult.asResult(permissionKind: FailureKind): ToolResult = when (this) {
+        is AutomationResult.Success -> ToolResult.ok(message)
+        is AutomationResult.Failure -> ToolResult.fail(FailureKind.TOOL_FAILURE, reason)
+        is AutomationResult.MissingPermission ->
+            ToolResult.fail(permissionKind, "Needs the $permission permission, which hasn't been granted.")
+    }
+
+    private fun AutomationResult.asFailure(kind: FailureKind): ToolResult = when (this) {
+        is AutomationResult.Success -> ToolResult.ok(message)
+        is AutomationResult.Failure -> ToolResult.fail(kind, reason)
+        is AutomationResult.MissingPermission ->
+            ToolResult.fail(FailureKind.PERMISSION, "Needs the $permission permission.")
     }
 
     private fun Bitmap.toJpegBase64(): String = ByteArrayOutputStream().use { out ->
@@ -220,5 +333,6 @@ class ToolDispatcher(context: Context) {
 
     private fun JsonObject.str(key: String): String = this[key]?.jsonPrimitive?.contentOrNull ?: ""
     private fun JsonObject.num(key: String): Float = this[key]?.jsonPrimitive?.floatOrNull ?: 0f
-    private fun JsonObject.bool(key: String): Boolean = this[key]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+    private fun JsonObject.bool(key: String): Boolean =
+        this[key]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
 }

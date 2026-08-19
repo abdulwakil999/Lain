@@ -80,7 +80,10 @@ class AgentForegroundService : Service() {
         // the CPU indefinitely.
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Lain::AgentWork").apply {
             setReferenceCounted(false)
-            acquire(10 * 60 * 1000L)
+            // Held only for the life of a task — the service stops as soon as the turn
+            // ends, releasing this. The timeout is a backstop against a wedged run
+            // pinning the CPU, not the expected duration.
+            acquire(4 * 60 * 1000L)
         }
     }
 

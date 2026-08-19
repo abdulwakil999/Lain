@@ -25,6 +25,7 @@ class UserPreferencesRepository(private val context: Context) {
         val MUTED = booleanPreferencesKey("muted")
         val OVERLAY_ENABLED = booleanPreferencesKey("overlay_enabled")
         val BATTERY_SAVER = booleanPreferencesKey("battery_saver")
+        val MODEL_FALLBACK = booleanPreferencesKey("model_fallback")
     }
 
     val isOnboarded: Flow<Boolean> = context.dataStore.data.map { it[Keys.ONBOARDED] ?: false }
@@ -75,6 +76,16 @@ class UserPreferencesRepository(private val context: Context) {
 
     suspend fun setBatterySaver(enabled: Boolean) {
         context.dataStore.edit { it[Keys.BATTERY_SAVER] = enabled }
+    }
+
+    /**
+     * Off by default: switching models changes behaviour and cost, so it shouldn't
+     * happen behind the user's back. When on, a fallback is still reported afterwards.
+     */
+    val isModelFallbackEnabled: Flow<Boolean> = context.dataStore.data.map { it[Keys.MODEL_FALLBACK] ?: false }
+
+    suspend fun setModelFallbackEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.MODEL_FALLBACK] = enabled }
     }
 
     suspend fun saveProfileStep(name: String? = null, age: Int? = null, gender: Gender? = null, nickname: String? = null) {

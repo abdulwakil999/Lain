@@ -128,6 +128,19 @@ class LainAccessibilityService : AccessibilityService() {
     private fun isSystemChrome(pkg: String): Boolean =
         pkg == "com.android.systemui" || pkg == "android" || pkg.endsWith(".inputmethod.latin")
 
+    /**
+     * Package and human label of the app currently in front (excluding Lain).
+     * Lets the agent confirm an app actually opened instead of assuming it did.
+     */
+    fun foregroundApp(): Pair<String, String>? {
+        val pkg = targetRoot()?.packageName?.toString() ?: return null
+        val label = runCatching {
+            val pm = packageManager
+            pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+        }.getOrDefault(pkg)
+        return pkg to label
+    }
+
     /** True when Lain's own UI is what's on screen, so there's no other app to drive. */
     fun isOwnUiInForeground(): Boolean {
         val pkg = rootInActiveWindow?.packageName?.toString() ?: return false

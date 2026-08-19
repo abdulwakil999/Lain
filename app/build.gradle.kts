@@ -3,6 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
+    id("com.google.devtools.ksp")
 }
 
 android {
@@ -13,8 +14,8 @@ android {
         applicationId = "com.lain.assistant"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "0.8.1"
+        versionCode = 11
+        versionName = "0.9.0"
     }
 
     buildTypes {
@@ -62,6 +63,12 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     implementation("androidx.datastore:datastore-preferences:1.1.1")
+
+    // Conversations and long-term memory need real querying and migrations,
+    // which JSON-in-preferences can't give us.
+    implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+    ksp("androidx.room:room-compiler:2.6.1")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

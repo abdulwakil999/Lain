@@ -1,21 +1,28 @@
 package com.lain.assistant.agent
 
 import android.content.Context
+import com.lain.assistant.automation.LainAccessibilityService
 import com.lain.assistant.automation.VoiceInputController
 import com.lain.assistant.data.ChatMessage
-import com.lain.assistant.data.MemoryRepository
+import com.lain.assistant.data.ConversationStore
+import com.lain.assistant.data.MemoryCategory
+import com.lain.assistant.data.MemoryStore
+import com.lain.assistant.data.ModelCapabilities
+import com.lain.assistant.data.ModelCapabilityRegistry
+import com.lain.assistant.data.Provider
 import com.lain.assistant.data.SecureKeyStore
 import com.lain.assistant.data.Sender
 import com.lain.assistant.data.UserPreferencesRepository
 import com.lain.assistant.data.UserProfile
+import com.lain.assistant.data.db.MessageEntity
+import com.lain.assistant.network.LlmClient
 import com.lain.assistant.network.LlmClientFactory
 import com.lain.assistant.network.LlmMessage
 import com.lain.assistant.network.LlmResult
 import com.lain.assistant.network.ToolCall
+import com.lain.assistant.tools.FailureKind
 import com.lain.assistant.tools.ToolDefinitions
 import com.lain.assistant.tools.ToolDispatcher
-import com.lain.assistant.tts.TtsEngine
-import com.lain.assistant.tts.TtsEngineProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -28,6 +35,17 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import com.lain.assistant.tts.TtsEngine
+import com.lain.assistant.tts.TtsEngineProvider
 
 data class ChatState(
     val messages: List<ChatMessage> = emptyList(),
@@ -39,68 +57,80 @@ data class ChatState(
     val statusLine: String? = null,
     val hasAwakened: Boolean = false,
     val profile: UserProfile? = null,
-    val error: String? = null
+    val error: String? = null,
+    /** Set when automatic fallback swapped the model, so the user is told rather than silently switched. */
+    val activeModelNotice: String? = null
 ) {
     val isBusy: Boolean get() = isSending || isListening
 }
 
 /**
- * Each action now returns the resulting screen inline, so a round does roughly
- * twice the work it used to and real tasks finish well inside this.
- */
-private const val MAX_TOOL_ROUNDS = 22
-private const val MAX_HISTORY_MESSAGES = 40
-
-/** How many identical calls in a row before we assume the model is stuck in a loop. */
-private const val REPEAT_LIMIT = 3
-
-/**
- * The brain, deliberately living on the Application and not in a ViewModel.
+ * The brain. Application-scoped, not a ViewModel, so a running task survives screen
+ * lock, rotation and backgrounding, and so the main app, mini surface and floating
+ * bubble are three windows onto one conversation.
  *
- * A ViewModel dies with its Activity, which meant a multi-step task was killed
- * the moment the screen locked or the user swiped away — mid-download, mid-message.
- * Everything runs here on an application-scoped coroutine instead, with a
- * foreground service holding a wake lock while a task is in flight, so work
- * continues with the display off.
- *
- * It's a singleton on purpose: the main app, the mini surface and the floating
- * bubble are three windows onto the *same* conversation, so you can start a
- * request in one and carry it on in another without losing the thread.
+ * Context sent to the model is assembled per request rather than accumulated:
+ *   system prompt + rolling summary + relevant memories + recent turns
+ * Full history lives in the database, so trimming context never destroys anything.
  */
 class ChatEngine(
     private val appContext: Context,
     private val prefs: UserPreferencesRepository,
-    private val memory: MemoryRepository,
+    private val memory: MemoryStore,
+    private val conversations: ConversationStore,
     private val keyStore: SecureKeyStore,
     private val toolDispatcher: ToolDispatcher,
     private val voiceInput: VoiceInputController
 ) {
 
     companion object {
-        /** Lets the foreground service's Stop action reach the running task. */
         @Volatile
         var activeInstance: ChatEngine? = null
             private set
+
+        /** Beyond this, an identical repeated call is treated as a loop. */
+        private const val REPEAT_LIMIT = 2
+        private const val MAX_APP_SWITCHES = 4
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val _state = MutableStateFlow(ChatState())
     val state: StateFlow<ChatState> = _state.asStateFlow()
 
-    private val conversation = mutableListOf<LlmMessage>()
+    private val json = Json { ignoreUnknownKeys = true }
     private var activeJob: Job? = null
     private var ttsEngine: TtsEngine? = null
+    private var conversationId: String? = null
+    private val taskState = TaskState()
+
+    /** Set when the current turn came from speech, so the reply is kept speakable. */
+    private var deliveryMode = DeliveryMode.TEXT
 
     init {
         activeInstance = this
         scope.launch {
             _state.update {
-                it.copy(
-                    profile = prefs.userProfile.first(),
-                    isMuted = prefs.isMuted.first()
-                )
+                it.copy(profile = prefs.userProfile.first(), isMuted = prefs.isMuted.first())
             }
             ttsEngine = TtsEngineProvider.create(appContext, prefs.kokoroEndpoint.first())
+
+            val convo = conversations.activeConversation()
+            conversationId = convo.id
+            toolDispatcher.currentConversationId = convo.id
+
+            // Restore the visible transcript so a restart resumes where it left off.
+            val restored = conversations.recentMessages(convo.id, ConversationStore.RECENT_WINDOW)
+                .filter { !it.hidden && (it.role == "user" || it.role == "assistant") && it.content.isNotBlank() }
+                .map {
+                    ChatMessage(
+                        sender = if (it.role == "user") Sender.USER else Sender.LAIN,
+                        text = it.content,
+                        timestamp = it.createdAt
+                    )
+                }
+            if (restored.isNotEmpty()) {
+                _state.update { it.copy(messages = restored, hasAwakened = true) }
+            }
         }
     }
 
@@ -113,11 +143,6 @@ class ChatEngine(
         speak(greeting.text)
     }
 
-    /**
-     * Hands-free back-and-forth: after Lain finishes a step she starts listening
-     * again on her own, so a chain like "open Chrome" → "search anime heaven" →
-     * "tap the first result" works without touching the phone between commands.
-     */
     fun setConversationMode(enabled: Boolean) {
         _state.update { it.copy(conversationMode = enabled) }
         if (enabled && !_state.value.isBusy) startVoiceInput()
@@ -130,11 +155,10 @@ class ChatEngine(
             voiceInput.listenOnce().fold(
                 onSuccess = { heard ->
                     _state.update { it.copy(isListening = false, input = heard, statusLine = null) }
-                    send()
+                    send(heard, fromVoice = true)
                 },
                 onFailure = { err ->
                     _state.update { it.copy(isListening = false, statusLine = null, error = "Didn't catch that: ${err.message}") }
-                    // A failed listen shouldn't silently end a hands-free session.
                     if (_state.value.conversationMode) {
                         delay(700)
                         if (!_state.value.isBusy && _state.value.conversationMode) startVoiceInput()
@@ -159,9 +183,12 @@ class ChatEngine(
         scope.launch { prefs.setMuted(next) }
     }
 
-    fun send(text: String? = null) {
+    fun send(text: String? = null, fromVoice: Boolean = false) {
         val message = (text ?: _state.value.input).trim()
         if (message.isBlank() || _state.value.isSending) return
+
+        deliveryMode = if (fromVoice) DeliveryMode.VOICE else DeliveryMode.TEXT
+        taskState.reset()
 
         _state.update {
             it.copy(
@@ -169,22 +196,22 @@ class ChatEngine(
                 input = "",
                 isSending = true,
                 error = null,
+                activeModelNotice = null,
                 statusLine = "Thinking…"
             )
         }
-        conversation.add(LlmMessage(role = LlmMessage.Role.USER, text = message))
 
-        // The service is what keeps this alive past a screen lock.
         AgentForegroundService.start(appContext, "Thinking…")
 
         activeJob = scope.launch {
             try {
-                runAgentLoop()
+                val cid = ensureConversation()
+                conversations.append(MessageEntity(conversationId = cid, role = "user", content = message))
+                runAgentLoop(cid, message)
             } catch (_: CancellationException) {
                 _state.update {
                     it.copy(
-                        isSending = false,
-                        statusLine = null,
+                        isSending = false, statusLine = null,
                         messages = it.messages + ChatMessage(sender = Sender.LAIN, text = "Stopped.")
                     )
                 }
@@ -197,57 +224,84 @@ class ChatEngine(
         }
     }
 
-    private suspend fun runAgentLoop() {
+    private suspend fun ensureConversation(): String {
+        conversationId?.let { return it }
+        val convo = conversations.activeConversation()
+        conversationId = convo.id
+        toolDispatcher.currentConversationId = convo.id
+        return convo.id
+    }
+
+    // ------------------------------------------------------------- the loop
+
+    private suspend fun runAgentLoop(cid: String, userMessage: String) {
         val provider = prefs.selectedProvider.first()
         val modelId = prefs.selectedModelId.first()
         val apiKey = keyStore.getApiKey(provider)
 
         if (modelId.isNullOrBlank() || apiKey.isNullOrBlank()) {
-            _state.update { it.copy(isSending = false, statusLine = null, error = "No model/API key configured yet — open Settings.") }
+            _state.update { it.copy(isSending = false, statusLine = null, error = "No model/API key configured — open Settings.") }
             return
         }
 
+        val caps = ModelCapabilityRegistry.forModel(modelId)
         val client = LlmClientFactory.create(provider)
-        val systemPrompt = buildSystemPrompt(_state.value.profile, memory.asPromptBlock())
+
+        // Assemble context fresh each turn rather than growing a list forever.
+        val relevantMemories = memory.retrieveRelevant(userMessage, caps.memoryBudget)
+        val summary = conversations.summaryOf(cid)
+        val systemPrompt = PromptBuilder.build(
+            profile = _state.value.profile,
+            memories = relevantMemories,
+            conversationSummary = summary,
+            capabilities = caps,
+            mode = deliveryMode,
+            accessibilityReady = LainAccessibilityService.isRunning
+        )
+
+        val history = buildModelHistory(cid, caps)
+        val tools = ToolDefinitions.forTier(caps.useCompactPrompt, caps.supportsVision)
 
         var rounds = 0
         var finalText: String? = null
         var lastSignature: String? = null
         var repeatCount = 0
-        // Opening/closing apps is the most visible and most disruptive thing Lain can do,
-        // so it gets a hard ceiling per request. A confused model should never be able to
-        // cycle the user's apps more than a couple of times before being cut off.
-        var appSwitches = 0
+        // Explicit type: the null check above smart-casts the val, but `var` inference
+        // still picks up the nullable declared type.
+        var usedModel: String = modelId
+        var fellBack = false
 
-        while (rounds < MAX_TOOL_ROUNDS && finalText == null) {
+        while (rounds < caps.maxToolRounds && finalText == null) {
             rounds++
-            trimConversation()
             if (rounds > 1) setStatus("Working… (step $rounds)")
 
-            when (val result = client.send(apiKey, modelId, systemPrompt, conversation, ToolDefinitions.all)) {
+            val outcome = requestWithFallback(client, provider, usedModel, apiKey, systemPrompt, history, tools)
+            usedModel = outcome.modelUsed
+            if (outcome.fellBack) fellBack = true
+
+            when (val result = outcome.result) {
                 is LlmResult.Message -> finalText = result.text
+
                 is LlmResult.Error -> {
                     _state.update { it.copy(isSending = false, statusLine = null, error = result.message) }
                     return
                 }
-                is LlmResult.ToolCalls -> {
-                    conversation.add(LlmMessage(role = LlmMessage.Role.ASSISTANT, text = "", toolCalls = result.calls))
 
-                    // Weaker models get stuck re-issuing the same call forever and burn the whole
-                    // budget without moving. Catch it early and tell the model plainly, rather
-                    // than letting it spin until the loop gives up.
+                is LlmResult.ToolCalls -> {
+                    history.add(LlmMessage(role = LlmMessage.Role.ASSISTANT, text = "", toolCalls = result.calls))
+                    persistAssistantToolCalls(cid, result.calls)
+
                     val signature = result.calls.joinToString("|") { "${it.name}(${it.argumentsJson})" }
-                    if (signature == lastSignature) repeatCount++ else repeatCount = 0
+                    repeatCount = if (signature == lastSignature) repeatCount + 1 else 0
                     lastSignature = signature
 
                     if (repeatCount >= REPEAT_LIMIT) {
-                        for (call in result.calls) {
-                            conversation.add(
+                        result.calls.forEach { call ->
+                            history.add(
                                 LlmMessage(
                                     role = LlmMessage.Role.TOOL,
-                                    text = "You have now called this exact thing ${repeatCount + 1} times and the screen isn't changing. " +
-                                        "Stop repeating it. Either do something different — a different label, scroll, go back — " +
-                                        "or stop and tell the user what's blocking you.",
+                                    text = "FAILED [loop]: you have made this identical call ${repeatCount + 1} times and " +
+                                        "nothing changed. Stop. Either take a different action or tell the user what is blocking you.",
                                     toolCallId = call.id
                                 )
                             )
@@ -256,38 +310,23 @@ class ChatEngine(
                         continue
                     }
 
-                    val capturedImages = mutableListOf<String>()
-
-                    for (call: ToolCall in result.calls) {
-                        if (call.name == "open_app" || call.name == "close_app") appSwitches++
-                        if (appSwitches > 4) {
-                            conversation.add(
-                                LlmMessage(
-                                    role = LlmMessage.Role.TOOL,
-                                    text = "Refused: you've opened or closed apps too many times for one request. " +
-                                        "Stop switching apps. Read the screen you're on and finish there, or tell the user what's blocking you.",
-                                    toolCallId = call.id
-                                )
-                            )
-                            continue
-                        }
-                        setStatus(statusFor(call))
-                        val output = toolDispatcher.execute(call)
-                        if (output.startsWith(ToolDispatcher.IMAGE_RESULT_PREFIX)) {
-                            capturedImages += output.removePrefix(ToolDispatcher.IMAGE_RESULT_PREFIX)
-                            conversation.add(LlmMessage(role = LlmMessage.Role.TOOL, text = "Captured — image attached below.", toolCallId = call.id))
-                        } else {
-                            conversation.add(LlmMessage(role = LlmMessage.Role.TOOL, text = output, toolCallId = call.id))
-                        }
+                    val images = mutableListOf<String>()
+                    for (call in result.calls) {
+                        val toolText = executeCall(cid, call, images)
+                        history.add(LlmMessage(role = LlmMessage.Role.TOOL, text = toolText, toolCallId = call.id))
                     }
 
-                    if (capturedImages.isNotEmpty()) {
-                        dropOlderImages()
-                        conversation.add(
+                    // Nudge with concrete progress once a task starts drifting.
+                    taskState.progressNote()?.takeIf { rounds >= 4 }?.let { note ->
+                        history.add(LlmMessage(role = LlmMessage.Role.USER, text = note))
+                    }
+
+                    if (images.isNotEmpty() && caps.supportsVision) {
+                        history.add(
                             LlmMessage(
                                 role = LlmMessage.Role.USER,
                                 text = "(current screen, just captured)",
-                                images = capturedImages.takeLast(1)
+                                images = images.takeLast(1)
                             )
                         )
                     }
@@ -296,23 +335,252 @@ class ChatEngine(
         }
 
         val replyText = finalText
-            ?: "That's taking more steps than I'd expect — I've paused so I don't keep going in circles. Tell me what's on your screen and I'll take it from there."
-        conversation.add(LlmMessage(role = LlmMessage.Role.ASSISTANT, text = replyText))
+            ?: "I've stopped rather than keep going in circles on that. Here's where I got to: " +
+            (taskState.progressNote() ?: "no progress to report.") + " Tell me what you can see and I'll pick it up."
+
+        conversations.append(MessageEntity(conversationId = cid, role = "assistant", content = replyText))
+
         _state.update {
             it.copy(
                 messages = it.messages + ChatMessage(sender = Sender.LAIN, text = replyText),
                 isSending = false,
-                statusLine = null
+                statusLine = null,
+                activeModelNotice = if (fellBack) "Used $usedModel — your selected model was unavailable." else null
             )
         }
         speak(replyText)
 
-        // Hands-free chains continue here rather than dead-ending after one command.
+        // Housekeeping runs after the reply so the user never waits on it.
+        scope.launch { maintainContext(cid, client, provider, usedModel, apiKey, userMessage, replyText) }
+
         if (_state.value.conversationMode) {
             delay(1200)
             if (!_state.value.isBusy && _state.value.conversationMode) startVoiceInput()
         }
     }
+
+    private suspend fun executeCall(cid: String, call: ToolCall, images: MutableList<String>): String {
+        // Refuse app churn before it happens rather than explaining it afterwards.
+        if ((call.name == "open_app" || call.name == "close_app") && taskState.appSwitches >= MAX_APP_SWITCHES) {
+            return "FAILED [loop]: too many app switches for one request. Work with the screen you're on, or stop and explain."
+        }
+        if (taskState.isExhausted(call.name, call.argumentsJson)) {
+            return "FAILED [exhausted]: this exact call has already failed twice. Do not try it again — change approach or stop."
+        }
+
+        setStatus(statusFor(call))
+        val result = toolDispatcher.execute(call)
+
+        taskState.record(
+            tool = call.name,
+            args = call.argumentsJson,
+            succeeded = result.success,
+            failure = result.failure,
+            note = result.result
+        )
+
+        result.image?.let { images += it }
+
+        conversations.append(
+            MessageEntity(
+                conversationId = cid,
+                role = "tool",
+                content = "${call.name}: ${result.result.take(400)}",
+                toolCallId = call.id,
+                hidden = true
+            )
+        )
+        return result.toModelText()
+    }
+
+    // ------------------------------------------------------ model + fallback
+
+    private data class Outcome(val result: LlmResult, val modelUsed: String, val fellBack: Boolean)
+
+    /**
+     * Tries the selected model, and only falls back if the user opted in. Silent
+     * model switching would make behaviour unexplainable, so a fallback is always
+     * surfaced afterwards.
+     */
+    private suspend fun requestWithFallback(
+        client: LlmClient,
+        provider: Provider,
+        modelId: String,
+        apiKey: String,
+        systemPrompt: String,
+        history: List<LlmMessage>,
+        tools: List<com.lain.assistant.network.ToolDefinition>
+    ): Outcome {
+        val first = client.send(apiKey, modelId, systemPrompt, history, tools)
+        if (first !is LlmResult.Error) return Outcome(first, modelId, false)
+
+        val fallbackEnabled = prefs.isModelFallbackEnabled.first()
+        val transient = first.message.contains("429") || first.message.contains("rate", ignoreCase = true) ||
+            first.message.contains("503") || first.message.contains("502")
+        if (!fallbackEnabled || !transient) return Outcome(first, modelId, false)
+
+        // One alternative only — hammering a rate-limited account wastes requests
+        // and makes the limit worse.
+        val alternative = com.lain.assistant.data.ModelCatalog.forProvider(provider)
+            .firstOrNull { it.id != modelId && it.strongAtTools }
+            ?: com.lain.assistant.data.ModelCatalog.forProvider(provider).firstOrNull { it.id != modelId }
+            ?: return Outcome(first, modelId, false)
+
+        setStatus("Switching to ${alternative.label}…")
+        val second = client.send(apiKey, alternative.id, systemPrompt, history, tools)
+        return Outcome(second, alternative.id, second !is LlmResult.Error)
+    }
+
+    // ------------------------------------------------------ context assembly
+
+    /**
+     * Rebuilds the model's view of the thread: the recent window only. Everything
+     * older is represented by the summary that was folded into the system prompt.
+     */
+    private suspend fun buildModelHistory(cid: String, caps: ModelCapabilities): MutableList<LlmMessage> {
+        val recent = conversations.recentMessages(cid, caps.recentWindow)
+        val out = mutableListOf<LlmMessage>()
+
+        for (m in recent) {
+            when (m.role) {
+                "user" -> out += LlmMessage(role = LlmMessage.Role.USER, text = m.content)
+                "assistant" -> if (m.content.isNotBlank()) {
+                    out += LlmMessage(role = LlmMessage.Role.ASSISTANT, text = m.content)
+                }
+                // Historical tool chatter is replayed as plain context; re-sending it as
+                // tool messages would orphan them from their tool_calls turn and be rejected.
+                "tool" -> if (m.content.isNotBlank()) {
+                    out += LlmMessage(role = LlmMessage.Role.USER, text = "(earlier action: ${m.content.take(200)})")
+                }
+            }
+        }
+        // A provider will reject a history that opens on an assistant turn.
+        while (out.isNotEmpty() && out.first().role != LlmMessage.Role.USER) out.removeAt(0)
+        return out
+    }
+
+    private suspend fun persistAssistantToolCalls(cid: String, calls: List<ToolCall>) {
+        conversations.append(
+            MessageEntity(
+                conversationId = cid,
+                role = "assistant",
+                content = "",
+                toolCallsJson = calls.joinToString(",") { it.name },
+                hidden = true
+            )
+        )
+    }
+
+    // -------------------------------------------------------- housekeeping
+
+    /**
+     * Post-turn maintenance: compress aged-out turns into the rolling summary and
+     * extract anything durable into long-term memory.
+     *
+     * These are extra network calls, so they are throttled hard. Left unchecked they
+     * would roughly triple the requests per message — the single most expensive thing
+     * in this design for both battery and free-tier rate limits. Nothing here runs
+     * unless there is genuinely something new to record.
+     */
+    private suspend fun maintainContext(
+        cid: String,
+        client: LlmClient,
+        provider: Provider,
+        modelId: String,
+        apiKey: String,
+        userMessage: String,
+        assistantReply: String
+    ) {
+        // Don't spend power on housekeeping when the phone is nearly flat.
+        if (batteryTooLowForMaintenance()) return
+        runCatching { extractMemories(client, modelId, apiKey, cid, userMessage, assistantReply) }
+        runCatching { summarizeIfNeeded(client, modelId, apiKey, cid) }
+    }
+
+    private fun batteryTooLowForMaintenance(): Boolean = runCatching {
+        val bm = appContext.getSystemService(android.os.BatteryManager::class.java)
+        val level = bm?.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: 100
+        val charging = bm?.isCharging == true
+        level in 1..15 && !charging
+    }.getOrDefault(false)
+
+    private var turnsSinceExtraction = 0
+
+    private suspend fun extractMemories(
+        client: LlmClient,
+        modelId: String,
+        apiKey: String,
+        cid: String,
+        userMessage: String,
+        assistantReply: String
+    ) {
+        turnsSinceExtraction++
+
+        // Short throwaway exchanges rarely contain anything durable.
+        if (userMessage.length < 24) return
+
+        // Device commands ("open spotify", "call mum") are actions, not facts about
+        // the user — extracting from them burns a request to learn nothing.
+        val commandLike = Regex(
+            "^(open|close|call|text|message|play|search|tap|type|send|set|turn|go|scroll|swipe|read|take|show)\\b",
+            RegexOption.IGNORE_CASE
+        ).containsMatchIn(userMessage.trim())
+        if (commandLike && userMessage.length < 80) return
+
+        // Beyond that, sample rather than running every turn.
+        if (turnsSinceExtraction < 3) return
+        turnsSinceExtraction = 0
+
+        val payload = "User: $userMessage\nLain: ${assistantReply.take(600)}"
+        val result = client.send(
+            apiKey, modelId,
+            PromptBuilder.memoryExtractionInstruction(),
+            listOf(LlmMessage(role = LlmMessage.Role.USER, text = payload)),
+            emptyList()
+        )
+        val text = (result as? LlmResult.Message)?.text?.trim() ?: return
+        if (text.isBlank() || text.equals("NONE", ignoreCase = true)) return
+
+        text.lines().forEach { line ->
+            val parts = line.split("|").map { it.trim() }
+            if (parts.size >= 3 && parts[1].isNotBlank() && parts[2].isNotBlank()) {
+                memory.remember(
+                    subject = parts[1],
+                    fact = parts[2],
+                    category = MemoryCategory.parse(parts[0]),
+                    importance = parts.getOrNull(3)?.toIntOrNull()?.coerceIn(1, 5) ?: 3,
+                    sourceConversationId = cid
+                )
+            }
+        }
+    }
+
+    private suspend fun summarizeIfNeeded(client: LlmClient, modelId: String, apiKey: String, cid: String) {
+        val window = conversations.pendingSummaryWindow(cid) ?: return
+        if (window.isEmpty()) return
+
+        val transcript = window.joinToString("\n") { m ->
+            val who = when (m.role) {
+                "user" -> "User"; "assistant" -> "Lain"; else -> "Action"
+            }
+            "$who: ${m.content.take(400)}"
+        }
+        val existing = conversations.summaryOf(cid)
+
+        val result = client.send(
+            apiKey, modelId,
+            PromptBuilder.summaryInstruction(existing),
+            listOf(LlmMessage(role = LlmMessage.Role.USER, text = transcript)),
+            emptyList()
+        )
+        val summary = (result as? LlmResult.Message)?.text?.trim().orEmpty()
+        if (summary.isNotBlank()) {
+            val convo = conversations.conversation(cid) ?: return
+            conversations.saveSummary(cid, summary, convo.summarizedUpTo + window.size)
+        }
+    }
+
+    // -------------------------------------------------------------- helpers
 
     private fun setStatus(status: String) {
         _state.update { it.copy(statusLine = status) }
@@ -321,7 +589,7 @@ class ChatEngine(
 
     private fun statusFor(call: ToolCall): String = when (call.name) {
         "open_app" -> "Opening app…"
-        "read_screen" -> "Reading the screen…"
+        "read_screen", "current_app" -> "Reading the screen…"
         "look_at_screen" -> "Looking at the screen…"
         "tap_text", "tap_screen" -> "Tapping…"
         "type_text" -> "Typing…"
@@ -329,115 +597,16 @@ class ChatEngine(
         "send_sms" -> "Sending the text…"
         "send_whatsapp_message" -> "Opening WhatsApp…"
         "lookup_contact" -> "Checking contacts…"
-        "open_url" -> "Opening the page…"
+        "web_search", "fetch_page" -> "Searching the web…"
+        "device_status" -> "Checking the device…"
+        "remember", "forget", "recall" -> "Updating memory…"
         "wait" -> "Waiting for the screen…"
         else -> "Working…"
-    }
-
-    /**
-     * Keeps the payload bounded. Free models especially have small context
-     * windows and tight rate limits, so old turns are dropped rather than
-     * blowing the limit mid-task.
-     */
-    private fun trimConversation() {
-        if (conversation.size <= MAX_HISTORY_MESSAGES) return
-        var cut = conversation.size - MAX_HISTORY_MESSAGES
-        // Never strand a TOOL result whose ASSISTANT tool_calls turn was removed —
-        // providers reject that shape. Cut forward to a clean USER boundary.
-        while (cut < conversation.size && conversation[cut].role != LlmMessage.Role.USER) cut++
-        if (cut >= conversation.size) return
-        repeat(cut) { conversation.removeAt(0) }
-    }
-
-    private fun dropOlderImages() {
-        for (i in conversation.indices) {
-            val msg = conversation[i]
-            if (msg.images.isNotEmpty()) {
-                conversation[i] = msg.copy(images = emptyList(), text = "(an earlier screen, no longer attached)")
-            }
-        }
     }
 
     private fun speak(text: String) {
         if (_state.value.isMuted) return
         val engine = ttsEngine ?: return
         scope.launch { engine.speak(text) }
-    }
-
-    private fun buildSystemPrompt(profile: UserProfile?, memoryBlock: String): String {
-        val nickname = profile?.nickname?.takeIf { it.isNotBlank() } ?: "you"
-        val name = profile?.name?.takeIf { it.isNotBlank() } ?: "the user"
-        val age = profile?.age?.takeIf { it > 0 }
-        val gender = profile?.gender
-
-        val memorySection = if (memoryBlock.isBlank()) {
-            "You haven't saved anything about them yet. When you learn something durable — who a nickname means, a number, an app they prefer — call `remember` straight away, without being asked."
-        } else {
-            "What you already know about them:\n$memoryBlock"
-        }
-
-        return """
-            You are Lain — short for "Leave-it-to-Artificial-intelligence-Niceo". You live on the
-            user's Android phone and you genuinely operate it. You are not a chatbot describing
-            actions; you take them.
-
-            HOW YOU OPERATE THE PHONE
-            Every action you take — tap_text, tap_screen, type_text, press_key, swipe, open_app,
-            open_url — hands you back the resulting screen automatically, under "Screen now:". So
-            do NOT call read_screen after an action; you already have the result. Read it, decide
-            the next move, and take it in the same turn. Only call read_screen on its own when you
-            need to look at something without touching it first.
-
-            Screen lines are marked [INPUT] (a text field), [BUTTON] (tappable) or [text], each
-            with a tap point. Typing is two moves: tap_text the field so it takes focus, then
-            type_text. Prefer tap_text over tap_screen — matching a visible label beats guessing
-            pixels. To submit a search, use press_key("enter").
-
-            If a label you want isn't in the list, don't guess and don't repeat yourself — scroll
-            with swipe_screen, or press_key("back") and try another route.
-
-            HARD RULES — breaking these is worse than failing the task
-            1. Never close an app unless the user explicitly asked you to close it. "Open X" never
-               means close anything.
-            2. Open an app at most once per request. If you're already in the right app, stay there.
-            3. Only tap coordinates that appear in the screen listing you were just given. Never
-               invent coordinates, and never tap when the screen listing is empty or says there's
-               nothing to operate — read again or stop and say what's wrong.
-            4. If you don't understand what's on screen, say so and stop. Do not tap around to
-               find out.
-
-            YOU ARE OFTEN MID-CONVERSATION WHILE THE USER IS INSIDE ANOTHER APP
-            They talk to you in short steps: "open chrome", then "search anime heaven", then "open
-            that site", then "search bleach", then "download episode 3". Each instruction applies to
-            whatever is on screen RIGHT NOW. Always read_screen first to see where you actually are
-            before acting — do not assume the screen still looks like it did last turn, and do not
-            restart the whole task from scratch. If they say "search X", find the search field on the
-            CURRENT screen, tap it, type X, and submit it.
-
-            FINISH WHAT YOU START
-            A task is done when the goal is achieved, not when you've made progress toward it.
-            "Message Ade on WhatsApp" is finished when the message is SENT. "Play a song on Spotify"
-            is finished when audio is playing — opening Spotify is not enough. If a step fails, read
-            the screen and try another route instead of stopping. Come back to the user only when the
-            task is complete, when you need a decision only they can make, or when you're genuinely
-            blocked — and if blocked, say exactly what you saw and what you tried.
-
-            Never claim you did something you didn't. If a tool reports failure or says something
-            still needs tapping, believe the tool over your own expectations.
-
-            WHO YOU'RE TALKING TO
-            They go by "$nickname" — use that. Their real name, "$name", is for moments that call for
-            formality: something official, something serious, or writing in their name.
-            ${if (age != null) "They're $age." else ""} ${if (gender != null) "Gender: ${gender.name.lowercase()}." else ""}
-
-            $memorySection
-
-            VOICE
-            Cool, capable, a little dry. Talk like someone already handling it, not a service
-            announcing itself. Short sentences — most of your replies are being spoken aloud while
-            the user is looking at another app, so keep them to a line or two. No "I'd be happy to",
-            no repeating the request back, no bullet-point reports unless asked. If something went
-            sideways, say so plainly.
-        """.trimIndent()
     }
 }

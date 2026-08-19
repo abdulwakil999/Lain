@@ -29,6 +29,8 @@ data class SettingsUiState(
     val justSaved: Boolean = false,
     val testResult: String? = null,
     val isTesting: Boolean = false,
+    val memories: List<com.lain.assistant.data.db.MemoryEntity> = emptyList(),
+    val modelFallback: Boolean = false,
     /** null = use the static fallback catalog; non-null = live models fetched from OpenRouter. */
     val liveOpenRouterModels: List<ModelInfo>? = null,
     val isLoadingModels: Boolean = false
@@ -64,6 +66,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             val kokoroEndpoint = container.userPreferencesRepository.kokoroEndpoint.first().orEmpty()
             val overlayEnabled = container.userPreferencesRepository.isOverlayEnabled.first()
             val batterySaver = container.userPreferencesRepository.isBatterySaver.first()
+            val fallback = container.userPreferencesRepository.isModelFallbackEnabled.first()
             _state.update {
                 it.copy(
                     name = profile.name,
@@ -76,11 +79,31 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
                     kokoroEndpoint = kokoroEndpoint,
                     overlayEnabled = overlayEnabled,
                     batterySaver = batterySaver,
+                    modelFallback = fallback,
                     loaded = true
                 )
             }
         }
+        // Keeps the memory list live as Lain learns or forgets things.
+        viewModelScope.launch {
+            container.memoryStore.observeAll.collect { list ->
+                _state.update { it.copy(memories = list) }
+            }
+        }
         fetchLiveModelsIfNeeded()
+    }
+
+    fun setModelFallback(enabled: Boolean) {
+        _state.update { it.copy(modelFallback = enabled) }
+        viewModelScope.launch { container.userPreferencesRepository.setModelFallbackEnabled(enabled) }
+    }
+
+    fun deleteMemory(id: String) {
+        viewModelScope.launch { container.memoryStore.deleteById(id) }
+    }
+
+    fun clearMemories() {
+        viewModelScope.launch { container.memoryStore.clear() }
     }
 
     fun setName(v: String) = _state.update { it.copy(name = v, justSaved = false) }
