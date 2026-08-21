@@ -1,0 +1,222 @@
+package com.lain.assistant.automation
+
+import android.content.Context
+import android.hardware.camera2.CameraManager
+import android.media.AudioManager
+import android.os.BatteryManager
+import com.lain.assistant.agent.LocalIntent
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+/**
+ * Executes the intents [com.lain.assistant.agent.FastRouter] resolved locally,
+ * and phrases the answer.
+ *
+ * Two things are load-bearing here. The first is that none of this touches the
+ * network: every branch is a platform call, so these commands work in a lift with
+ * no signal. The second is the wording — the replies have to sound like Lain
+ * rather than like a status readout, because the user cannot tell (and shouldn't
+ * care) which path answered them. If the local path sounded robotic, the speed
+ * would read as a downgrade.
+ *
+ * Anything that fails here returns null rather than an error, and the caller
+ * falls back to the model. A local shortcut that breaks should cost latency, not
+ * capability.
+ */
+class LocalActions(private val context: Context) {
+
+    private val apps = AppLauncher(context)
+    private val phone = PhoneController(context)
+    private val device = DeviceController(context)
+    private val reminders = RemindersRepository(context)
+
+    /** @return the spoken/displayed reply, or null if this couldn't be handled locally after all. */
+    suspend fun execute(intent: LocalIntent): String? = withContext(Dispatchers.Default) {
+        runCatching {
+            when (intent) {
+                is LocalIntent.Clock -> clock(intent.wantsDate)
+                is LocalIntent.Battery -> battery()
+                is LocalIntent.OpenApp -> openApp(intent.appName)
+                is LocalIntent.Navigate -> navigate(intent.key)
+                is LocalIntent.Timer -> timer(intent.minutes, intent.label)
+                is LocalIntent.SettingsPage -> settingsPage(intent.page)
+                is LocalIntent.Call -> call(intent.contact)
+                is LocalIntent.Volume -> volume(intent.percent, intent.direction)
+                is LocalIntent.Torch -> torch(intent.on)
+                is LocalIntent.ReadScreen -> readScreen()
+                is LocalIntent.ToggleRequest -> toggleRequest(intent.page, intent.what)
+            }
+        }.getOrNull()
+    }
+
+    // --------------------------------------------------------------- clock
+
+    private fun clock(wantsDate: Boolean): String {
+        val now = Date()
+        return if (wantsDate) {
+            SimpleDateFormat("EEEE, d MMMM yyyy", Locale.getDefault()).format(now)
+        } else {
+            "It's " + SimpleDateFormat("h:mm a", Locale.getDefault()).format(now).lowercase(Locale.getDefault())
+        }
+    }
+
+    // ------------------------------------------------------------- battery
+
+    private fun battery(): String? {
+        val bm = context.getSystemService(BatteryManager::class.java) ?: return null
+        val level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        if (level < 0) return null
+        val charging = bm.isCharging
+        return when {
+            charging -> "$level%, charging."
+            level <= 15 -> "$level% — worth plugging in."
+            else -> "$level%."
+        }
+    }
+
+    // ---------------------------------------------------------------- apps
+
+    private fun openApp(name: String): String? = when (val result = apps.openApp(name)) {
+        is AutomationResult.Success -> {
+            // Prefer the app's real display name over what was said, so "open insta"
+            // confirms "Instagram" and the user knows it resolved to the right thing.
+            val resolved = apps.resolveLabel(name) ?: name
+            "Opening $resolved."
+        }
+        // Not found is a real answer, and a faster one than the model would give.
+        is AutomationResult.Failure -> "No app called \"$name\" is installed."
+        is AutomationResult.MissingPermission -> null
+    }
+
+    private suspend fun navigate(key: String): String? {
+        val service = LainAccessibilityService.instance ?: return null
+        when (key) {
+            "home" -> service.goHome()
+            "back" -> service.goBack()
+            "recents" -> service.openRecents()
+            "notifications" -> service.openNotifications()
+            else -> return null
+        }
+        return when (key) {
+            "home" -> "Home."
+            "back" -> "Back."
+            "recents" -> "Recents."
+            else -> "Notifications."
+        }
+    }
+
+    private suspend fun readScreen(): String? {
+        val service = LainAccessibilityService.instance ?: return null
+        val text = service.readScreenText()
+        return text.takeIf { it.isNotBlank() }
+    }
+
+    // -------------------------------------------------------------- timers
+
+    private suspend fun timer(minutes: Int, label: String): String? {
+        val what = label.ifBlank { "Timer" }
+        val at = System.currentTimeMillis() + minutes * 60_000L
+        return when (reminders.schedule(what, at)) {
+            is AutomationResult.Success -> {
+                val when_ = if (minutes >= 60 && minutes % 60 == 0) {
+                    val h = minutes / 60
+                    "$h hour${if (h > 1) "s" else ""}"
+                } else {
+                    "$minutes minute${if (minutes > 1) "s" else ""}"
+                }
+                if (label.isBlank()) "Timer set for $when_." else "I'll remind you to $label in $when_."
+            }
+            // Exact-alarm permission is a real gate; the model can't fix it either, but
+            // it phrases the ask better than a raw failure would.
+            else -> null
+        }
+    }
+
+    // ------------------------------------------------------------ settings
+
+    private fun settingsPage(page: String): String? {
+        val result = device.openSettingsPage(page)
+        return if (result.success) "Opening $page settings." else null
+    }
+
+    /**
+     * Wi-Fi, Bluetooth and aeroplane mode cannot be toggled by a normal app —
+     * Android 10 removed that for everyone who isn't a system app, deliberately.
+     * Saying so immediately and landing the user one tap away beats two model calls
+     * that arrive at the same wall more slowly.
+     */
+    private fun toggleRequest(page: String, what: String): String? {
+        val result = device.openSettingsPage(page)
+        return if (result.success) {
+            "Android doesn't let apps flip $what directly any more — I've opened the settings page for you."
+        } else {
+            null
+        }
+    }
+
+    // --------------------------------------------------------------- phone
+
+    private suspend fun call(contact: String): String? {
+        val lookup = phone.lookupContact(contact)
+        if (lookup !is AutomationResult.Success) return null
+
+        val first = lookup.message.lineSequence().firstOrNull() ?: return null
+        val name = first.substringBeforeLast(':').trim()
+        val number = first.substringAfterLast(':').trim()
+        if (number.isBlank()) return null
+
+        // More than one match is genuinely ambiguous — ask rather than dial the wrong
+        // person. This is the one place where being fast must not mean being wrong.
+        val matches = lookup.message.lines().filter { it.isNotBlank() }
+        if (matches.size > 1) {
+            return "There's more than one match for \"$contact\": " +
+                matches.joinToString("; ") { it.substringBeforeLast(':').trim() } +
+                ". Which one?"
+        }
+
+        return when (val placed = phone.placeCall(number)) {
+            is AutomationResult.Success -> "Calling $name."
+            is AutomationResult.Failure -> placed.reason
+            is AutomationResult.MissingPermission -> null
+        }
+    }
+
+    // -------------------------------------------------------------- volume
+
+    private fun volume(percent: Int?, direction: Int): String? {
+        val am = context.getSystemService(AudioManager::class.java) ?: return null
+        val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        if (max <= 0) return null
+
+        if (percent != null) {
+            am.setStreamVolume(AudioManager.STREAM_MUSIC, percent * max / 100, 0)
+            return when (percent) {
+                0 -> "Muted."
+                100 -> "Volume maxed."
+                else -> "Volume at $percent%."
+            }
+        }
+
+        val current = am.getStreamVolume(AudioManager.STREAM_MUSIC)
+        val step = (max / 7).coerceAtLeast(1)
+        val next = (current + direction * step).coerceIn(0, max)
+        am.setStreamVolume(AudioManager.STREAM_MUSIC, next, 0)
+        return "Volume ${if (direction > 0) "up" else "down"} — ${next * 100 / max}%."
+    }
+
+    // --------------------------------------------------------------- torch
+
+    private fun torch(on: Boolean): String? {
+        val cm = context.getSystemService(CameraManager::class.java) ?: return null
+        // The back camera is the one with a flash; find it rather than assuming "0".
+        val id = cm.cameraIdList.firstOrNull { camera ->
+            cm.getCameraCharacteristics(camera)
+                .get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+        } ?: return null
+        cm.setTorchMode(id, on)
+        return if (on) "Torch on." else "Torch off."
+    }
+}

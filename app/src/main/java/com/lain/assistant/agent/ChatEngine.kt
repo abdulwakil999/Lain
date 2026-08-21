@@ -2,6 +2,7 @@ package com.lain.assistant.agent
 
 import android.content.Context
 import com.lain.assistant.automation.LainAccessibilityService
+import com.lain.assistant.automation.LocalActions
 import com.lain.assistant.automation.VoiceInputController
 import com.lain.assistant.data.ChatMessage
 import com.lain.assistant.data.ConversationStore
@@ -15,17 +16,21 @@ import com.lain.assistant.data.Sender
 import com.lain.assistant.data.UserPreferencesRepository
 import com.lain.assistant.data.UserProfile
 import com.lain.assistant.data.db.MessageEntity
+import com.lain.assistant.network.Http
 import com.lain.assistant.network.LlmClient
 import com.lain.assistant.network.LlmClientFactory
 import com.lain.assistant.network.LlmMessage
 import com.lain.assistant.network.LlmResult
 import com.lain.assistant.network.RequestTuning
+import com.lain.assistant.network.StreamEvent
 import com.lain.assistant.network.ToolCall
 import com.lain.assistant.tools.FailureKind
 import com.lain.assistant.tools.ToolDefinitions
 import com.lain.assistant.tools.ToolDispatcher
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -45,6 +50,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import com.lain.assistant.tts.StreamingSpeaker
 import com.lain.assistant.tts.TtsEngine
 import com.lain.assistant.tts.TtsEngineProvider
 
@@ -56,6 +62,12 @@ data class ChatState(
     val isMuted: Boolean = false,
     /** True only while audio is actually coming out, so the UI can offer to stop just the voice. */
     val isSpeaking: Boolean = false,
+    /**
+     * The reply being generated right now, shown as it arrives. Null when nothing is
+     * streaming. Kept out of [messages] so a cancelled turn leaves no half-message
+     * behind in the transcript.
+     */
+    val streamingText: String? = null,
     val conversationMode: Boolean = false,
     val statusLine: String? = null,
     val hasAwakened: Boolean = false,
@@ -95,6 +107,9 @@ class ChatEngine(
         private const val REPEAT_LIMIT = 2
         private const val MAX_APP_SWITCHES = 4
 
+        /** Ceiling on waiting for TTS to finish before re-opening the mic in hands-free mode. */
+        private const val MAX_SPEECH_WAIT_MS = 60_000L
+
         /** How many past tool results are replayed as context, and how much of each. */
         private const val RECENT_ACTIONS = 3
         private const val ACTION_RECAP_CHARS = 140
@@ -109,8 +124,10 @@ class ChatEngine(
     /** Tracked separately from [activeJob] so speech can be stopped without stopping work. */
     private var speakJob: Job? = null
     private var ttsEngine: TtsEngine? = null
+    private var speaker: StreamingSpeaker? = null
     private var conversationId: String? = null
     private val taskState = TaskState()
+    private val localActions = LocalActions(appContext)
 
     /** Set when the current turn came from speech, so the reply is kept speakable. */
     private var deliveryMode = DeliveryMode.TEXT
@@ -121,7 +138,17 @@ class ChatEngine(
             _state.update {
                 it.copy(profile = prefs.userProfile.first(), isMuted = prefs.isMuted.first())
             }
-            ttsEngine = TtsEngineProvider.create(appContext, prefs.kokoroEndpoint.first())
+            ttsEngine = TtsEngineProvider.create(appContext, prefs.kokoroEndpoint.first()).also { engine ->
+                speaker = StreamingSpeaker(engine, scope) { speaking ->
+                    _state.update { it.copy(isSpeaking = speaking) }
+                }
+            }
+            // Open the TLS connection to the provider now, so the first message doesn't
+            // pay for a handshake on top of everything else.
+            Http.prewarm(prefs.selectedProvider.first().apiBaseUrl)
+            // Binding the recognition service takes a few hundred milliseconds; doing it
+            // now moves that off the gap between tapping the mic and it going live.
+            voiceInput.prewarm()
 
             val convo = conversations.activeConversation()
             conversationId = convo.id
@@ -164,7 +191,11 @@ class ChatEngine(
         silence()
         _state.update { it.copy(isListening = true, error = null, statusLine = "Listening…") }
         activeJob = scope.launch {
-            voiceInput.listenOnce().fold(
+            // Partial hypotheses go straight into the input box, so the user can see
+            // they're being heard instead of watching a static "Listening…".
+            voiceInput.listenOnce(onPartial = { partial ->
+                _state.update { if (it.isListening) it.copy(input = partial) else it }
+            }).fold(
                 onSuccess = { heard ->
                     _state.update { it.copy(isListening = false, input = heard, statusLine = null) }
                     send(heard, fromVoice = true)
@@ -206,6 +237,7 @@ class ChatEngine(
     fun silence() {
         speakJob?.cancel()
         speakJob = null
+        speaker?.stop()
         ttsEngine?.stop()
         if (_state.value.isSpeaking) _state.update { it.copy(isSpeaking = false) }
     }
@@ -216,6 +248,7 @@ class ChatEngine(
 
         deliveryMode = if (fromVoice) DeliveryMode.VOICE else DeliveryMode.TEXT
         taskState.reset()
+        val trace = Trace.start(message)
 
         _state.update {
             it.copy(
@@ -224,8 +257,20 @@ class ChatEngine(
                 isSending = true,
                 error = null,
                 activeModelNotice = null,
+                streamingText = null,
                 statusLine = "Thinking…"
             )
+        }
+
+        // Routing happens before the foreground service starts and before anything
+        // touches the network, because the whole point is that a local command never
+        // reaches either. This is plain string work — microseconds, no I/O.
+        val route = trace.time("route") { FastRouter.route(message) }
+        trace.route = route::class.simpleName ?: "unknown"
+
+        if (route is Route.Local) {
+            activeJob = scope.launch { runLocal(route.intent, message, trace) }
+            return
         }
 
         AgentForegroundService.start(appContext, "Thinking…")
@@ -234,7 +279,7 @@ class ChatEngine(
             try {
                 val cid = ensureConversation()
                 conversations.append(MessageEntity(conversationId = cid, role = "user", content = message))
-                runAgentLoop(cid, message)
+                runAgentLoop(cid, message, route, trace)
             } catch (_: CancellationException) {
                 _state.update {
                     it.copy(
@@ -247,6 +292,7 @@ class ChatEngine(
             } finally {
                 if (_state.value.isSending) _state.update { it.copy(isSending = false, statusLine = null) }
                 AgentForegroundService.stop(appContext)
+                trace.finish()
             }
         }
     }
@@ -259,9 +305,55 @@ class ChatEngine(
         return convo.id
     }
 
+    // --------------------------------------------------------- the local path
+
+    /**
+     * Answers without a model at all.
+     *
+     * This is the whole point of the router: "what's my battery" was two network
+     * round trips (one to decide to call device_status, one to phrase the result)
+     * for a value BatteryManager returns instantly. Here it is a local read and a
+     * sentence, so it lands in single-digit milliseconds and works with no signal.
+     *
+     * If the action can't complete for a real reason — no accessibility service, a
+     * permission not granted — it returns null and the turn falls through to the
+     * model, which can at least explain the problem.
+     */
+    private suspend fun runLocal(intent: LocalIntent, message: String, trace: Trace.Turn) {
+        try {
+            val reply = trace.time("local_action") { localActions.execute(intent) }
+            if (reply == null) {
+                // Not a failure: just not answerable locally after all.
+                trace.mark("local_fallthrough")
+                trace.route = "Model(after-local-miss)"
+                val cid = ensureConversation()
+                conversations.append(MessageEntity(conversationId = cid, role = "user", content = message))
+                AgentForegroundService.start(appContext, "Thinking…")
+                try {
+                    runAgentLoop(cid, message, Route.Model, trace)
+                } finally {
+                    AgentForegroundService.stop(appContext)
+                }
+                return
+            }
+
+            val cid = ensureConversation()
+            conversations.append(MessageEntity(conversationId = cid, role = "user", content = message))
+            finishTurn(cid, reply, usedModel = "local", fellBack = false)
+            resumeListeningIfHandsFree()
+        } catch (_: CancellationException) {
+            _state.update { it.copy(isSending = false, statusLine = null) }
+        } catch (t: Throwable) {
+            _state.update { it.copy(isSending = false, statusLine = null, error = t.message ?: "Something broke") }
+        } finally {
+            if (_state.value.isSending) _state.update { it.copy(isSending = false, statusLine = null) }
+            trace.finish()
+        }
+    }
+
     // ------------------------------------------------------------- the loop
 
-    private suspend fun runAgentLoop(cid: String, userMessage: String) {
+    private suspend fun runAgentLoop(cid: String, userMessage: String, route: Route, trace: Trace.Turn) {
         val provider = prefs.selectedProvider.first()
         val modelId = prefs.selectedModelId.first()
         val apiKey = keyStore.getApiKey(provider)
@@ -290,12 +382,12 @@ class ChatEngine(
         val history = buildModelHistory(cid, caps)
 
         // Plain conversation doesn't need the toolbox, the planning, or the step
-        // budget. Try answering directly first; the model can bail out to the full
+        // budget. Stream one tool-free answer; the model can bail out to the full
         // loop itself if it turns out it needed something.
-        if (IntentClassifier.classify(userMessage, accessibilityReady) == TurnIntent.CHAT) {
-            val quick = tryDirectAnswer(client, provider, modelId, apiKey, systemPrompt, history)
+        if (route is Route.Chat) {
+            val quick = tryDirectAnswer(client, modelId, apiKey, systemPrompt, history, trace)
             if (quick != null) {
-                finishTurn(cid, quick, usedModel = modelId, fellBack = false)
+                finishTurn(cid, quick, usedModel = modelId, fellBack = false, alreadySpoken = spokeWhileStreaming())
                 scope.launch { maintainContext(cid, client, provider, modelId, apiKey, userMessage, quick) }
                 resumeListeningIfHandsFree()
                 return
@@ -325,19 +417,24 @@ class ChatEngine(
                 rounds == 1 -> RequestTuning.TOOL_STEP
                 else -> RequestTuning.TOOL_STEP.copy(maxTokens = 1000)
             }
-            val outcome = requestWithFallback(client, provider, usedModel, apiKey, systemPrompt, history, tools, tuning)
+            // Streamed, so the final answer starts appearing as the model writes it
+            // rather than after it has finished. Intermediate tool-selection rounds
+            // stream too; they simply produce no prose to show.
+            val outcome = streamWithFallback(
+                client, provider, usedModel, apiKey, systemPrompt, history, tools, tuning, trace
+            )
             usedModel = outcome.modelUsed
             if (outcome.fellBack) fellBack = true
 
             when (val result = outcome.result) {
-                is LlmResult.Message -> finalText = result.text
+                is StreamOutcome.Text -> finalText = result.text
 
-                is LlmResult.Error -> {
+                is StreamOutcome.Failed -> {
                     _state.update { it.copy(isSending = false, statusLine = null, error = result.message) }
                     return
                 }
 
-                is LlmResult.ToolCalls -> {
+                is StreamOutcome.Tools -> {
                     history.add(LlmMessage(role = LlmMessage.Role.ASSISTANT, text = "", toolCalls = result.calls))
                     persistAssistantToolCalls(cid, result.calls)
 
@@ -361,9 +458,10 @@ class ChatEngine(
                     }
 
                     val images = mutableListOf<String>()
-                    for (call in result.calls) {
-                        val toolText = executeCall(cid, call, images)
-                        history.add(LlmMessage(role = LlmMessage.Role.TOOL, text = toolText, toolCallId = call.id))
+                    trace.time("tools[${result.calls.joinToString(",") { it.name }}]") {
+                        executeCalls(cid, result.calls, images).forEach { (call, toolText) ->
+                            history.add(LlmMessage(role = LlmMessage.Role.TOOL, text = toolText, toolCallId = call.id))
+                        }
                     }
 
                     // Nudge with concrete progress once a task starts drifting.
@@ -388,7 +486,9 @@ class ChatEngine(
             ?: "I've stopped rather than keep going in circles on that. Here's where I got to: " +
             (taskState.progressNote() ?: "no progress to report.") + " Tell me what you can see and I'll pick it up."
 
-        finishTurn(cid, replyText, usedModel, fellBack)
+        // finalText came from a stream that already spoke it in voice mode; the
+        // give-up message did not, so it still needs reading aloud.
+        finishTurn(cid, replyText, usedModel, fellBack, alreadySpoken = finalText != null && spokeWhileStreaming())
 
         // Housekeeping runs after the reply so the user never waits on it.
         scope.launch { maintainContext(cid, client, provider, usedModel, apiKey, userMessage, replyText) }
@@ -403,45 +503,204 @@ class ChatEngine(
      */
     private suspend fun tryDirectAnswer(
         client: LlmClient,
-        provider: Provider,
         modelId: String,
         apiKey: String,
         systemPrompt: String,
-        history: List<LlmMessage>
+        history: List<LlmMessage>,
+        trace: Trace.Turn
     ): String? {
         val prompt = systemPrompt + "\n\n" + PromptBuilder.directAnswerRule()
         val tuning = if (deliveryMode == DeliveryMode.VOICE) RequestTuning.SPOKEN else RequestTuning.ANSWER
-
-        val result = runCatching {
-            client.send(apiKey, modelId, prompt, history, emptyList(), tuning)
-        }.getOrNull() ?: return null
-
-        val text = (result as? LlmResult.Message)?.text?.trim() ?: return null
-        // The escape hatch. A model that decides it needs the phone or the live web
+        // The escape hatch: a model that decides it needs the phone or the live web
         // says so, and the caller falls through to the full loop — so a
         // misclassification costs one cheap request, never a wrong answer.
-        if (text.isBlank() || text.contains(IntentClassifier.NEEDS_TOOLS)) return null
-        return text
+        val outcome = streamAnswer(client, modelId, apiKey, prompt, history, emptyList(), tuning, trace)
+        return (outcome as? StreamOutcome.Text)?.text?.takeUnless { it.contains(IntentClassifier.NEEDS_TOOLS) }
+    }
+
+    /** How a streaming request ended. */
+    private sealed class StreamOutcome {
+        data class Text(val text: String) : StreamOutcome()
+        data class Tools(val calls: List<ToolCall>) : StreamOutcome()
+        data class Failed(val message: String) : StreamOutcome()
+    }
+
+    /**
+     * Runs a streaming request, showing and speaking the reply as it arrives.
+     *
+     * This is where time-to-first-response actually gets fixed. The old path called
+     * `send()`, which blocks on `body.string()` until generation is complete — so
+     * nothing appeared until everything was ready, and on a free model that is a
+     * multi-second stare at an empty screen. Here the first fragment is rendered the
+     * moment it lands, and in voice mode the first sentence starts playing while the
+     * rest is still being written.
+     */
+    private suspend fun streamAnswer(
+        client: LlmClient,
+        modelId: String,
+        apiKey: String,
+        systemPrompt: String,
+        history: List<LlmMessage>,
+        tools: List<com.lain.assistant.network.ToolDefinition>,
+        tuning: RequestTuning,
+        trace: Trace.Turn
+    ): StreamOutcome {
+        trace.countLlmRequest()
+        val speakAloud = !_state.value.isMuted && deliveryMode == DeliveryMode.VOICE
+        var started = false
+        var outcome: StreamOutcome = StreamOutcome.Failed("The model returned nothing.")
+
+        try {
+            client.sendStreaming(apiKey, modelId, systemPrompt, history, tools, tuning).collect { event ->
+                when (event) {
+                    is StreamEvent.Delta -> {
+                        if (!started) {
+                            started = true
+                            trace.mark("first_token")
+                            // Clear the placeholder the instant real text exists.
+                            _state.update { it.copy(statusLine = null, streamingText = "") }
+                            if (speakAloud) speaker?.begin()
+                        }
+                        _state.update { it.copy(streamingText = (it.streamingText ?: "") + event.text) }
+                        // Speaking starts at the first sentence boundary, not at the end
+                        // of generation — see StreamingSpeaker.
+                        if (speakAloud) speaker?.offer(event.text)
+                    }
+
+                    is StreamEvent.Done -> {
+                        trace.mark("generation_complete")
+                        if (speakAloud) {
+                            speaker?.finish()
+                            trace.mark("tts_flushed")
+                        }
+                        val text = event.text.trim()
+                        outcome = if (text.isBlank()) {
+                            StreamOutcome.Failed("The model returned an empty reply.")
+                        } else {
+                            StreamOutcome.Text(text)
+                        }
+                    }
+
+                    is StreamEvent.Tools -> {
+                        trace.mark("tools_requested")
+                        outcome = StreamOutcome.Tools(event.calls)
+                    }
+
+                    is StreamEvent.Failed -> {
+                        trace.mark("failed")
+                        outcome = StreamOutcome.Failed(event.message)
+                    }
+                }
+            }
+        } catch (c: CancellationException) {
+            speaker?.stop()
+            throw c
+        } catch (t: Throwable) {
+            outcome = StreamOutcome.Failed(t.message ?: "Streaming failed")
+        } finally {
+            // The partial is now either a finished message or abandoned; either way it
+            // stops being "in progress" so the transcript can own the final text.
+            _state.update { it.copy(streamingText = null) }
+        }
+        return outcome
     }
 
     /** The single place a completed turn lands in the transcript, the database and the speaker. */
-    private suspend fun finishTurn(cid: String, replyText: String, usedModel: String, fellBack: Boolean) {
+    /**
+     * @param alreadySpoken true when [StreamingSpeaker] has already read this reply
+     *   aloud as it streamed. Speaking it again here would play the whole answer a
+     *   second time.
+     */
+    private suspend fun finishTurn(
+        cid: String,
+        replyText: String,
+        usedModel: String,
+        fellBack: Boolean,
+        alreadySpoken: Boolean = false
+    ) {
         conversations.append(MessageEntity(conversationId = cid, role = "assistant", content = replyText))
         _state.update {
             it.copy(
                 messages = it.messages + ChatMessage(sender = Sender.LAIN, text = replyText),
                 isSending = false,
                 statusLine = null,
+                streamingText = null,
                 activeModelNotice = if (fellBack) "Used $usedModel — your selected model was unavailable." else null
             )
         }
-        speak(replyText)
+        if (!alreadySpoken) speak(replyText)
     }
 
+    /**
+     * Hands the mic back in hands-free mode — but not while Lain is still talking,
+     * or she transcribes her own voice and answers herself.
+     */
     private suspend fun resumeListeningIfHandsFree() {
         if (!_state.value.conversationMode) return
-        delay(1200)
-        if (!_state.value.isBusy && _state.value.conversationMode) startVoiceInput()
+
+        // Wait out the reply rather than a fixed guess. Streamed speech finishes when
+        // the last queued utterance does, which is not knowable up front.
+        val waitUntil = System.currentTimeMillis() + MAX_SPEECH_WAIT_MS
+        while (_state.value.isSpeaking && System.currentTimeMillis() < waitUntil) {
+            delay(150)
+        }
+        delay(400)
+        if (!_state.value.isBusy && !_state.value.isSpeaking && _state.value.conversationMode) {
+            startVoiceInput()
+        }
+    }
+
+    /**
+     * Tools that change what is on screen, and therefore cannot overlap.
+     *
+     * Two taps dispatched at once land in an undefined order on an undefined screen;
+     * a tap racing a read produces a listing of a UI mid-transition. Anything that
+     * mutates or observes the screen is kept strictly sequential. Everything else —
+     * a web search, a contact lookup, a battery read, a file write — is independent
+     * and safe to overlap.
+     */
+    private val serialTools = setOf(
+        "open_app", "close_app", "tap_text", "tap_screen", "type_text", "press_key",
+        "swipe_screen", "wait", "read_screen", "look_at_screen", "current_app",
+        "message_contact", "send_whatsapp_message", "open_url", "open_settings_page", "open_contacts"
+    )
+
+    /**
+     * Runs a batch of tool calls, overlapping the ones that can safely overlap.
+     *
+     * Models increasingly emit several calls in one turn — "look up this contact and
+     * check the battery" — and running them one after another made the round cost the
+     * sum of their latencies when it could cost the maximum. Web research in
+     * particular is seconds of waiting on a socket that the CPU spends idle.
+     *
+     * Results come back in the order the model asked for them regardless of the order
+     * they completed, because the tool messages have to line up with the tool_calls
+     * turn they answer.
+     */
+    private suspend fun executeCalls(
+        cid: String,
+        calls: List<ToolCall>,
+        images: MutableList<String>
+    ): List<Pair<ToolCall, String>> {
+        if (calls.size == 1) {
+            val only = calls.first()
+            return listOf(only to executeCall(cid, only, images))
+        }
+
+        val (serial, parallel) = calls.partition { it.name in serialTools }
+
+        // Independent work starts first so it overlaps the screen work rather than
+        // waiting behind it.
+        val deferred = coroutineScope {
+            parallel.map { call ->
+                async { call to executeCall(cid, call, images) }
+            }
+        }
+        val serialResults = serial.map { call -> call to executeCall(cid, call, images) }
+        val parallelResults = deferred.map { it.await() }
+
+        val byId = (serialResults + parallelResults).associateBy { it.first.id }
+        return calls.mapNotNull { byId[it.id] }
     }
 
     private suspend fun executeCall(cid: String, call: ToolCall, images: MutableList<String>): String {
@@ -480,8 +739,6 @@ class ChatEngine(
 
     // ------------------------------------------------------ model + fallback
 
-    private data class Outcome(val result: LlmResult, val modelUsed: String, val fellBack: Boolean)
-
     /** Why a request failed, since the right response differs sharply between these. */
     private enum class ErrorClass {
         /** The slug no longer resolves on this provider — retrying it is pointless forever. */
@@ -512,18 +769,20 @@ class ChatEngine(
         }
     }
 
+    private data class StreamOutcomeWithModel(
+        val result: StreamOutcome,
+        val modelUsed: String,
+        val fellBack: Boolean
+    )
+
     /**
-     * Tries the selected model, and falls back when that's the only way to answer.
+     * The streaming path's equivalent of [requestWithFallback].
      *
-     * The opt-in toggle governs *quality and cost* substitutions — swapping a busy
-     * model for a different one is a decision the user should own, so a rate limit
-     * only triggers a switch if they asked for that. A retired slug is a different
-     * situation: the selected model cannot answer this message or any future one, so
-     * refusing to switch just means the app is broken until someone opens Settings.
-     * Those get switched regardless, recorded so the dead entry stops being offered,
-     * and reported afterwards — never silently.
+     * Fallback only kicks in when the stream failed outright — a stream that produced
+     * text has already shown it to the user, so retrying it on another model would
+     * mean rewriting an answer they are part-way through reading.
      */
-    private suspend fun requestWithFallback(
+    private suspend fun streamWithFallback(
         client: LlmClient,
         provider: Provider,
         modelId: String,
@@ -531,68 +790,67 @@ class ChatEngine(
         systemPrompt: String,
         history: List<LlmMessage>,
         tools: List<com.lain.assistant.network.ToolDefinition>,
-        tuning: RequestTuning
-    ): Outcome {
-        val first = client.send(apiKey, modelId, systemPrompt, history, tools, tuning)
-        if (first !is LlmResult.Error) return Outcome(first, modelId, false)
+        tuning: RequestTuning,
+        trace: Trace.Turn
+    ): StreamOutcomeWithModel {
+        val first = streamAnswer(client, modelId, apiKey, systemPrompt, history, tools, tuning, trace)
+        if (first !is StreamOutcome.Failed) return StreamOutcomeWithModel(first, modelId, false)
 
-        return when (val kind = classify(first.message)) {
-            ErrorClass.AUTH -> Outcome(
-                LlmResult.Error("Your ${provider.displayName} API key was rejected. Check it in Settings."),
+        return when (classify(first.message)) {
+            ErrorClass.AUTH -> StreamOutcomeWithModel(
+                StreamOutcome.Failed("Your ${provider.displayName} API key was rejected. Check it in Settings."),
                 modelId, false
             )
 
-            ErrorClass.CREDIT -> Outcome(
-                LlmResult.Error("No credit left on ${provider.displayName}. Top up, or switch to a free model in Settings."),
+            ErrorClass.CREDIT -> StreamOutcomeWithModel(
+                StreamOutcome.Failed("No credit left on ${provider.displayName}. Top up, or switch to a free model in Settings."),
                 modelId, false
             )
 
             ErrorClass.MODEL_GONE -> {
                 prefs.markModelBroken(modelId)
                 val alternative = pickAlternative(provider, modelId)
-                if (alternative == null) {
-                    Outcome(
-                        LlmResult.Error(
+                    ?: return StreamOutcomeWithModel(
+                        StreamOutcome.Failed(
                             "\"$modelId\" no longer exists on ${provider.displayName} — free models get retired " +
                                 "without notice. Open Settings and pick another one."
                         ),
                         modelId, false
                     )
+                setStatus("That model's gone — using ${alternative.label}…")
+                val second = streamAnswer(client, alternative.id, apiKey, systemPrompt, history, tools, tuning, trace)
+                if (second is StreamOutcome.Failed) {
+                    StreamOutcomeWithModel(
+                        StreamOutcome.Failed(
+                            "\"$modelId\" has been retired and ${alternative.label} didn't answer either. " +
+                                "Open Settings and pick a model."
+                        ),
+                        modelId, false
+                    )
                 } else {
-                    setStatus("That model's gone — using ${alternative.label}…")
-                    val second = client.send(apiKey, alternative.id, systemPrompt, history, tools, tuning)
-                    if (second is LlmResult.Error) {
-                        Outcome(
-                            LlmResult.Error(
-                                "\"$modelId\" has been retired and ${alternative.label} didn't answer either. " +
-                                    "Open Settings and pick a model."
-                            ),
-                            modelId, false
-                        )
-                    } else {
-                        // Make it stick, so the next message doesn't repeat the whole dance.
-                        prefs.saveModelSelection(provider, alternative.id)
-                        Outcome(second, alternative.id, true)
-                    }
+                    prefs.saveModelSelection(provider, alternative.id)
+                    StreamOutcomeWithModel(second, alternative.id, true)
                 }
             }
 
-            ErrorClass.TRANSIENT, ErrorClass.OTHER -> {
-                val fallbackEnabled = prefs.isModelFallbackEnabled.first()
-                val alternative = if (fallbackEnabled && kind == ErrorClass.TRANSIENT) {
-                    pickAlternative(provider, modelId)
-                } else {
-                    null
-                } ?: return Outcome(first, modelId, false)
-
-                // One alternative only — hammering a rate-limited account wastes requests
-                // and makes the limit worse.
+            ErrorClass.TRANSIENT -> {
+                // Rate limits only trigger a switch when the user opted in — that's a
+                // cost/quality substitution, unlike a retired model, which is the only
+                // way to answer at all.
+                val alternative = (if (prefs.isModelFallbackEnabled.first()) pickAlternative(provider, modelId) else null)
+                    ?: return StreamOutcomeWithModel(first, modelId, false)
                 setStatus("Switching to ${alternative.label}…")
-                val second = client.send(apiKey, alternative.id, systemPrompt, history, tools, tuning)
-                Outcome(second, alternative.id, second !is LlmResult.Error)
+                val second = streamAnswer(client, alternative.id, apiKey, systemPrompt, history, tools, tuning, trace)
+                StreamOutcomeWithModel(second, alternative.id, second !is StreamOutcome.Failed)
             }
+
+            ErrorClass.OTHER -> StreamOutcomeWithModel(first, modelId, false)
         }
     }
+
+    /** True when the streaming speaker handled this turn's audio. */
+    private fun spokeWhileStreaming(): Boolean =
+        deliveryMode == DeliveryMode.VOICE && !_state.value.isMuted && speaker?.hasStarted == true
 
     /** Best available stand-in, skipping the current pick and anything already known dead. */
     private suspend fun pickAlternative(

@@ -136,6 +136,16 @@ fun MiniChatScreen(viewModel: ChatViewModel, autoListen: Boolean, onDismiss: () 
                 }
             }
 
+            // Partial reply, so the compact surface feels as immediate as the main one.
+            state.streamingText?.let { partial ->
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    if (partial.isEmpty()) "…" else "$partial▍",
+                    color = LainCream,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+
             state.statusLine?.let {
                 Spacer(Modifier.height(6.dp))
                 Text(it, color = LainMuted, style = MaterialTheme.typography.bodyMedium)

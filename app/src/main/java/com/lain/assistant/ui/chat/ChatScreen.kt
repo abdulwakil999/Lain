@@ -76,6 +76,15 @@ fun ChatScreen(viewModel: ChatViewModel, container: AppContainer, autoListenToke
         if (state.messages.isNotEmpty()) listState.animateScrollToItem(state.messages.lastIndex)
     }
 
+    // Streaming text grows the last item rather than adding one, so it needs its own
+    // trigger to keep the newest words on screen. Scrolling without animation here —
+    // an animated scroll per token fights itself and stutters.
+    LaunchedEffect(state.streamingText) {
+        if (state.streamingText != null && state.messages.isNotEmpty()) {
+            listState.scrollToItem(state.messages.size)
+        }
+    }
+
     LaunchedEffect(autoListenToken) {
         if (autoListenToken != null) viewModel.startVoiceInput()
     }
@@ -124,6 +133,15 @@ fun ChatScreen(viewModel: ChatViewModel, container: AppContainer, autoListenToke
                 item { AccessibilityServiceBanner(modifier = Modifier.fillMaxWidth()) }
                 items(state.messages, key = { it.id }) { message ->
                     MessageBubble(message, maxWidth = window.bubbleMaxWidth)
+                }
+                // The reply currently being generated, rendered token by token. It lives
+                // outside `messages` so a cancelled turn leaves nothing behind, and it is
+                // what turns "several seconds of nothing" into text that starts moving
+                // after one round trip.
+                state.streamingText?.let { partial ->
+                    item(key = "streaming") {
+                        StreamingBubble(partial, maxWidth = window.bubbleMaxWidth)
+                    }
                 }
             }
         }
@@ -262,6 +280,29 @@ private fun SmallPill(text: String, onClick: () -> Unit, dimmed: Boolean = false
             .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
         Text(text, color = LainCream, style = MaterialTheme.typography.labelLarge)
+    }
+}
+
+/**
+ * The in-flight reply. Styled like one of Lain's messages so the transition to the
+ * finished bubble is invisible, with a caret so it reads as still being written.
+ */
+@Composable
+private fun StreamingBubble(text: String, maxWidth: Dp) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+        Box(
+            modifier = Modifier
+                .widthIn(max = maxWidth)
+                .clip(RoundedCornerShape(10.dp))
+                .background(LainSalmonDeep.copy(alpha = 0.92f))
+                .padding(horizontal = 14.dp, vertical = 10.dp)
+        ) {
+            Text(
+                text = if (text.isEmpty()) "…" else "$text▍",
+                color = LainCream,
+                style = MaterialTheme.typography.bodyLarge
+            )
+        }
     }
 }
 

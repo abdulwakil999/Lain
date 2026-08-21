@@ -14,8 +14,8 @@ android {
         applicationId = "com.lain.assistant"
         minSdk = 26
         targetSdk = 35
-        versionCode = 12
-        versionName = "0.10.0"
+        versionCode = 13
+        versionName = "0.11.0"
     }
 
     buildTypes {
@@ -36,6 +36,8 @@ android {
 
     buildFeatures {
         compose = true
+        // Lets the app switch performance tracing on for debug builds only.
+        buildConfig = true
     }
 
     packaging {
@@ -83,4 +85,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-service:2.8.7")
 
     testImplementation("junit:junit:4.13.2")
+    // Drives the streaming path against a real socket so time-to-first-token can be
+    // measured rather than asserted.
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
 }

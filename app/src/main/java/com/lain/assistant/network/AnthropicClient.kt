@@ -21,12 +21,8 @@ class AnthropicClient(private val baseUrl: String) : LlmClient {
 
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
 
-    private val http = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(45, TimeUnit.SECONDS)
-        .connectionPool(okhttp3.ConnectionPool(4, 5, TimeUnit.MINUTES))
-        .retryOnConnectionFailure(true)
-        .build()
+    // Shared, so a multi-step task reuses one warm TLS connection.
+    private val http = Http.shared
 
     override suspend fun send(
         apiKey: String,

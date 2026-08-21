@@ -17,6 +17,14 @@ class AppLauncher(private val context: Context) {
             .distinctBy { it.first }
     }
 
+    /** The app's own display name for a spoken one, so a confirmation names what actually opened. */
+    fun resolveLabel(spokenName: String): String? {
+        val query = spokenName.trim().lowercase()
+        val all = installedApps()
+        return all.firstOrNull { (_, label) -> label.lowercase() == query }?.second
+            ?: all.firstOrNull { (_, label) -> label.lowercase().contains(query) }?.second
+    }
+
     fun resolvePackage(spokenName: String): String? {
         val query = spokenName.trim().lowercase()
         return installedApps().firstOrNull { (_, label) -> label.lowercase() == query }?.first

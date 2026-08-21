@@ -24,10 +24,9 @@ import java.util.concurrent.TimeUnit
  */
 class ConnectionTester(private val context: Context) {
 
-    private val http = OkHttpClient.Builder()
-        .connectTimeout(12, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .build()
+    // Shares the app's pool, so a successful test also leaves a warm connection
+    // behind for the first real message.
+    private val http = Http.quick
 
     suspend fun test(provider: Provider, modelId: String?, apiKey: String?): String = withContext(Dispatchers.IO) {
         if (!hasNetwork()) {

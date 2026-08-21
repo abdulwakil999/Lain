@@ -67,6 +67,26 @@ data class RequestTuning(
     }
 }
 
+/**
+ * Incremental output from a streaming request.
+ *
+ * The point of streaming is not that the whole answer arrives sooner — it doesn't
+ * — but that the first words do. Non-streaming, time-to-first-word equals total
+ * generation time, which on a free model is several seconds of a blank screen.
+ */
+sealed class StreamEvent {
+    /** A fragment of the assistant's prose, in order. */
+    data class Delta(val text: String) : StreamEvent()
+
+    /** The model asked for tools instead of answering. Emitted once, at the end. */
+    data class Tools(val calls: List<ToolCall>) : StreamEvent()
+
+    /** Generation finished cleanly. [text] is the complete assembled message. */
+    data class Done(val text: String) : StreamEvent()
+
+    data class Failed(val message: String) : StreamEvent()
+}
+
 interface LlmClient {
     suspend fun send(
         apiKey: String,
@@ -76,4 +96,29 @@ interface LlmClient {
         tools: List<ToolDefinition>,
         tuning: RequestTuning = RequestTuning()
     ): LlmResult
+
+    /**
+     * Same request, delivered incrementally.
+     *
+     * Default implementation runs the blocking path and emits the result in one
+     * go, so a provider without streaming support still works — it just doesn't
+     * get the latency benefit.
+     */
+    fun sendStreaming(
+        apiKey: String,
+        model: String,
+        systemPrompt: String,
+        history: List<LlmMessage>,
+        tools: List<ToolDefinition>,
+        tuning: RequestTuning = RequestTuning()
+    ): kotlinx.coroutines.flow.Flow<StreamEvent> = kotlinx.coroutines.flow.flow {
+        when (val result = send(apiKey, model, systemPrompt, history, tools, tuning)) {
+            is LlmResult.Message -> {
+                emit(StreamEvent.Delta(result.text))
+                emit(StreamEvent.Done(result.text))
+            }
+            is LlmResult.ToolCalls -> emit(StreamEvent.Tools(result.calls))
+            is LlmResult.Error -> emit(StreamEvent.Failed(result.message))
+        }
+    }
 }

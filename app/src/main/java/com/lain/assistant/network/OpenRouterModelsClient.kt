@@ -50,10 +50,7 @@ class OpenRouterModelsClient {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    private val http = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .build()
+    private val http = Http.quick
 
     suspend fun fetchFreeToolCapableModels(): Result<List<ModelInfo>> = withContext(Dispatchers.IO) {
         try {

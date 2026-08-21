@@ -18,7 +18,7 @@ import java.net.UnknownHostException
  */
 internal suspend fun OkHttpClient.executeWithRetry(
     request: Request,
-    maxAttempts: Int = 3
+    maxAttempts: Int = 2
 ): Result<Response> {
     var lastError: IOException? = null
     repeat(maxAttempts) { attempt ->
@@ -26,13 +26,27 @@ internal suspend fun OkHttpClient.executeWithRetry(
             return Result.success(newCall(request).execute())
         } catch (e: IOException) {
             lastError = e
-            if (attempt < maxAttempts - 1) {
-                delay(600L * (attempt + 1))
+            // Only name-resolution and connection failures are worth repeating. A read
+            // timeout means the server accepted the request and is still working on it,
+            // so retrying re-does the whole generation — three attempts against a 45s
+            // read timeout was over two minutes before the user saw an error, and it
+            // billed the same request three times. Fail fast and say so instead.
+            if (!isWorthRetrying(e) || attempt == maxAttempts - 1) {
+                return Result.failure(e)
             }
+            delay(400L * (attempt + 1))
         }
     }
     return Result.failure(lastError ?: IOException("Request failed"))
 }
+
+/**
+ * DNS on mobile is genuinely flaky — coming off Wi-Fi, waking from doze, or a
+ * moment of weak signal all produce a resolution failure on a request that
+ * succeeds a second later. Those are worth one more go; nothing else is.
+ */
+private fun isWorthRetrying(e: IOException): Boolean =
+    e is UnknownHostException || e is java.net.ConnectException || e is java.net.NoRouteToHostException
 
 /** Turns a raw exception into something a person can act on. */
 internal fun describeNetworkFailure(t: Throwable): String = when (t) {
