@@ -14,6 +14,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.Dp
 import com.lain.assistant.R
 import com.lain.assistant.ui.theme.LainArtBackdrop
 
@@ -28,22 +29,23 @@ import com.lain.assistant.ui.theme.LainArtBackdrop
  * in half.
  */
 @Composable
-fun PixelBackground(modifier: Modifier = Modifier) {
+fun PixelBackground(modifier: Modifier = Modifier, artSize: Dp = Dp.Unspecified) {
     BoxWithConstraints(modifier = modifier.fillMaxSize().background(LainArtBackdrop)) {
-        val artSize = maxWidth
+        // Sized by the caller so the onboarding panel can be anchored to the same number.
+        val art: Dp = if (artSize != Dp.Unspecified) artSize else maxWidth
         Image(
             painter = painterResource(id = R.drawable.bg_lain_awake),
             contentDescription = null,
             modifier = Modifier
-                .width(artSize)
-                .height(artSize)
+                .width(art)
+                .height(art)
                 .align(Alignment.TopCenter),
             contentScale = ContentScale.FillBounds
         )
         Box(
             modifier = Modifier
-                .width(artSize)
-                .height(artSize)
+                .width(art)
+                .height(art)
                 .align(Alignment.TopCenter)
                 .background(
                     Brush.verticalGradient(

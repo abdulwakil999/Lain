@@ -165,9 +165,10 @@ object ToolDefinitions {
         ),
         ToolDefinition(
             name = "type_text",
-            description = "Type text into the currently focused text field. Tap the field first (tap_text) so it has focus, then call this. This is how you fill in search boxes, message composers, and forms.",
+            description = "Type text into the currently focused text field. Tap the field first (tap_text) so it has focus, then call this. Set submit=true to press the keyboard's send/search key in the same step — do that whenever the text is meant to be submitted, it saves a whole round trip.",
             parameters = schema {
                 property("text", "string", "The text to type")
+                property("submit", "boolean", "true to submit (send/search/go) immediately after typing")
                 required("text")
             }
         ),
@@ -200,6 +201,16 @@ object ToolDefinitions {
         ),
 
         // ------------------------------------------------------- communication
+        ToolDefinition(
+            name = "message_contact",
+            description = "Send a message to someone, start to finish, in ONE call. Resolves the contact name to a number, opens the app if it needs one, types the message, sends it, and confirms it actually went. This is the right tool for \"text Ade\", \"message mum on WhatsApp\", \"tell Sam I'm running late\" — do NOT drive that by hand with open_app/tap_text/type_text, it is many times slower and less reliable.",
+            parameters = schema {
+                property("contact", "string", "Contact name or phone number")
+                property("message", "string", "What to say")
+                property("app", "string", "\"whatsapp\" or \"sms\". Leave empty for SMS, which sends without opening anything.")
+                required("contact", "message")
+            }
+        ),
         ToolDefinition(
             name = "send_sms",
             description = "Send a text message via SMS directly (does not open any app).",
@@ -299,21 +310,34 @@ object ToolDefinitions {
         )
     )
 
+    /** Everything that is dead weight without a connected Accessibility Service. */
+    private val accessibilityDependent = setOf(
+        "read_screen", "look_at_screen", "tap_text", "tap_screen", "type_text",
+        "press_key", "swipe_screen", "current_app", "close_app"
+    )
+
     /**
      * Weak models degrade when handed a large tool surface, so the low tier sees a
      * focused subset. Everything remains available to stronger models — nothing is
      * removed from the app, only from that request's menu.
+     *
+     * [accessibilityReady] matters for speed as much as correctness: offering screen
+     * tools while the service is off means the model spends round trips discovering
+     * that each one fails. Not offering them at all is both faster and clearer.
      */
-    fun forTier(compact: Boolean, visionCapable: Boolean): List<ToolDefinition> {
+    fun forTier(compact: Boolean, visionCapable: Boolean, accessibilityReady: Boolean = true): List<ToolDefinition> {
         var tools = all
         if (!visionCapable) {
             tools = tools.filterNot { it.name == "look_at_screen" || it.name == "take_photo" }
+        }
+        if (!accessibilityReady) {
+            tools = tools.filterNot { it.name in accessibilityDependent }
         }
         if (!compact) return tools
 
         val essentials = setOf(
             "open_app", "read_screen", "tap_text", "type_text", "press_key", "swipe_screen", "wait",
-            "current_app", "make_call", "send_sms", "lookup_contact", "send_whatsapp_message",
+            "current_app", "make_call", "message_contact", "lookup_contact",
             "set_reminder", "write_note", "list_notes", "web_search", "device_status",
             "remember", "forget", "open_url"
         )

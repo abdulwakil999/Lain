@@ -2,9 +2,11 @@ package com.lain.assistant.ui.chat
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -20,6 +22,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -37,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.lain.assistant.AppContainer
@@ -45,6 +49,7 @@ import com.lain.assistant.data.Sender
 import com.lain.assistant.ui.LainViewModelFactory
 import com.lain.assistant.ui.common.AccessibilityServiceBanner
 import com.lain.assistant.ui.common.HoveringPanel
+import com.lain.assistant.ui.common.rememberLainWindow
 import com.lain.assistant.ui.common.PixelTextField
 import com.lain.assistant.ui.common.RequestCorePermissionsOnce
 import com.lain.assistant.ui.settings.SettingsScreen
@@ -84,34 +89,49 @@ fun ChatScreen(viewModel: ChatViewModel, container: AppContainer, autoListenToke
         return
     }
 
+    val window = rememberLainWindow()
+
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        // The square artwork is exactly one screen-width tall (see AwakeningBackground),
-        // so reserve precisely that much and start messages just below her chin — no
-        // guessed dp constant, and it holds on any screen size.
-        val artHeight = maxWidth
+        // The portrait is square, and how big it's allowed to be is a function of both
+        // screen dimensions — see LainWindow.artSize. Drawing it at the full window width
+        // is what made it swallow a tablet screen and crowd out the conversation.
+        val artHeight: Dp = window.artSize
 
         // Full-bleed backdrop painted in the artwork's own slate, so the portrait and the
         // space beneath it read as one continuous image rather than a picture with a seam.
-        AwakeningBackground(awake = state.hasAwakened)
+        AwakeningBackground(awake = state.hasAwakened, artSize = artHeight)
 
         Column(modifier = Modifier.fillMaxSize()) {
             Spacer(Modifier.fillMaxWidth().height(artHeight))
 
             LazyColumn(
                 state = listState,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(top = 8.dp, bottom = 150.dp, start = 16.dp, end = 16.dp),
+                // Centred and width-capped so lines stay readable instead of stretching
+                // across a tablet; on a phone contentMaxWidth is the full width anyway.
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .wrapContentWidth(Alignment.CenterHorizontally)
+                    .widthIn(max = window.contentMaxWidth),
+                contentPadding = PaddingValues(
+                    top = 8.dp,
+                    bottom = 150.dp,
+                    start = window.gutter,
+                    end = window.gutter
+                ),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 item { AccessibilityServiceBanner(modifier = Modifier.fillMaxWidth()) }
-                items(state.messages, key = { it.id }) { message -> MessageBubble(message) }
+                items(state.messages, key = { it.id }) { message ->
+                    MessageBubble(message, maxWidth = window.bubbleMaxWidth)
+                }
             }
         }
 
         Row(
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(top = 44.dp, end = 16.dp),
+                .padding(top = window.topInset, end = window.gutter),
             verticalAlignment = Alignment.CenterVertically
         ) {
             SmallPill(
@@ -129,7 +149,42 @@ fun ChatScreen(viewModel: ChatViewModel, container: AppContainer, autoListenToke
             SmallPill(text = "Settings", onClick = { showSettings = true })
         }
 
-        HoveringPanel(modifier = Modifier.align(Alignment.BottomCenter)) {
+        HoveringPanel(
+            modifier = Modifier.align(Alignment.BottomCenter),
+            maxWidth = window.contentMaxWidth,
+            horizontalPadding = window.gutter
+        ) {
+            // Stop-speaking. Distinct from STOP (which kills the task) and from the MUTED
+            // pill (a lasting preference): this shuts up the sentence currently being read
+            // aloud and nothing else, which is what someone wants when they've finished
+            // reading a long answer before Lain has finished saying it.
+            AnimatedVisibility(
+                visible = state.isSpeaking,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(LainSalmon)
+                            .clickable { viewModel.silence() }
+                            .padding(vertical = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "◼  STOP SPEAKING",
+                            color = LainInk,
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                    }
+                }
+            }
+
             // Live status so a long automation run never looks frozen.
             AnimatedVisibility(visible = state.statusLine != null) {
                 Text(
@@ -211,7 +266,7 @@ private fun SmallPill(text: String, onClick: () -> Unit, dimmed: Boolean = false
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage) {
+private fun MessageBubble(message: ChatMessage, maxWidth: Dp) {
     val isUser = message.sender == Sender.USER
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -219,7 +274,9 @@ private fun MessageBubble(message: ChatMessage) {
     ) {
         Box(
             modifier = Modifier
-                .widthIn(max = 300.dp)
+                // Derived from the window rather than a fixed 300dp, which was a third of
+                // a tablet and most of a small phone.
+                .widthIn(max = maxWidth)
                 .clip(RoundedCornerShape(10.dp))
                 .background(if (isUser) LainCream.copy(alpha = 0.92f) else LainSalmonDeep.copy(alpha = 0.92f))
                 .padding(horizontal = 14.dp, vertical = 10.dp)

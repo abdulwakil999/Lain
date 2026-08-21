@@ -32,9 +32,16 @@ class OpenAiCompatibleClient(
 
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
 
+    private val isOpenRouter = baseUrl.contains("openrouter.ai")
+
     private val http = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(45, TimeUnit.SECONDS)
+        // One pooled, kept-alive connection per provider turns each subsequent step of
+        // a multi-step task into a plain request instead of a fresh TLS handshake —
+        // worth roughly a couple of hundred milliseconds per tool round on mobile.
+        .connectionPool(okhttp3.ConnectionPool(4, 5, TimeUnit.MINUTES))
+        .retryOnConnectionFailure(true)
         .build()
 
     override suspend fun send(
@@ -42,14 +49,26 @@ class OpenAiCompatibleClient(
         model: String,
         systemPrompt: String,
         history: List<LlmMessage>,
-        tools: List<ToolDefinition>
+        tools: List<ToolDefinition>,
+        tuning: RequestTuning
     ): LlmResult = withContext(Dispatchers.IO) {
         val body = buildJsonObject {
             put("model", model)
             put("messages", buildMessagesArray(systemPrompt, history))
+            // Without a ceiling, a reasoning model spends as long as it likes before
+            // emitting a one-line tool call. This is the single cheapest latency win
+            // available and costs nothing in answer quality at these sizes.
+            put("max_tokens", tuning.maxTokens)
             if (tools.isNotEmpty()) {
                 put("tools", buildToolsArray(tools))
                 put("tool_choice", "auto")
+            }
+            // OpenRouter's normalised reasoning control. Providers that don't
+            // recognise it ignore unknown top-level fields, so this is safe to send.
+            if (isOpenRouter) {
+                put("reasoning", buildJsonObject {
+                    put("effort", if (tuning.deliberate) "medium" else "low")
+                })
             }
         }
 

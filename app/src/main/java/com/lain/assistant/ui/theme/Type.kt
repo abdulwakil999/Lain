@@ -23,13 +23,28 @@ val displayFontFamily = FontFamily.Cursive
 
 val bodyFontFamily = FontFamily.Default
 
-val LainTypography = Typography(
-    displayLarge = TextStyle(fontFamily = displayFontFamily, fontWeight = FontWeight.Bold, fontSize = 40.sp, lineHeight = 44.sp),
-    displayMedium = TextStyle(fontFamily = displayFontFamily, fontWeight = FontWeight.Bold, fontSize = 32.sp, lineHeight = 36.sp),
-    headlineMedium = TextStyle(fontFamily = displayFontFamily, fontWeight = FontWeight.Bold, fontSize = 26.sp, lineHeight = 30.sp),
-    titleLarge = TextStyle(fontFamily = displayFontFamily, fontWeight = FontWeight.Bold, fontSize = 22.sp, lineHeight = 26.sp),
-    titleMedium = TextStyle(fontFamily = displayFontFamily, fontWeight = FontWeight.Bold, fontSize = 18.sp, lineHeight = 22.sp),
-    bodyLarge = TextStyle(fontFamily = bodyFontFamily, fontWeight = FontWeight.Normal, fontSize = 16.sp, lineHeight = 22.sp),
-    bodyMedium = TextStyle(fontFamily = bodyFontFamily, fontWeight = FontWeight.Normal, fontSize = 14.sp, lineHeight = 20.sp),
-    labelLarge = TextStyle(fontFamily = displayFontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp, lineHeight = 20.sp)
-)
+/**
+ * Type scaled for the window it's being drawn in.
+ *
+ * Fixed sp sizes are correct on the device they were tuned on and wrong either
+ * side of it: 16sp body text on a 320dp palmtop wraps every three words, and the
+ * same 16sp on a landscape tablet reads as a phone screenshot that's been
+ * stretched. [scale] comes from LainWindow.fontScale, so the whole ramp moves
+ * together and the relationships between the styles are preserved.
+ */
+fun lainTypography(scale: Float = 1f): Typography {
+    fun s(size: Float) = (size * scale).sp
+    return Typography(
+        displayLarge = TextStyle(fontFamily = displayFontFamily, fontWeight = FontWeight.Bold, fontSize = s(40f), lineHeight = s(44f)),
+        displayMedium = TextStyle(fontFamily = displayFontFamily, fontWeight = FontWeight.Bold, fontSize = s(32f), lineHeight = s(36f)),
+        headlineMedium = TextStyle(fontFamily = displayFontFamily, fontWeight = FontWeight.Bold, fontSize = s(26f), lineHeight = s(30f)),
+        titleLarge = TextStyle(fontFamily = displayFontFamily, fontWeight = FontWeight.Bold, fontSize = s(22f), lineHeight = s(26f)),
+        titleMedium = TextStyle(fontFamily = displayFontFamily, fontWeight = FontWeight.Bold, fontSize = s(18f), lineHeight = s(22f)),
+        bodyLarge = TextStyle(fontFamily = bodyFontFamily, fontWeight = FontWeight.Normal, fontSize = s(16f), lineHeight = s(22f)),
+        bodyMedium = TextStyle(fontFamily = bodyFontFamily, fontWeight = FontWeight.Normal, fontSize = s(14f), lineHeight = s(20f)),
+        labelLarge = TextStyle(fontFamily = displayFontFamily, fontWeight = FontWeight.Bold, fontSize = s(16f), lineHeight = s(20f))
+    )
+}
+
+/** Unscaled default, kept for previews and any call site outside a Lain window. */
+val LainTypography: Typography = lainTypography()

@@ -31,6 +31,8 @@ data class SettingsUiState(
     val isTesting: Boolean = false,
     val memories: List<com.lain.assistant.data.db.MemoryEntity> = emptyList(),
     val modelFallback: Boolean = false,
+    /** Slugs that already failed as retired, hidden so they can't be picked again by accident. */
+    val brokenModels: Set<String> = emptySet(),
     /** null = use the static fallback catalog; non-null = live models fetched from OpenRouter. */
     val liveOpenRouterModels: List<ModelInfo>? = null,
     val isLoadingModels: Boolean = false
@@ -42,9 +44,10 @@ data class SettingsUiState(
      */
     val availableModels: List<ModelInfo>
         get() = if (provider == Provider.OPENROUTER && liveOpenRouterModels != null) {
-            ModelCatalog.forProvider(provider).filter { it.strongAtTools } + liveOpenRouterModels
+            (ModelCatalog.forProvider(provider).filter { it.strongAtTools } + liveOpenRouterModels)
+                .filterNot { it.id in brokenModels }
         } else {
-            ModelCatalog.forProvider(provider)
+            ModelCatalog.forProvider(provider).filterNot { it.id in brokenModels }
         }
 
     val canSave: Boolean
@@ -67,6 +70,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             val overlayEnabled = container.userPreferencesRepository.isOverlayEnabled.first()
             val batterySaver = container.userPreferencesRepository.isBatterySaver.first()
             val fallback = container.userPreferencesRepository.isModelFallbackEnabled.first()
+            val broken = container.userPreferencesRepository.brokenModels.first()
             _state.update {
                 it.copy(
                     name = profile.name,
@@ -80,6 +84,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
                     overlayEnabled = overlayEnabled,
                     batterySaver = batterySaver,
                     modelFallback = fallback,
+                    brokenModels = broken,
                     loaded = true
                 )
             }
@@ -123,7 +128,15 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    fun setModelId(modelId: String) = _state.update { it.copy(modelId = modelId, justSaved = false) }
+    /**
+     * Choosing a model explicitly also clears any "this one is dead" mark on it —
+     * a retired slug occasionally comes back, and the user asking for it by name is
+     * the right moment to give it another chance.
+     */
+    fun setModelId(modelId: String) {
+        _state.update { it.copy(modelId = modelId, brokenModels = it.brokenModels - modelId, justSaved = false) }
+        viewModelScope.launch { container.userPreferencesRepository.clearModelBroken(modelId) }
+    }
     fun setApiKey(value: String) = _state.update { it.copy(apiKey = value, justSaved = false) }
     fun setKokoroEndpoint(value: String) = _state.update { it.copy(kokoroEndpoint = value, justSaved = false) }
 

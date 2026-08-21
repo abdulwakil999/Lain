@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -34,16 +36,20 @@ import com.lain.assistant.data.Provider
 import com.lain.assistant.ui.common.PixelButton
 import com.lain.assistant.ui.common.PixelChoiceChip
 import com.lain.assistant.ui.common.PixelTextField
-import com.lain.assistant.ui.common.openAppInfoForAccessibility
+import com.lain.assistant.ui.common.rememberLainWindow
+import com.lain.assistant.ui.common.openAccessibilitySettingsForLain
+import com.lain.assistant.ui.common.openAppInfo
 import com.lain.assistant.ui.theme.LainCream
 import com.lain.assistant.ui.theme.LainMuted
 import com.lain.assistant.ui.theme.LainNavyDeep
 import com.lain.assistant.ui.theme.LainSalmon
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
+    val window = rememberLainWindow()
 
     Box(
         modifier = Modifier
@@ -54,7 +60,11 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 44.dp)
+                // A settings form is a column of controls; letting it run the full width of
+                // a landscape tablet puts the label and its field a hand-span apart.
+                .wrapContentWidth(androidx.compose.ui.Alignment.CenterHorizontally)
+                .widthIn(max = window.contentMaxWidth)
+                .padding(horizontal = window.gutter, vertical = window.topInset)
         ) {
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 Box(
@@ -90,7 +100,11 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
 
             Spacer(Modifier.height(24.dp))
             SectionLabel("Provider")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Wraps rather than clipping: five names never fit one line on a phone.
+            androidx.compose.foundation.layout.FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 Provider.entries.forEach { provider ->
                     PixelChoiceChip(provider.displayName, state.provider == provider, { viewModel.setProvider(provider) })
                 }
@@ -108,9 +122,20 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
                 if (state.isLoadingModels) {
                     Text("Checking what's actually free right now…", style = MaterialTheme.typography.bodyMedium, color = LainMuted)
                 }
+                if (state.brokenModels.isNotEmpty()) {
+                    Text(
+                        "${state.brokenModels.size} model(s) stopped existing on the provider and are hidden. " +
+                            "Free models get retired without notice; Lain switched you off them automatically.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = LainSalmon
+                    )
+                }
                 state.availableModels.forEach { model ->
+                    // Context size is the one honest capability signal a free model gives
+                    // us, and it's what decides whether a long task survives.
                     val badge = when {
                         model.strongAtTools -> "  ★"
+                        model.isFree && model.contextTokens > 0 -> "  ·  FREE · ${model.contextTokens / 1000}k"
                         model.isFree -> "  ·  FREE"
                         else -> ""
                     }
@@ -242,13 +267,42 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
 
             Spacer(Modifier.height(24.dp))
             SectionLabel("Accessibility Service")
+            // Three states, not two: "on in Settings but not connected" is its own
+            // problem with its own fix, and calling it "not enabled" is what sent people
+            // looking for a switch that was already flipped.
+            val health = LainAccessibilityService.health(context)
             Text(
-                if (LainAccessibilityService.isRunning) "Enabled — Lain can read and tap your screen." else "Not enabled yet.",
+                when (health) {
+                    LainAccessibilityService.ServiceHealth.READY ->
+                        "Connected — Lain can read and tap your screen."
+                    LainAccessibilityService.ServiceHealth.STALLED ->
+                        "Switched on, but not connected right now. Android drops the service after an update or " +
+                            "when it reclaims memory. Toggle Lain off and back on below to restore it."
+                    LainAccessibilityService.ServiceHealth.OFF ->
+                        "Not enabled. Without it Lain can't read or tap your screen."
+                },
                 style = MaterialTheme.typography.bodyMedium,
-                color = if (LainAccessibilityService.isRunning) LainCream else LainMuted
+                color = when (health) {
+                    LainAccessibilityService.ServiceHealth.READY -> LainCream
+                    LainAccessibilityService.ServiceHealth.STALLED -> LainSalmon
+                    LainAccessibilityService.ServiceHealth.OFF -> LainMuted
+                }
             )
             Spacer(Modifier.height(8.dp))
-            PixelButton(text = "Open Lain's app info", onClick = { openAppInfoForAccessibility(context) })
+            PixelButton(
+                text = when (health) {
+                    LainAccessibilityService.ServiceHealth.STALLED -> "Reconnect (off, then on)"
+                    else -> "Open Lain's accessibility settings"
+                },
+                onClick = { openAccessibilitySettingsForLain(context) }
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Toggle greyed out on a fresh install? Open app info → ⋮ → Allow restricted settings.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = LainMuted,
+                modifier = Modifier.clickable { openAppInfo(context) }.padding(vertical = 4.dp)
+            )
 
             Spacer(Modifier.height(28.dp))
             PixelButton(text = if (state.justSaved) "Saved" else "Save", onClick = viewModel::save, enabled = state.loaded && state.canSave)

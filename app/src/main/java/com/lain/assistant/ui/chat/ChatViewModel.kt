@@ -28,6 +28,9 @@ class ChatViewModel(container: AppContainer) : ViewModel() {
     fun send() = engine.send()
     fun stop() = engine.stop()
     fun toggleMute() = engine.toggleMute()
+
+    /** Stops the current utterance only — the task keeps running and the mute setting is untouched. */
+    fun silence() = engine.silence()
     fun setConversationMode(enabled: Boolean) = engine.setConversationMode(enabled)
 }
 

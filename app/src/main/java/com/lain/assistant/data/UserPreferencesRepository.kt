@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -26,6 +27,7 @@ class UserPreferencesRepository(private val context: Context) {
         val OVERLAY_ENABLED = booleanPreferencesKey("overlay_enabled")
         val BATTERY_SAVER = booleanPreferencesKey("battery_saver")
         val MODEL_FALLBACK = booleanPreferencesKey("model_fallback")
+        val BROKEN_MODELS = stringSetPreferencesKey("broken_models")
     }
 
     val isOnboarded: Flow<Boolean> = context.dataStore.data.map { it[Keys.ONBOARDED] ?: false }
@@ -101,6 +103,30 @@ class UserPreferencesRepository(private val context: Context) {
         context.dataStore.edit { prefs ->
             prefs[Keys.PROVIDER] = provider.name
             prefs[Keys.MODEL_ID] = modelId
+        }
+    }
+
+    /**
+     * Models that returned a "this model does not exist here" error in anger.
+     *
+     * Free-tier slugs are retired without notice, and the picker's live fetch only
+     * tells us what exists now — not that the thing already selected has since
+     * stopped existing. Remembering the failure means the dead entry is hidden from
+     * the picker and never silently re-selected, instead of the user hitting the
+     * same HTTP 404 on every message until they work out what changed.
+     */
+    val brokenModels: Flow<Set<String>> = context.dataStore.data.map { it[Keys.BROKEN_MODELS] ?: emptySet() }
+
+    suspend fun markModelBroken(modelId: String) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.BROKEN_MODELS] = (prefs[Keys.BROKEN_MODELS] ?: emptySet()) + modelId
+        }
+    }
+
+    /** Called when a model is deliberately re-selected, so a since-restored slug gets another chance. */
+    suspend fun clearModelBroken(modelId: String) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.BROKEN_MODELS] = (prefs[Keys.BROKEN_MODELS] ?: emptySet()) - modelId
         }
     }
 

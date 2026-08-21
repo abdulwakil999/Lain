@@ -8,6 +8,7 @@ import com.lain.assistant.automation.AutomationResult
 import com.lain.assistant.automation.CameraController
 import com.lain.assistant.automation.DeviceController
 import com.lain.assistant.automation.LainAccessibilityService
+import com.lain.assistant.automation.MessageFlow
 import com.lain.assistant.automation.NotesRepository
 import com.lain.assistant.automation.PhoneController
 import com.lain.assistant.automation.RemindersRepository
@@ -49,6 +50,7 @@ class ToolDispatcher(context: Context) {
     private val camera = CameraController(appContext)
     private val voice = VoiceInputController(appContext)
     private val device = DeviceController(appContext)
+    private val messaging = MessageFlow(appContext)
     private val web = WebResearch()
     private val memory = MemoryStore(appContext)
     private val json = Json { ignoreUnknownKeys = true }
@@ -82,10 +84,13 @@ class ToolDispatcher(context: Context) {
             val target = args.str("app_name")
             val launch = apps.openApp(target)
             if (launch is AutomationResult.Success) {
-                delay(1600) // let the app draw before reporting what's there
                 val service = LainAccessibilityService.instance
+                // Wait for the app to actually finish drawing rather than sleeping for
+                // the worst case. Most launches settle in a few hundred milliseconds;
+                // the old flat 1.6s was paid on every single one.
+                service?.awaitSettle(maxWait = 3500L)
                 val foreground = service?.foregroundApp()
-                val screen = service?.readScreenText()
+                val screen = service?.readScreenCompact()
                 // Confirm it actually came to the front rather than trusting the intent.
                 if (foreground != null) {
                     ToolResult.ok(
@@ -134,44 +139,64 @@ class ToolDispatcher(context: Context) {
         }
 
         // ------------------------------------------------------- control
+        //
+        // Every branch here used to sleep for a fixed period and then ship the FULL
+        // screen dump back through the model. On a ten-step task that's ten dense
+        // screens and seven seconds of pure sleeping. They now wait for the UI to
+        // actually settle and return the compact, interactive-only view.
         "tap_text" -> withService { service ->
             val label = args.str("text")
-            val point = service.findTapPointByText(label)
-            if (point == null) {
+            if (service.findTapPointByText(label) == null) {
                 ToolResult.fail(
                     FailureKind.INVALID_INPUT,
                     "No element labelled \"$label\" on screen. Pick a label from the listing below.",
-                    data = mapOf("screen" to service.readScreenText())
+                    data = mapOf("screen" to service.readScreenCompact())
                 )
+            } else if (service.tapByText(label)) {
+                service.awaitSettle()
+                ToolResult.ok("Tapped \"$label\".", data = mapOf("screen" to service.readScreenCompact()))
             } else {
-                val tapped = service.tap(point.first.toFloat(), point.second.toFloat())
-                delay(700)
-                if (tapped) {
-                    ToolResult.ok("Tapped \"$label\".", data = mapOf("screen" to service.readScreenText()))
-                } else {
-                    ToolResult.fail(FailureKind.TOOL_FAILURE, "The tap gesture was rejected by the system.")
-                }
+                ToolResult.fail(FailureKind.TOOL_FAILURE, "The tap on \"$label\" was rejected by the system.")
             }
         }
 
         "tap_screen" -> withService { service ->
             val x = args.num("x"); val y = args.num("y")
             val tapped = service.tap(x, y)
-            delay(700)
-            if (tapped) ToolResult.ok("Tapped (${x.toInt()}, ${y.toInt()}).", data = mapOf("screen" to service.readScreenText()))
-            else ToolResult.fail(FailureKind.TOOL_FAILURE, "The tap gesture was rejected.")
+            if (tapped) {
+                service.awaitSettle()
+                ToolResult.ok("Tapped (${x.toInt()}, ${y.toInt()}).", data = mapOf("screen" to service.readScreenCompact()))
+            } else {
+                ToolResult.fail(FailureKind.TOOL_FAILURE, "The tap gesture was rejected.")
+            }
         }
 
         "type_text" -> withService { service ->
             val text = args.str("text")
             if (service.typeText(text)) {
-                delay(400)
-                ToolResult.ok("Typed \"$text\".", data = mapOf("screen" to service.readScreenText()))
+                // Typing redraws the field; a short settle is enough, and submitting
+                // in the same call saves an entire model round trip.
+                service.awaitSettle(maxWait = 1200L, quietPeriod = 150L)
+                if (args.bool("submit")) {
+                    val submitted = service.pressImeAction() ||
+                        listOf("Send", "Search", "Go", "Done").any { service.tapByText(it) }
+                    service.awaitSettle()
+                    if (submitted) {
+                        ToolResult.ok("Typed \"$text\" and submitted it.", data = mapOf("screen" to service.readScreenCompact()))
+                    } else {
+                        ToolResult.ok(
+                            "Typed \"$text\", but no submit control responded — tap the send/search button yourself.",
+                            data = mapOf("screen" to service.readScreenCompact())
+                        )
+                    }
+                } else {
+                    ToolResult.ok("Typed \"$text\".", data = mapOf("screen" to service.readScreenCompact()))
+                }
             } else {
                 ToolResult.fail(
                     FailureKind.TOOL_FAILURE,
                     "No editable field had focus, so nothing was typed. Tap the [INPUT] element first.",
-                    data = mapOf("screen" to service.readScreenText())
+                    data = mapOf("screen" to service.readScreenCompact())
                 )
             }
         }
@@ -184,40 +209,62 @@ class ToolDispatcher(context: Context) {
                 "recents" -> { service.openRecents(); "Opened recents." }
                 "notifications" -> { service.openNotifications(); "Opened notifications." }
                 "enter" -> {
-                    val hit = listOf("Search", "Go", "Send", "Done", "Enter")
-                        .firstNotNullOfOrNull { service.findTapPointByText(it) }
-                    if (hit == null) {
+                    // The keyboard's own action key first — it needs no label and works
+                    // on screens where the submit control is an unlabelled icon.
+                    val submitted = service.pressImeAction() ||
+                        listOf("Search", "Go", "Send", "Done", "Enter").any { service.tapByText(it) }
+                    if (!submitted) {
                         return@withService ToolResult.fail(
                             FailureKind.INVALID_INPUT,
-                            "No submit control found on screen.",
-                            data = mapOf("screen" to service.readScreenText())
+                            "Nothing on this screen accepted a submit.",
+                            data = mapOf("screen" to service.readScreenCompact())
                         )
                     }
-                    service.tap(hit.first.toFloat(), hit.second.toFloat())
                     "Submitted."
                 }
                 else -> return@withService ToolResult.fail(
                     FailureKind.INVALID_INPUT, "Unknown key \"$key\". Use back, home, recents, notifications or enter."
                 )
             }
-            delay(700)
-            ToolResult.ok(label, data = mapOf("screen" to service.readScreenText()))
+            service.awaitSettle()
+            ToolResult.ok(label, data = mapOf("screen" to service.readScreenCompact()))
         }
 
         "swipe_screen" -> withService { service ->
             service.swipe(args.num("x1"), args.num("y1"), args.num("x2"), args.num("y2"))
-            delay(600)
-            ToolResult.ok("Swiped.", data = mapOf("screen" to service.readScreenText()))
+            service.awaitSettle()
+            ToolResult.ok("Swiped.", data = mapOf("screen" to service.readScreenCompact()))
         }
 
         "wait" -> {
-            val seconds = args.num("seconds").coerceIn(0.5f, 5f)
-            delay((seconds * 1000).toLong())
-            val screen = LainAccessibilityService.instance?.readScreenText()
-            ToolResult.ok("Waited ${seconds}s.", data = screen?.let { mapOf("screen" to it) } ?: emptyMap())
+            val service = LainAccessibilityService.instance
+            val cap = (args.num("seconds").coerceIn(0.5f, 5f) * 1000).toLong()
+            if (service != null) {
+                // Returns as soon as the screen holds still — the requested duration is
+                // a ceiling, not a mandatory sleep.
+                val settled = service.awaitSettle(maxWait = cap)
+                ToolResult.ok(
+                    if (settled) "Screen has settled." else "Screen is still changing after ${cap / 1000f}s.",
+                    data = mapOf("screen" to service.readScreenCompact())
+                )
+            } else {
+                delay(cap)
+                ToolResult.ok("Waited ${cap / 1000f}s.")
+            }
         }
 
         // ------------------------------------------------ communication
+        // The whole "text someone" job in one call. See MessageFlow for why.
+        "message_contact" -> messaging.send(
+            recipient = args.str("contact").ifBlank { args.str("phone_number") },
+            message = args.str("message"),
+            channel = when (args.str("app").lowercase()) {
+                "whatsapp" -> MessageFlow.Channel.WHATSAPP
+                "sms", "text" -> MessageFlow.Channel.SMS
+                else -> MessageFlow.Channel.AUTO
+            }
+        )
+
         "send_sms" -> phone.sendSms(args.str("phone_number"), args.str("message")).asResult(FailureKind.PERMISSION)
         "make_call" -> phone.placeCall(args.str("phone_number")).asResult(FailureKind.PERMISSION)
         "lookup_contact" -> phone.lookupContact(args.str("name")).asResult(FailureKind.PERMISSION)

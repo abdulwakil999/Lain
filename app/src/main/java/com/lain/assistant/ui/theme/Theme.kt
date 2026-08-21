@@ -4,6 +4,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import com.lain.assistant.ui.common.rememberLainWindow
 
 private val LainColorScheme = darkColorScheme(
     primary = LainSalmon,
@@ -27,9 +28,12 @@ fun LainTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit
 ) {
+    // Type is scaled to the window rather than fixed, so the same layout reads
+    // correctly on a 320dp palmtop and a landscape tablet. See LainWindow.fontScale.
+    val window = rememberLainWindow()
     MaterialTheme(
         colorScheme = LainColorScheme,
-        typography = LainTypography,
+        typography = lainTypography(window.fontScale),
         shapes = LainShapes,
         content = content
     )

@@ -8,11 +8,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.lain.assistant.ui.theme.LainCream
 import com.lain.assistant.ui.theme.LainNavyDeep
@@ -25,6 +27,9 @@ import com.lain.assistant.ui.theme.LainNavyDeep
 @Composable
 fun HoveringPanel(
     modifier: Modifier = Modifier,
+    /** Caps the card so it centres on a tablet instead of running the full window width. */
+    maxWidth: Dp = Dp.Unspecified,
+    horizontalPadding: Dp = 16.dp,
     content: ColumnScopeContent
 ) {
     Box(
@@ -40,10 +45,11 @@ fun HoveringPanel(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .then(if (maxWidth != Dp.Unspecified) Modifier.widthIn(max = maxWidth) else Modifier)
                 .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
                 .background(LainNavyDeep.copy(alpha = 0.92f))
                 .border(3.dp, LainCream.copy(alpha = 0.15f), RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
-                .padding(horizontal = 16.dp, vertical = 14.dp)
+                .padding(horizontal = horizontalPadding, vertical = 14.dp)
         ) {
             content()
         }

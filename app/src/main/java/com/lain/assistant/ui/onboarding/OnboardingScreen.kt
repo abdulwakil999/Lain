@@ -1,5 +1,6 @@
 package com.lain.assistant.ui.onboarding
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -27,7 +28,9 @@ import com.lain.assistant.ui.common.PixelBackground
 import com.lain.assistant.ui.common.PixelButton
 import com.lain.assistant.ui.common.PixelChoiceChip
 import com.lain.assistant.ui.common.PixelTextField
-import com.lain.assistant.ui.common.openAppInfoForAccessibility
+import com.lain.assistant.ui.common.rememberLainWindow
+import com.lain.assistant.ui.common.openAccessibilitySettingsForLain
+import com.lain.assistant.ui.common.openAppInfo
 import com.lain.assistant.ui.theme.LainCream
 import com.lain.assistant.ui.theme.LainMuted
 import androidx.compose.ui.platform.LocalContext
@@ -40,14 +43,20 @@ fun OnboardingScreen(viewModel: OnboardingViewModel, onFinished: () -> Unit) {
         if (state.complete) onFinished()
     }
 
+    val window = rememberLainWindow()
+
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        // The portrait square is exactly maxWidth tall (it's fit to screen width — see
-        // PixelBackground); anchor the panel to a fraction of that measured height instead of
-        // a hardcoded dp guess, so it actually sits over the image's base on every screen size
-        // rather than drifting mid-face on wide devices or past the image on narrow ones.
-        val panelTopOffset = maxWidth * 0.62f
-        PixelBackground()
-        HoveringPanel(modifier = Modifier.padding(top = panelTopOffset)) {
+        // The panel hangs off the base of the portrait, so it's anchored to the same
+        // measured art size the background draws (LainWindow.artSize) rather than to the
+        // raw window width — which drifted mid-face on wide devices and past the image on
+        // short ones.
+        val panelTopOffset = window.artSize * 0.62f
+        PixelBackground(artSize = window.artSize)
+        HoveringPanel(
+            modifier = Modifier.padding(top = panelTopOffset),
+            maxWidth = window.contentMaxWidth,
+            horizontalPadding = window.gutter
+        ) {
             Text(
                 text = questionFor(state.step),
                 style = MaterialTheme.typography.headlineMedium,
@@ -97,12 +106,16 @@ private fun GenderChoice(selected: Gender?, onSelect: (Gender) -> Unit) {
     }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun ProviderChoice(selected: Provider, onSelect: (Provider) -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    // Five provider names don't fit one line on a phone; wrapping beats clipping.
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
         Provider.entries.forEach { provider ->
             PixelChoiceChip(provider.displayName, selected == provider, { onSelect(provider) })
-            Spacer(Modifier.width(4.dp))
         }
     }
 }
@@ -164,11 +177,20 @@ private fun PermissionsPrimer() {
         )
         Spacer(Modifier.height(12.dp))
         Text(
-            "One more thing worth doing now: her Accessibility Service, which lets her read and tap your screen (this is also what makes her usable hands-free/eyes-free). The button below opens Lain's app info — since she's sideloaded, Android may hide the Accessibility option until you tap the ⋮ menu there and choose \"Allow restricted settings\" first, then go to Accessibility and turn her on.",
+            "One more thing worth doing now: her Accessibility Service, which lets her read and tap your screen (this is also what makes her usable hands-free/eyes-free). The button below takes you straight to her switch.",
             style = MaterialTheme.typography.bodyMedium,
             color = LainCream
         )
         Spacer(Modifier.height(10.dp))
-        PixelButton(text = "Open Lain's app info", onClick = { openAppInfoForAccessibility(context) })
+        PixelButton(text = "Turn on Accessibility", onClick = { openAccessibilitySettingsForLain(context) })
+        Spacer(Modifier.height(8.dp))
+        // Only needed on a fresh sideload, and only once — so it's a quiet second link
+        // rather than the primary route it used to be.
+        Text(
+            "If Lain's toggle is greyed out, Android is gating sideloaded apps: open app info → ⋮ → \"Allow restricted settings\", then come back.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = LainMuted,
+            modifier = Modifier.clickable { openAppInfo(context) }.padding(vertical = 4.dp)
+        )
     }
 }

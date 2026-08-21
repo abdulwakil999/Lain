@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import com.lain.assistant.data.Sender
 import com.lain.assistant.ui.chat.ChatViewModel
 import com.lain.assistant.ui.common.PixelTextField
+import com.lain.assistant.ui.common.rememberLainWindow
 import com.lain.assistant.ui.theme.LainCream
 import com.lain.assistant.ui.theme.LainInk
 import com.lain.assistant.ui.theme.LainMuted
@@ -56,6 +57,7 @@ fun MiniChatScreen(viewModel: ChatViewModel, autoListen: Boolean, onDismiss: () 
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
     val listState = rememberLazyListState()
+    val window = rememberLainWindow()
 
     LaunchedEffect(Unit) {
         viewModel.attachTts(context)
@@ -85,9 +87,10 @@ fun MiniChatScreen(viewModel: ChatViewModel, autoListen: Boolean, onDismiss: () 
                 .fillMaxWidth()
                 .imePadding()
                 .navigationBarsPadding()
+                .widthIn(max = window.contentMaxWidth)
                 .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
                 .background(LainNavyDeep.copy(alpha = 0.97f))
-                .padding(horizontal = 16.dp, vertical = 14.dp)
+                .padding(horizontal = window.gutter, vertical = 14.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Lain", style = MaterialTheme.typography.titleMedium, color = LainSalmon)
@@ -104,7 +107,7 @@ fun MiniChatScreen(viewModel: ChatViewModel, autoListen: Boolean, onDismiss: () 
 
             LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp),
+                modifier = Modifier.fillMaxWidth().heightIn(max = window.heightDp * 0.32f),
                 contentPadding = PaddingValues(vertical = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
@@ -116,7 +119,7 @@ fun MiniChatScreen(viewModel: ChatViewModel, autoListen: Boolean, onDismiss: () 
                     ) {
                         Box(
                             modifier = Modifier
-                                .widthIn(max = 280.dp)
+                                .widthIn(max = window.bubbleMaxWidth)
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(
                                     if (isUser) LainCream.copy(alpha = 0.85f) else LainSalmonDeep.copy(alpha = 0.85f)
@@ -136,6 +139,21 @@ fun MiniChatScreen(viewModel: ChatViewModel, autoListen: Boolean, onDismiss: () 
             state.statusLine?.let {
                 Spacer(Modifier.height(6.dp))
                 Text(it, color = LainMuted, style = MaterialTheme.typography.bodyMedium)
+            }
+
+            AnimatedVisibility(visible = state.isSpeaking) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(LainSalmon)
+                        .clickable { viewModel.silence() }
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("◼  STOP SPEAKING", color = LainInk, style = MaterialTheme.typography.labelLarge)
+                }
             }
 
             Spacer(Modifier.height(10.dp))

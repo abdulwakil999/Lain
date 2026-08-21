@@ -55,7 +55,8 @@ private const val STRIP_STAGGER_MS = 130
 fun AwakeningBackground(
     awake: Boolean,
     modifier: Modifier = Modifier,
-    artHeightFraction: Float = 1f
+    /** Edge length of the square portrait. Unspecified falls back to the full window width. */
+    artSize: Dp = Dp.Unspecified
 ) {
     var revealed by remember { mutableStateOf(false) }
 
@@ -69,24 +70,27 @@ fun AwakeningBackground(
     }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize().background(LainArtBackdrop)) {
-        val artSize: Dp = maxWidth * artHeightFraction
-        val stripWidth = artSize / STRIP_COUNT
-        val travel = maxHeight + artSize // guarantees a strip fully clears the viewport
+        // The caller decides how much of the window the portrait may claim (see
+        // LainWindow.artSize); this composable only has to agree with it exactly, or the
+        // strips reveal the wrong slices.
+        val art: Dp = if (artSize != Dp.Unspecified) artSize else maxWidth
+        val stripWidth = art / STRIP_COUNT
+        val travel = maxHeight + art // guarantees a strip fully clears the viewport
 
         Image(
             painter = painterResource(id = R.drawable.bg_lain_focus),
             contentDescription = null,
             modifier = Modifier
-                .width(artSize)
-                .height(artSize)
+                .width(art)
+                .height(art)
                 .align(Alignment.TopCenter),
             contentScale = ContentScale.FillBounds
         )
 
         Row(
             modifier = Modifier
-                .width(artSize)
-                .height(artSize)
+                .width(art)
+                .height(art)
                 .align(Alignment.TopCenter)
         ) {
             repeat(STRIP_COUNT) { i ->
@@ -115,8 +119,8 @@ fun AwakeningBackground(
                         // narrow clipped window shows its own correct slice of the picture rather
                         // than a squashed copy of the whole thing.
                         modifier = Modifier
-                            .width(artSize)
-                            .height(artSize)
+                            .width(art)
+                            .height(art)
                             .offset(x = -(stripWidth * i)),
                         contentScale = ContentScale.FillBounds
                     )
@@ -130,8 +134,8 @@ fun AwakeningBackground(
         // backdrop instead. Drawn last so it fades both portraits during the reveal.
         Box(
             modifier = Modifier
-                .width(artSize)
-                .height(artSize)
+                .width(art)
+                .height(art)
                 .align(Alignment.TopCenter)
                 .background(
                     Brush.verticalGradient(

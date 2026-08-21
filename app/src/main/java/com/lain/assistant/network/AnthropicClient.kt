@@ -22,8 +22,10 @@ class AnthropicClient(private val baseUrl: String) : LlmClient {
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
 
     private val http = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(45, TimeUnit.SECONDS)
+        .connectionPool(okhttp3.ConnectionPool(4, 5, TimeUnit.MINUTES))
+        .retryOnConnectionFailure(true)
         .build()
 
     override suspend fun send(
@@ -31,11 +33,12 @@ class AnthropicClient(private val baseUrl: String) : LlmClient {
         model: String,
         systemPrompt: String,
         history: List<LlmMessage>,
-        tools: List<ToolDefinition>
+        tools: List<ToolDefinition>,
+        tuning: RequestTuning
     ): LlmResult = withContext(Dispatchers.IO) {
         val body = buildJsonObject {
             put("model", model)
-            put("max_tokens", 2048)
+            put("max_tokens", tuning.maxTokens)
             put("system", systemPrompt)
             put("messages", buildMessagesArray(history))
             if (tools.isNotEmpty()) {

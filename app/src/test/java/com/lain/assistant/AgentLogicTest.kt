@@ -1,6 +1,9 @@
 package com.lain.assistant
 
+import com.lain.assistant.agent.IntentClassifier
 import com.lain.assistant.agent.TaskState
+import com.lain.assistant.agent.TurnIntent
+import com.lain.assistant.network.OpenRouterModelsClient
 import com.lain.assistant.data.ModelCapabilityRegistry
 import com.lain.assistant.data.ReasoningTier
 import com.lain.assistant.tools.FailureKind
@@ -134,5 +137,135 @@ class AgentLogicTest {
     fun `null model does not crash capability lookup`() {
         val caps = ModelCapabilityRegistry.forModel(null)
         assertTrue(caps.maxToolRounds > 0)
+    }
+}
+
+/**
+ * The classifier decides whether a message skips the agent loop, so its bias
+ * matters more than its accuracy: sending a real instruction down the chat path
+ * would produce a wrong answer, while sending chat down the agent path only
+ * costs time. Every case below checks that bias holds.
+ */
+class IntentClassifierTest {
+
+    @Test
+    fun `plain conversation skips the tool loop`() {
+        listOf(
+            "good morning",
+            "hey",
+            "how are you doing",
+            "thanks, that worked",
+            "that's hilarious",
+            "explain how an accessibility service works",
+            "what do you think of kotlin coroutines"
+        ).forEach {
+            assertEquals(it, TurnIntent.CHAT, IntentClassifier.classify(it))
+        }
+    }
+
+    @Test
+    fun `device instructions take the full path`() {
+        listOf(
+            "open whatsapp",
+            "text Ade that I'm running late",
+            "call mum",
+            "play something by Burna Boy",
+            "what's my battery at",
+            "turn on bluetooth",
+            "set a reminder for 6pm",
+            "scroll down"
+        ).forEach {
+            assertEquals(it, TurnIntent.ACT, IntentClassifier.classify(it))
+        }
+    }
+
+    @Test
+    fun `anything depending on today takes the full path`() {
+        listOf(
+            "what's the latest on the election",
+            "how much is a dollar right now",
+            "who won the match",
+            "check https://example.com for me",
+            "what's the weather"
+        ).forEach {
+            assertEquals(it, TurnIntent.ACT, IntentClassifier.classify(it))
+        }
+    }
+
+    @Test
+    fun `a long musing containing an action word is still conversation`() {
+        val musing = "I read somewhere that people who write their own tools tend to understand " +
+            "their problems better, which matches how I feel about most of the software I use daily"
+        assertEquals(TurnIntent.CHAT, IntentClassifier.classify(musing, accessibilityReady = false))
+    }
+}
+
+/**
+ * The picker's contents come straight from this parser, so a regression here is
+ * how a user ends up selecting a model that cannot drive the phone.
+ */
+class OpenRouterModelParsingTest {
+
+    private fun catalogue(vararg entries: String) = """{"data":[${entries.joinToString(",")}]}"""
+
+    private fun model(
+        id: String,
+        name: String,
+        context: Int,
+        price: String = "0",
+        tools: Boolean = true,
+        image: Boolean = false
+    ) = """
+        {"id":"$id","name":"$name","context_length":$context,
+         "pricing":{"prompt":"$price","completion":"$price"},
+         "architecture":{"input_modalities":["text"${if (image) ",\"image\"" else ""}]},
+         "supported_parameters":[${if (tools) "\"tools\"" else "\"temperature\""}]}
+    """.trimIndent()
+
+    private val client = OpenRouterModelsClient()
+
+    @Test
+    fun `keeps only free, tool-capable, usably-large models`() {
+        val raw = catalogue(
+            model("good/big:free", "Big Model 120B (free)", 262_144),
+            model("paid/one:free", "Paid One (free)", 262_144, price = "0.0000005"),
+            model("no/tools:free", "No Tools 70B (free)", 262_144, tools = false),
+            model("tiny/ctx:free", "Small Context 70B (free)", 8_000),
+            model("not/free", "Not Free", 262_144)
+        )
+        assertEquals(listOf("good/big:free"), client.parse(raw).map { it.id })
+    }
+
+    @Test
+    fun `drops models too small to chain tool calls`() {
+        val raw = catalogue(
+            model("vendor/lfm-2-6b:free", "LFM2.5-2.6B (free)", 128_000),
+            model("vendor/nano-9b:free", "Nano 9B (free)", 128_000)
+        )
+        assertEquals(listOf("vendor/nano-9b:free"), client.parse(raw).map { it.id })
+    }
+
+    @Test
+    fun `orders by context so the roomiest is offered first`() {
+        val raw = catalogue(
+            model("mid/model-30b:free", "Mid 30B (free)", 128_000),
+            model("big/model-120b:free", "Big 120B (free)", 1_000_000),
+            model("small/model-20b:free", "Small 20B (free)", 65_536)
+        )
+        assertEquals(
+            listOf("big/model-120b:free", "mid/model-30b:free", "small/model-20b:free"),
+            client.parse(raw).map { it.id }
+        )
+    }
+
+    @Test
+    fun `reads vision support from the catalogue rather than the slug`() {
+        val raw = catalogue(
+            model("seeing/model-30b:free", "Seeing 30B (free)", 262_144, image = true),
+            model("blind/model-30b:free", "Blind 30B (free)", 262_144)
+        )
+        val parsed = client.parse(raw).associateBy { it.id }
+        assertEquals(true, parsed.getValue("seeing/model-30b:free").supportsVision)
+        assertEquals(false, parsed.getValue("blind/model-30b:free").supportsVision)
     }
 }

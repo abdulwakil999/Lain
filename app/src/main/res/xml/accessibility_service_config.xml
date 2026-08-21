@@ -1,10 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    Event subscription is deliberately narrow.
+
+    typeAllMask meant this service woke on every text change, scroll, focus move
+    and announcement from every app on the device — thousands of binder callbacks
+    an hour for a handler that did nothing with them. That is a real battery cost,
+    and a service that misbehaves under that load is exactly what the system
+    throttles or kills, which is why Lain kept needing to be toggled off and on.
+
+    Window-state and content-change events are the only two Lain actually uses:
+    they are how she knows a screen has finished settling after a tap, which is
+    what replaced the fixed sleeps in the tool loop.
+
+    flagIncludeNotImportantViews is on because app composers (WhatsApp's send
+    button among them) frequently mark themselves not-important-for-accessibility
+    and are otherwise invisible to a tree walk. The extra nodes are filtered out
+    during rendering, so the model never sees the bulk.
+-->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:accessibilityEventTypes="typeAllMask"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeWindowsChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows|flagReportViewIds"
+    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows|flagReportViewIds|flagIncludeNotImportantViews"
     android:canPerformGestures="true"
     android:canRetrieveWindowContent="true"
-    android:canRequestTouchExplorationMode="true"
     android:description="@string/accessibility_service_description"
-    android:notificationTimeout="80" />
+    android:notificationTimeout="100" />

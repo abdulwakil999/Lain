@@ -9,6 +9,7 @@ import android.graphics.Path
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.provider.Settings
 import android.text.TextUtils
 import android.util.Base64
@@ -17,6 +18,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.ByteArrayOutputStream
 import kotlin.coroutines.resume
@@ -30,7 +32,24 @@ import kotlin.coroutines.resume
  */
 class LainAccessibilityService : AccessibilityService() {
 
+    /**
+     * The three states worth distinguishing, because the fix differs for each and
+     * telling a user to "turn it on" when it is already on is what made this feel
+     * broken.
+     */
+    enum class ServiceHealth {
+        /** Bound and usable. */
+        READY,
+
+        /** Switched on in Settings, but our process has no live binding — needs an off/on. */
+        STALLED,
+
+        /** Genuinely switched off. */
+        OFF
+    }
+
     companion object {
+        @Volatile
         var instance: LainAccessibilityService? = null
             private set
 
@@ -40,6 +59,15 @@ class LainAccessibilityService : AccessibilityService() {
         private const val MAX_NODES = 220
         private const val MAX_DEPTH = 28
         private const val MAX_LABEL_CHARS = 90
+
+        /**
+         * Interactive-only budget used for the screen that rides along with every
+         * action result. The model needs to know what it can press next, not the
+         * full text of the page — that's what an explicit read_screen is for.
+         */
+        private const val COMPACT_NODES = 28
+        private const val COMPACT_PROSE = 8
+        private const val COMPACT_LABEL_CHARS = 48
 
         /**
          * The authoritative check. [isRunning] only reflects whether our process
@@ -64,18 +92,29 @@ class LainAccessibilityService : AccessibilityService() {
             return false
         }
 
+        fun health(context: Context): ServiceHealth = when {
+            isRunning -> ServiceHealth.READY
+            isEnabledInSettings(context) -> ServiceHealth.STALLED
+            else -> ServiceHealth.OFF
+        }
+
         /** Human-readable explanation of *why* the service isn't usable right now. */
-        fun unavailableReason(context: Context): String = when {
-            !isEnabledInSettings(context) ->
-                "Lain's Accessibility Service is switched off. Tell the user to enable it: Settings > Apps > Lain > (⋮ menu) Allow restricted settings, then Settings > Accessibility > Lain > On."
-            else ->
-                "Lain's Accessibility Service is enabled in Settings but isn't connected right now (this happens for a few seconds after an app update or a restart). Tell the user to toggle it off and back on in Settings > Accessibility > Lain, then retry."
+        fun unavailableReason(context: Context): String = when (health(context)) {
+            ServiceHealth.READY -> "Accessibility is available."
+            ServiceHealth.OFF ->
+                "Lain's Accessibility Service is switched off. Tell the user to tap the banner in Lain to open " +
+                    "Settings > Accessibility > Lain and turn it on."
+            ServiceHealth.STALLED ->
+                "Lain's Accessibility Service is switched on in Settings but has lost its connection (this happens " +
+                    "after an app update or when Android restarts the service). Tell the user to tap the banner in " +
+                    "Lain, then toggle Lain off and back on in Accessibility. This takes about five seconds."
         }
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        lastEventAt = SystemClock.uptimeMillis()
     }
 
     override fun onDestroy() {
@@ -83,9 +122,51 @@ class LainAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
+    // -------------------------------------------------------------- settling
+
+    /**
+     * When the UI last changed. Written from the (now narrow) event stream and read
+     * by [awaitSettle]. A plain volatile long is the entire mechanism — no handler,
+     * no allocation, so subscribing to these events costs effectively nothing.
+     */
+    @Volatile
+    private var lastEventAt: Long = 0L
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        lastEventAt = SystemClock.uptimeMillis()
+        // A rebind can leave the companion pointing at a dead instance; events only
+        // arrive on a live one, so this is a free correction.
+        if (instance !== this) instance = this
+    }
 
     override fun onInterrupt() = Unit
+
+    /**
+     * Waits until the screen stops changing, then returns.
+     *
+     * This replaced the fixed sleeps the tool loop used to run on — 1.6s after every
+     * app launch, 700ms after every tap — which were sized for the worst case and
+     * therefore paid on every single step. A launcher icon that resolves in 180ms now
+     * costs 180ms. The [maxWait] ceiling keeps a genuinely slow screen from hanging
+     * the loop, and [quietPeriod] is how long the tree must hold still to count as done.
+     *
+     * @return true if the screen settled, false if we gave up at [maxWait].
+     */
+    suspend fun awaitSettle(maxWait: Long = 2500L, quietPeriod: Long = 220L): Boolean {
+        val deadline = SystemClock.uptimeMillis() + maxWait
+        // Anything before this call is history; only changes caused by the action count.
+        lastEventAt = SystemClock.uptimeMillis()
+        var polls = 0
+        while (SystemClock.uptimeMillis() < deadline) {
+            delay(60)
+            polls++
+            val quietFor = SystemClock.uptimeMillis() - lastEventAt
+            // Require at least a couple of polls so an action that hasn't started
+            // rendering yet isn't mistaken for one that already finished.
+            if (quietFor >= quietPeriod && polls >= 3) return true
+        }
+        return false
+    }
 
     // ---------------------------------------------------------------- reading
 
@@ -152,70 +233,153 @@ class LainAccessibilityService : AccessibilityService() {
      * interactive node gets a stable index the model can act on by number, which
      * is far more reliable than asking it to guess pixel coordinates.
      */
-    fun readScreenText(): String {
+    fun readScreenText(): String = render(compact = false)
+
+    /**
+     * The version that rides along with an action result: interactive elements
+     * only, short labels, hard node cap.
+     *
+     * Every tap used to return the full screen dump, so a ten-step task re-sent
+     * ten dense screens through the model — the single biggest contributor to a
+     * simple "message someone" job taking minutes. What the model needs after a
+     * tap is what it can press next; the prose is available on request.
+     */
+    fun readScreenCompact(): String = render(compact = true)
+
+    private fun render(compact: Boolean): String {
         val root = targetRoot() ?: return if (isOwnUiInForeground()) {
             "Lain's own chat screen is what's on display — there is no other app to operate. " +
                 "If the task needs an app, call open_app first. Do NOT tap or swipe: there is nothing here to tap."
         } else {
             "Can't read the screen right now. Do NOT tap or swipe blindly — wait a moment and read again."
         }
+
+        val labelCap = if (compact) COMPACT_LABEL_CHARS else MAX_LABEL_CHARS
+        // Always walk the same budget, and let the *selection* differ. Capping the walk
+        // itself in compact mode starves the useful half: on a WhatsApp thread the first
+        // 28 nodes are all message text, so the composer and the send button — the only
+        // two things the model actually needs — would never be reached.
+        val collected = mutableListOf<Element>()
+        collect(root, collected, 0, MAX_NODES, labelCap, compact)
+
         val out = StringBuilder()
-        val counter = intArrayOf(0)
         out.append("App: ${root.packageName ?: "unknown"}\n")
-        collect(root, out, 0, counter)
-        if (counter[0] >= MAX_NODES) out.append("… (screen truncated — this is the top of the list)\n")
-        return out.toString().ifBlank { "(screen has no readable text)" }
+        if (compact) {
+            // Interactive first, and it is what survives truncation. Prose is context;
+            // buttons are what the next step depends on.
+            val interactive = collected.filter { it.kind != "text" }.take(COMPACT_NODES)
+            val prose = collected.filter { it.kind == "text" }
+            if (interactive.isEmpty() && prose.isEmpty()) {
+                out.append("(nothing readable on screen yet)\n")
+            }
+            interactive.forEach { out.append(it.line()).append('\n') }
+            prose.take(COMPACT_PROSE).forEach { out.append(it.line()).append('\n') }
+            if (prose.size > COMPACT_PROSE) {
+                out.append("… (${prose.size - COMPACT_PROSE} more text elements — call read_screen for all of them)\n")
+            }
+        } else {
+            collected.forEach { out.append(it.line()).append('\n') }
+            if (collected.size >= MAX_NODES) out.append("… (screen truncated — this is the top of the list)\n")
+        }
+        return out.toString()
     }
 
-    private fun collect(node: AccessibilityNodeInfo, out: StringBuilder, depth: Int, counter: IntArray) {
-        if (counter[0] >= MAX_NODES || depth > MAX_DEPTH) return
+    private class Element(val kind: String, val label: String, val x: Int, val y: Int) {
+        fun line(): String = "[$kind] \"$label\" @($x,$y)"
+    }
+
+    private fun collect(
+        node: AccessibilityNodeInfo,
+        out: MutableList<Element>,
+        depth: Int,
+        nodeCap: Int,
+        labelCap: Int,
+        compact: Boolean
+    ) {
+        if (out.size >= nodeCap || depth > MAX_DEPTH) return
 
         val raw = node.text?.toString()?.takeIf { it.isNotBlank() }
             ?: node.contentDescription?.toString()?.takeIf { it.isNotBlank() }
         if (raw != null) {
-            val label = if (raw.length > MAX_LABEL_CHARS) raw.take(MAX_LABEL_CHARS) + "…" else raw
             val bounds = Rect().also { node.getBoundsInScreen(it) }
             // Skip off-screen/zero-size nodes; they're noise the model can't act on anyway.
             if (bounds.width() > 0 && bounds.height() > 0) {
+                val clickable = node.isClickable || node.parent?.isClickable == true
                 val kind = when {
                     node.isEditable -> "INPUT"
-                    node.isClickable -> "BUTTON"
+                    clickable -> "BUTTON"
                     else -> "text"
                 }
-                out.append("[$kind] \"${label.replace('\n', ' ')}\" @(${bounds.centerX()},${bounds.centerY()})\n")
-                counter[0]++
+                // flagIncludeNotImportantViews widened the tree so real composers stay
+                // visible; the cost is decorative nodes, dropped here rather than shipped.
+                val keep = !compact || kind != "text" || raw.length in 2..labelCap * 2
+                if (keep) {
+                    val flat = raw.replace('\n', ' ').trim()
+                    val label = if (flat.length > labelCap) flat.take(labelCap) + "…" else flat
+                    // Two nodes with the same label at the same spot is one control seen twice.
+                    val duplicate = out.any { it.label == label && kotlin.math.abs(it.y - bounds.centerY()) < 8 }
+                    if (!duplicate) out += Element(kind, label, bounds.centerX(), bounds.centerY())
+                }
             }
         }
         for (i in 0 until node.childCount) {
-            node.getChild(i)?.let { collect(it, out, depth + 1, counter) }
+            node.getChild(i)?.let { collect(it, out, depth + 1, nodeCap, labelCap, compact) }
         }
     }
 
     /** Finds the node whose visible label best matches [query] and returns its tap point. */
-    fun findTapPointByText(query: String): Pair<Int, Int>? {
+    fun findTapPointByText(query: String): Pair<Int, Int>? = findNodeByText(query)?.let { node ->
+        val bounds = Rect().also { node.getBoundsInScreen(it) }
+        bounds.centerX() to bounds.centerY()
+    }
+
+    /**
+     * Label matching, best-match-wins. Exact beats prefix beats contains, so
+     * tap_text("Send") lands on the send button rather than on a message that
+     * happens to contain the word.
+     */
+    private fun findNodeByText(query: String): AccessibilityNodeInfo? {
         val root = targetRoot() ?: return null
         val needle = query.trim().lowercase()
-        var best: Rect? = null
+        if (needle.isEmpty()) return null
+        var best: AccessibilityNodeInfo? = null
         var bestScore = Int.MAX_VALUE
 
         fun walk(node: AccessibilityNodeInfo, depth: Int) {
-            if (depth > MAX_DEPTH || best != null && bestScore == 0) return
-            val label = (node.text?.toString() ?: node.contentDescription?.toString())?.lowercase()
+            if (depth > MAX_DEPTH || bestScore == 0) return
+            val label = (node.text?.toString() ?: node.contentDescription?.toString())?.trim()?.lowercase()
             if (!label.isNullOrBlank() && label.contains(needle)) {
                 val bounds = Rect().also { node.getBoundsInScreen(it) }
                 if (bounds.width() > 0 && bounds.height() > 0) {
-                    // Prefer the tightest match (exact label beats a long paragraph containing it).
-                    val score = label.length - needle.length
+                    // Tightest match wins; a clickable node beats a static label of equal fit.
+                    var score = label.length - needle.length
+                    if (!node.isClickable && node.parent?.isClickable != true) score += 2
                     if (score < bestScore) {
                         bestScore = score
-                        best = bounds
+                        best = node
                     }
                 }
             }
             for (i in 0 until node.childCount) node.getChild(i)?.let { walk(it, depth + 1) }
         }
         walk(root, 0)
-        return best?.let { it.centerX() to it.centerY() }
+        return best
+    }
+
+    /**
+     * Taps a labelled element by performing its accessibility click when the node
+     * supports one, and only falling back to a synthetic gesture otherwise.
+     *
+     * A real ACTION_CLICK is both faster and far more reliable than dispatching a
+     * touch at the node's centre — a centre point can land on a sibling that
+     * overlaps, or on a spot the app treats as scroll rather than press.
+     */
+    suspend fun tapByText(query: String): Boolean {
+        val node = findNodeByText(query) ?: return false
+        val clickTarget = generateSequence(node) { it.parent }.take(4).firstOrNull { it.isClickable }
+        if (clickTarget != null && clickTarget.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+        val bounds = Rect().also { node.getBoundsInScreen(it) }
+        return tap(bounds.centerX().toFloat(), bounds.centerY().toFloat())
     }
 
     // ---------------------------------------------------------------- writing
@@ -226,12 +390,7 @@ class LainAccessibilityService : AccessibilityService() {
      * could open the app and tap the box, then had no way to put words in it.
      */
     fun typeText(text: String): Boolean {
-        val root = targetRoot() ?: return false
-        // Focused field first, but only if it belongs to the target app — the input
-        // focus can still sit in Lain's own box while the user is looking at Chrome.
-        val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-            ?.takeIf { it.packageName != packageName }
-        val target = focused ?: findFirstEditable(root, 0) ?: return false
+        val target = editableTarget() ?: return false
 
         val args = Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
@@ -240,9 +399,22 @@ class LainAccessibilityService : AccessibilityService() {
 
         // Some apps (WhatsApp's composer among them) ignore SET_TEXT on a node they
         // don't consider focused — focus it first, then retry once.
+        target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
         target.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
         return target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
     }
+
+    private fun editableTarget(): AccessibilityNodeInfo? {
+        val root = targetRoot() ?: return null
+        // Focused field first, but only if it belongs to the target app — the input
+        // focus can still sit in Lain's own box while the user is looking at Chrome.
+        val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            ?.takeIf { it.packageName != packageName }
+        return focused ?: findFirstEditable(root, 0)
+    }
+
+    /** True when the current screen has somewhere to type — lets a composite action verify before it acts. */
+    fun hasEditableField(): Boolean = editableTarget() != null
 
     private fun findFirstEditable(node: AccessibilityNodeInfo, depth: Int): AccessibilityNodeInfo? {
         if (depth > MAX_DEPTH) return null
@@ -253,6 +425,18 @@ class LainAccessibilityService : AccessibilityService() {
             }
         }
         return null
+    }
+
+    /**
+     * Submits the focused field the way the keyboard's action key would.
+     *
+     * Hunting for a button labelled "Send"/"Go" works on some screens and not on
+     * others; ACTION_IME_ENTER is the platform's own answer and needs no label.
+     */
+    fun pressImeAction(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return false
+        val target = editableTarget() ?: return false
+        return target.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
     }
 
     // ------------------------------------------------------------- navigation
@@ -287,11 +471,11 @@ class LainAccessibilityService : AccessibilityService() {
      */
     suspend fun closeCurrentApp() {
         openRecents()
-        kotlinx.coroutines.delay(500)
+        awaitSettle(maxWait = 1200L)
         val screenHeight = resources.displayMetrics.heightPixels.toFloat()
         val screenWidth = resources.displayMetrics.widthPixels.toFloat()
         swipe(screenWidth / 2f, screenHeight / 2f, screenWidth / 2f, screenHeight * 0.1f, durationMs = 250)
-        kotlinx.coroutines.delay(200)
+        awaitSettle(maxWait = 900L)
         goHome()
     }
 

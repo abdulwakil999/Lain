@@ -134,6 +134,18 @@ object PromptBuilder {
             current information; answer from knowledge when it doesn't. Don't call a tool to
             look busy, and don't narrate a call you haven't made.
 
+            FEWEST STEPS THAT ACTUALLY WORK. Every tool call is a round trip the user waits
+            through, so a task done in two calls beats the same task done in eight.
+            - Use the tool that completes the whole job when one exists. message_contact
+              sends a message end to end; do not rebuild it out of open_app, tap_text and
+              type_text.
+            - type_text takes submit=true. Use it whenever the text is meant to be sent or
+              searched, instead of typing and then hunting for the button.
+            - Never call read_screen straight after an action: every action tool already
+              returns the screen it produced.
+            - Never call wait "to be safe". Actions return once the screen has settled.
+            - When two actions don't depend on each other, ask for them in the same turn.
+
             Every tool returns SUCCESS or FAILED. Read it before your next move. FAILED means
             it did not happen — never report success off the back of a failure, and never
             describe an action as done when the tool only attempted it. If something failed,
@@ -144,10 +156,9 @@ object PromptBuilder {
             stop and tell the user exactly what to grant or install. Don't repeat a call that
             just failed the same way — change approach or stop.
 
-            Driving the screen: act, then read what the screen became, then decide. Action
-            tools return the new screen automatically, so don't call read_screen straight
-            after one. Prefer tap_text over raw coordinates. Type by tapping the field first,
-            then type_text.
+            Driving the screen by hand, when nothing higher-level fits: act, then read what
+            the screen became, then decide. Prefer tap_text over raw coordinates. Tap the
+            field before typing into it.
 
             A task is finished when the goal is met, not when you've made progress. Sending a
             message means it's sent. Playing a song means audio is playing.
@@ -155,12 +166,35 @@ object PromptBuilder {
         )
         if (!accessibilityReady) {
             append("\n\nRIGHT NOW: the Accessibility Service is off, so screen reading, tapping and typing are ")
-            append("unavailable. Don't attempt them — tell the user to enable Lain under Settings > Accessibility.")
+            append("unavailable and those tools aren't in your list. Anything needing them can't be done until the ")
+            append("user turns Lain on under Settings > Accessibility — say so plainly instead of trying.")
         }
         if (caps.useCompactPrompt) {
             append("\n\nKeep tool use minimal and deliberate: one action at a time, check the result, then continue.")
         }
     }
+
+    /**
+     * Appended when a message looked like ordinary conversation and is being answered
+     * without the toolbox, to save the user a full agent loop for "morning".
+     *
+     * The escape hatch is the important half: the classifier that routed the message
+     * here is a regex, so the model — which can actually read the sentence — gets the
+     * final say, and one wasted short request is the entire cost of being wrong.
+     */
+    fun directAnswerRule(): String = """
+        THIS TURN
+        You have no tools available for this message, because it read as conversation
+        rather than a job. Just answer it.
+
+        If that's wrong — if answering properly needs the phone (opening an app, sending
+        something, reading the screen, checking the battery) or needs live information you
+        can't be sure of (today's news, prices, weather, anything that may have changed) —
+        then reply with exactly this and nothing else:
+        NEEDS_TOOLS
+        Your tools will be handed back and you'll get another go. Don't apologise or
+        explain; just the one word.
+    """.trimIndent()
 
     private fun memoryBlock(memories: List<MemoryEntity>): String = buildString {
         append("WHAT YOU KNOW ABOUT THEM\n")

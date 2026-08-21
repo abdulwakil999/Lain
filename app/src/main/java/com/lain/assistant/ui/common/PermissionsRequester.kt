@@ -2,17 +2,21 @@ package com.lain.assistant.ui.common
 
 import android.Manifest
 import android.content.ActivityNotFoundException
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -34,6 +38,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.lain.assistant.automation.LainAccessibilityService
 import com.lain.assistant.ui.theme.LainCream
 import com.lain.assistant.ui.theme.LainNavy
+import com.lain.assistant.ui.theme.LainSalmon
 
 private val corePermissions: Array<String> = buildList {
     add(Manifest.permission.RECORD_AUDIO)
@@ -60,29 +65,69 @@ fun RequestCorePermissionsOnce() {
 }
 
 /**
- * Sideloaded apps (installed outside the Play Store) hit Android 13+'s
- * "Restricted settings" gate: the Accessibility toggle for a freshly
- * sideloaded app is greyed out/hidden until the user visits the app's own
- * App Info page and explicitly taps the overflow menu (⋮) → "Allow
- * restricted settings". There's no Intent that can trigger that tap for
- * them — it's a deliberate manual security step — so the most useful thing
- * this can do is land them exactly on that App Info page instead of
- * dropping them into the generic Accessibility list where the option may
- * not even be selectable yet.
+ * Opens Lain's own entry in Accessibility settings, not the app-data page.
+ *
+ * Settings supports deep-linking to a specific service via the (undocumented but
+ * long-stable, AOSP-wide) `:settings:fragment_args_key` extra carrying the
+ * flattened component name; where an OEM honours it the user lands directly on
+ * Lain's on/off screen, and where it doesn't they land on the Accessibility list
+ * with Lain highlighted. Either way it's the screen with the toggle on it.
+ *
+ * Sending people to App Info was a workaround for Android 13+'s "restricted
+ * settings" gate, which only bites on a fresh sideload and only until it's
+ * cleared once. Making every user walk through app data forever to fix a
+ * momentary service stall was the wrong trade — that path is still available
+ * from [openAppInfo], which the banner offers as a secondary link.
  */
-fun openAppInfoForAccessibility(context: Context) {
-    val intent = Intent(
-        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-        Uri.fromParts("package", context.packageName, null)
-    )
+fun openAccessibilitySettingsForLain(context: Context) {
+    val component = ComponentName(context, LainAccessibilityService::class.java).flattenToString()
+    val bundle = Bundle().apply { putString(EXTRA_FRAGMENT_ARG_KEY, component) }
+
+    val direct = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        putExtra(EXTRA_FRAGMENT_ARG_KEY, component)
+        putExtra(EXTRA_SHOW_FRAGMENT_ARGUMENTS, bundle)
+    }
     try {
-        context.startActivity(intent)
+        context.startActivity(direct)
     } catch (_: ActivityNotFoundException) {
-        context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        openAppInfo(context)
     }
 }
 
-/** Small dismissible banner nudging the user to enable the Accessibility Service Lain needs for on-screen automation. */
+private const val EXTRA_FRAGMENT_ARG_KEY = ":settings:fragment_args_key"
+private const val EXTRA_SHOW_FRAGMENT_ARGUMENTS = ":settings:show_fragment_args"
+
+/**
+ * The App Info page. Only useful for one thing: clearing Android 13+'s
+ * "restricted settings" gate on a freshly sideloaded build, which needs a manual
+ * ⋮ → "Allow restricted settings" tap that no Intent can perform for the user.
+ */
+fun openAppInfo(context: Context) {
+    val intent = Intent(
+        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+        Uri.fromParts("package", context.packageName, null)
+    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    try {
+        context.startActivity(intent)
+    } catch (_: ActivityNotFoundException) {
+        context.startActivity(
+            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    }
+}
+
+/** Kept so older call sites keep compiling; new code should say which page it wants. */
+fun openAppInfoForAccessibility(context: Context) = openAccessibilitySettingsForLain(context)
+
+/**
+ * Banner shown whenever screen automation isn't currently available.
+ *
+ * It distinguishes "never switched on" from "switched on but the binding died",
+ * because the second is the state the user kept hitting and the instruction for it
+ * is different — off-and-on-again, not turn-it-on. Re-checks on every resume, so
+ * coming back from Settings updates it without a restart.
+ */
 @Composable
 fun AccessibilityServiceBanner(modifier: Modifier = Modifier) {
     val context = LocalContext.current
@@ -97,22 +142,42 @@ fun AccessibilityServiceBanner(modifier: Modifier = Modifier) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // isRunning is a plain var, not observable state — reading resumeTick here just forces
-    // this composable to re-check it every time the user comes back from Settings.
-    if (resumeTick >= 0 && LainAccessibilityService.isRunning) return
+    // health() reads a plain static plus a Settings.Secure lookup — neither is observable
+    // state, so resumeTick is what forces this to be re-evaluated after a trip to Settings.
+    val health = remember(resumeTick) { LainAccessibilityService.health(context) }
+    if (health == LainAccessibilityService.ServiceHealth.READY) return
+
+    val stalled = health == LainAccessibilityService.ServiceHealth.STALLED
 
     Column(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
             .background(LainNavy)
-            .clickable { openAppInfoForAccessibility(context) }
+            .clickable { openAccessibilitySettingsForLain(context) }
             .padding(12.dp)
     ) {
         Text(
-            "Turn on Lain's Accessibility Service so she can read and tap your screen. Tap here for Lain's app info — if you don't see \"Allow restricted settings\" in the ⋮ menu, skip that and go straight to Accessibility; if you do, tap it first, then open Accessibility and turn Lain on.",
+            if (stalled) {
+                "Lain's Accessibility Service is on but has lost its connection — Android does this after an update " +
+                    "or when it reclaims memory. Tap here, then switch Lain off and back on. Five seconds."
+            } else {
+                "Turn on Lain's Accessibility Service so she can read and tap your screen. Tap here to go straight " +
+                    "to her switch."
+            },
             color = LainCream,
             style = MaterialTheme.typography.bodyMedium
         )
+        // Only surfaced for the genuinely-off case: it's the restricted-settings escape
+        // hatch for a fresh sideload, and irrelevant once the service has ever run.
+        if (!stalled) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Toggle greyed out? Open app info → ⋮ → Allow restricted settings first.",
+                color = LainSalmon,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.clickable { openAppInfo(context) }.padding(vertical = 2.dp)
+            )
+        }
     }
 }

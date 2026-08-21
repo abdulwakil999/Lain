@@ -24,7 +24,11 @@ data class ModelInfo(
      * chaining them — they stall, repeat calls, or narrate instead of acting.
      * This is what separates "it works" from "it works reliably".
      */
-    val strongAtTools: Boolean = false
+    val strongAtTools: Boolean = false,
+    /** True when the model can actually look at a screenshot, from the provider's own catalogue. */
+    val supportsVision: Boolean = false,
+    /** Advertised context window, used to order the free list by what can hold a real task. */
+    val contextTokens: Int = 0
 )
 
 /**
@@ -47,20 +51,26 @@ object ModelCatalog {
         // from OpenRouter at runtime (see OpenRouterModelsClient) and only
         // falls back to these hardcoded entries if that call fails, so this
         // set existing works today is a nice-to-have, not load-bearing.
-        ModelInfo("openai/gpt-oss-20b:free", "GPT-OSS 20B (Free)", Provider.OPENROUTER, isFree = true),
-        ModelInfo("nvidia/nemotron-3-nano-30b-a3b:free", "Nemotron 3 Nano 30B (Free)", Provider.OPENROUTER, isFree = true),
-        ModelInfo("nvidia/nemotron-3-super-120b-a12b:free", "Nemotron 3 Super 120B (Free)", Provider.OPENROUTER, isFree = true),
-        ModelInfo("google/gemma-4-31b-it:free", "Gemma 4 31B (Free)", Provider.OPENROUTER, isFree = true),
-        ModelInfo("nvidia/nemotron-nano-9b-v2:free", "Nemotron Nano 9B (Free)", Provider.OPENROUTER, isFree = true),
+        // Verified against OpenRouter's live catalogue: every slug below currently
+        // resolves, is priced at zero, and advertises function-calling. Ordered
+        // biggest-context-first, which is the order the live fetch also uses, so the
+        // picker looks the same whether or not the network call succeeded.
+        ModelInfo("nvidia/nemotron-3-ultra-550b-a55b:free", "Nemotron 3 Ultra 550B (Free)", Provider.OPENROUTER, isFree = true, contextTokens = 1_000_000),
+        ModelInfo("nvidia/nemotron-3.5-lightning:free", "Nemotron 3.5 Lightning (Free)", Provider.OPENROUTER, isFree = true, contextTokens = 1_000_000),
+        ModelInfo("google/gemma-4-31b-it:free", "Gemma 4 31B (Free)", Provider.OPENROUTER, isFree = true, supportsVision = true, contextTokens = 262_144),
+        ModelInfo("nvidia/nemotron-3-super-120b-a12b:free", "Nemotron 3 Super 120B (Free)", Provider.OPENROUTER, isFree = true, contextTokens = 262_144),
+        ModelInfo("z-ai/glm-5.2:free", "GLM 5.2 (Free)", Provider.OPENROUTER, isFree = true, contextTokens = 256_000),
+        ModelInfo("nvidia/nemotron-3-nano-30b-a3b:free", "Nemotron 3 Nano 30B (Free)", Provider.OPENROUTER, isFree = true, contextTokens = 256_000),
+        ModelInfo("openai/gpt-oss-20b:free", "GPT-OSS 20B (Free)", Provider.OPENROUTER, isFree = true, contextTokens = 131_072),
 
         // --- OpenRouter: paid, and the only tier that reliably drives multi-step
         // automation. Slugs verified against OpenRouter's live catalogue. ---
-        ModelInfo("anthropic/claude-sonnet-5", "Claude Sonnet 5", Provider.OPENROUTER, recommended = true, strongAtTools = true),
-        ModelInfo("openai/gpt-5", "GPT-5", Provider.OPENROUTER, strongAtTools = true),
-        ModelInfo("openai/gpt-5-mini", "GPT-5 Mini (cheap)", Provider.OPENROUTER, strongAtTools = true),
-        ModelInfo("anthropic/claude-opus-5", "Claude Opus 5", Provider.OPENROUTER, strongAtTools = true),
-        ModelInfo("google/gemini-3.7-flash", "Gemini 3.7 Flash", Provider.OPENROUTER, strongAtTools = true),
-        ModelInfo("x-ai/grok-4.6", "Grok 4.6", Provider.OPENROUTER, strongAtTools = true),
+        ModelInfo("anthropic/claude-sonnet-5", "Claude Sonnet 5", Provider.OPENROUTER, recommended = true, strongAtTools = true, supportsVision = true, contextTokens = 1_000_000),
+        ModelInfo("google/gemini-3.7-flash", "Gemini 3.7 Flash", Provider.OPENROUTER, strongAtTools = true, supportsVision = true, contextTokens = 1_048_576),
+        ModelInfo("openai/gpt-5-mini", "GPT-5 Mini (cheap)", Provider.OPENROUTER, strongAtTools = true, supportsVision = true, contextTokens = 400_000),
+        ModelInfo("openai/gpt-5", "GPT-5", Provider.OPENROUTER, strongAtTools = true, supportsVision = true, contextTokens = 400_000),
+        ModelInfo("anthropic/claude-opus-5", "Claude Opus 5", Provider.OPENROUTER, strongAtTools = true, supportsVision = true, contextTokens = 1_000_000),
+        ModelInfo("x-ai/grok-4.6", "Grok 4.6", Provider.OPENROUTER, strongAtTools = true, supportsVision = true, contextTokens = 500_000),
 
         // --- Anthropic direct ---
         ModelInfo("claude-sonnet-5", "Claude Sonnet 5", Provider.ANTHROPIC, recommended = true, strongAtTools = true),
@@ -82,4 +92,12 @@ object ModelCatalog {
 
     fun recommendedFor(provider: Provider): ModelInfo? =
         forProvider(provider).firstOrNull { it.recommended } ?: forProvider(provider).firstOrNull()
+
+    /**
+     * The best free model to fall back on when a chosen one turns out to be dead.
+     * Free-tier slugs are the ones that disappear, so this is deliberately the
+     * roomiest survivor rather than a fixed favourite.
+     */
+    fun bestFreeFor(provider: Provider): ModelInfo? =
+        forProvider(provider).filter { it.isFree }.maxByOrNull { it.contextTokens }
 }
