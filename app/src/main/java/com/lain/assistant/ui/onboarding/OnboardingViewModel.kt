@@ -123,7 +123,12 @@ class OnboardingViewModel(private val container: AppContainer) : ViewModel() {
                 gender = s.gender ?: Gender.FEMALE,
                 nickname = s.nickname.trim()
             )
-            container.userPreferencesRepository.saveModelSelection(s.provider, s.modelId ?: return@launch)
+            val chosen = s.modelId ?: return@launch
+            container.userPreferencesRepository.saveModelSelection(
+                s.provider,
+                chosen,
+                s.availableModels.firstOrNull { it.id == chosen }
+            )
             container.secureKeyStore.saveApiKey(s.provider, s.apiKey.trim())
             container.userPreferencesRepository.markOnboarded()
             _state.update { it.copy(complete = true) }

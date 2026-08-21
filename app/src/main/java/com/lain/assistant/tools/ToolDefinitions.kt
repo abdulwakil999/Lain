@@ -18,7 +18,8 @@ object ToolDefinitions {
             parameters = schema {
                 property("app_name", "string", "Display name of the app, e.g. \"Chrome\", \"Spotify\", \"WhatsApp\"")
                 required("app_name")
-            }
+            },
+            briefDescription = "Open an installed app by name."
         ),
         ToolDefinition(
             name = "close_app",
@@ -26,7 +27,8 @@ object ToolDefinitions {
             parameters = schema {
                 property("app_name", "string", "Display name of the app to close")
                 required("app_name")
-            }
+            },
+            briefDescription = "Close the app in the foreground."
         ),
         ToolDefinition(
             name = "open_url",
@@ -34,7 +36,8 @@ object ToolDefinitions {
             parameters = schema {
                 property("url", "string", "Full URL including https://")
                 required("url")
-            }
+            },
+            briefDescription = "Open a web page in the browser for the user to see."
         ),
         ToolDefinition(
             name = "open_settings_page",
@@ -42,12 +45,14 @@ object ToolDefinitions {
             parameters = schema {
                 property("page", "string", "Which settings screen")
                 required("page")
-            }
+            },
+            briefDescription = "Open an Android settings screen (wifi, bluetooth, display, sound, battery, apps, accessibility, location, storage, security, date, keyboard, notifications)."
         ),
         ToolDefinition(
             name = "current_app",
             description = "Report which app is currently in the foreground. Use this to confirm an app actually opened before acting on it.",
-            parameters = schema { }
+            parameters = schema { },
+            briefDescription = "Which app is in the foreground."
         ),
 
         // ------------------------------------------------- web research
@@ -57,7 +62,8 @@ object ToolDefinitions {
             parameters = schema {
                 property("query", "string", "What to search for")
                 required("query")
-            }
+            },
+            briefDescription = "Search the web for current information and read the top results."
         ),
         ToolDefinition(
             name = "fetch_page",
@@ -65,14 +71,16 @@ object ToolDefinitions {
             parameters = schema {
                 property("url", "string", "Page URL")
                 required("url")
-            }
+            },
+            briefDescription = "Read the text of a web page."
         ),
 
         // ---------------------------------------------------- device
         ToolDefinition(
             name = "device_status",
             description = "Battery level and charging state, network connectivity, media volume, Android version and device model.",
-            parameters = schema { }
+            parameters = schema { },
+            briefDescription = "Battery, network, volume and device model."
         ),
         ToolDefinition(
             name = "set_volume",
@@ -80,7 +88,8 @@ object ToolDefinitions {
             parameters = schema {
                 property("percent", "number", "0-100")
                 required("percent")
-            }
+            },
+            briefDescription = "Set media volume 0-100."
         ),
         ToolDefinition(
             name = "clipboard",
@@ -89,12 +98,14 @@ object ToolDefinitions {
                 property("action", "string", "\"read\" or \"write\"")
                 property("text", "string", "Text to copy, when writing")
                 required("action")
-            }
+            },
+            briefDescription = "Read or write the clipboard."
         ),
         ToolDefinition(
             name = "open_contacts",
             description = "Open the Contacts app.",
-            parameters = schema { }
+            parameters = schema { },
+            briefDescription = "Open the Contacts app."
         ),
 
         // ----------------------------------------------------- files
@@ -103,7 +114,8 @@ object ToolDefinitions {
             description = "List files in Lain's storage folder. Android sandboxes apps, so this is Lain's own directory rather than the whole device.",
             parameters = schema {
                 property("path", "string", "Sub-folder, or empty for the root")
-            }
+            },
+            briefDescription = "List files in Lain's storage folder."
         ),
         ToolDefinition(
             name = "read_file",
@@ -111,7 +123,8 @@ object ToolDefinitions {
             parameters = schema {
                 property("path", "string", "File path")
                 required("path")
-            }
+            },
+            briefDescription = "Read a text file from Lain's storage."
         ),
         ToolDefinition(
             name = "write_file",
@@ -121,7 +134,8 @@ object ToolDefinitions {
                 property("content", "string", "File contents")
                 property("append", "boolean", "true to append instead of overwrite")
                 required("path", "content")
-            }
+            },
+            briefDescription = "Write a text file in Lain's storage."
         ),
         ToolDefinition(
             name = "rename_file",
@@ -130,19 +144,22 @@ object ToolDefinitions {
                 property("from", "string", "Existing path")
                 property("to", "string", "New path")
                 required("from", "to")
-            }
+            },
+            briefDescription = "Rename or move a file in Lain's storage."
         ),
 
         // ------------------------------------------------- screen perception
         ToolDefinition(
             name = "read_screen",
             description = "Read what's on screen right now as a list of labelled elements with tap coordinates, each marked [INPUT] (text field), [BUTTON] (tappable) or [text]. NOTE: every action tool already returns the updated screen for you, so you do NOT need to call this after tapping, typing or opening something — only use it to look before acting.",
-            parameters = schema { }
+            parameters = schema { },
+            briefDescription = "List what's on screen with tap coordinates. Action tools already return this."
         ),
         ToolDefinition(
             name = "look_at_screen",
             description = "Take a screenshot and visually look at it. Use when layout, images, colours or a game board matter more than text labels — read_screen cannot see those.",
-            parameters = schema { }
+            parameters = schema { },
+            briefDescription = "Screenshot the screen and look at it."
         ),
 
         // ----------------------------------------------------- screen control
@@ -152,7 +169,8 @@ object ToolDefinitions {
             parameters = schema {
                 property("text", "string", "Visible label of the thing to tap, e.g. \"Search\", \"Send\", a contact's name")
                 required("text")
-            }
+            },
+            briefDescription = "Tap the on-screen element with this label."
         ),
         ToolDefinition(
             name = "tap_screen",
@@ -161,7 +179,8 @@ object ToolDefinitions {
                 property("x", "number", "X coordinate in pixels")
                 property("y", "number", "Y coordinate in pixels")
                 required("x", "y")
-            }
+            },
+            briefDescription = "Tap an x,y pixel coordinate."
         ),
         ToolDefinition(
             name = "type_text",
@@ -170,7 +189,8 @@ object ToolDefinitions {
                 property("text", "string", "The text to type")
                 property("submit", "boolean", "true to submit (send/search/go) immediately after typing")
                 required("text")
-            }
+            },
+            briefDescription = "Type into the focused field. submit=true also presses send/search."
         ),
         ToolDefinition(
             name = "press_key",
@@ -178,7 +198,8 @@ object ToolDefinitions {
             parameters = schema {
                 property("key", "string", "One of: back, home, recents, notifications, enter")
                 required("key")
-            }
+            },
+            briefDescription = "Press back, home, recents, notifications or enter."
         ),
         ToolDefinition(
             name = "swipe_screen",
@@ -189,7 +210,8 @@ object ToolDefinitions {
                 property("x2", "number", "End X")
                 property("y2", "number", "End Y")
                 required("x1", "y1", "x2", "y2")
-            }
+            },
+            briefDescription = "Swipe from one point to another to scroll."
         ),
         ToolDefinition(
             name = "wait",
@@ -197,7 +219,8 @@ object ToolDefinitions {
             parameters = schema {
                 property("seconds", "number", "How long to wait, 1-5 seconds")
                 required("seconds")
-            }
+            },
+            briefDescription = "Pause for the screen to finish loading."
         ),
 
         // ------------------------------------------------------- communication
@@ -209,7 +232,8 @@ object ToolDefinitions {
                 property("message", "string", "What to say")
                 property("app", "string", "\"whatsapp\" or \"sms\". Leave empty for SMS, which sends without opening anything.")
                 required("contact", "message")
-            }
+            },
+            briefDescription = "Send someone a message end to end, in one call. Use this for any \"text/message X\" request."
         ),
         ToolDefinition(
             name = "send_sms",
@@ -218,7 +242,8 @@ object ToolDefinitions {
                 property("phone_number", "string", "Recipient's phone number")
                 property("message", "string", "Message body")
                 required("phone_number", "message")
-            }
+            },
+            briefDescription = "Send an SMS directly."
         ),
         ToolDefinition(
             name = "make_call",
@@ -226,7 +251,8 @@ object ToolDefinitions {
             parameters = schema {
                 property("phone_number", "string", "Number to call")
                 required("phone_number")
-            }
+            },
+            briefDescription = "Call a phone number."
         ),
         ToolDefinition(
             name = "lookup_contact",
@@ -234,7 +260,8 @@ object ToolDefinitions {
             parameters = schema {
                 property("name", "string", "Contact name to search for")
                 required("name")
-            }
+            },
+            briefDescription = "Find a contact's number by name."
         ),
         ToolDefinition(
             name = "send_whatsapp_message",
@@ -243,7 +270,8 @@ object ToolDefinitions {
                 property("phone_number", "string", "Recipient's phone number, with country code")
                 property("message", "string", "Message text")
                 required("phone_number", "message")
-            }
+            },
+            briefDescription = "Open a WhatsApp chat with text prefilled. Does not send."
         ),
 
         // ----------------------------------------------------------- utility
@@ -254,7 +282,8 @@ object ToolDefinitions {
                 property("text", "string", "What to remind the user about")
                 property("minutes_from_now", "number", "How many minutes from now to trigger the reminder")
                 required("text", "minutes_from_now")
-            }
+            },
+            briefDescription = "Schedule a reminder notification."
         ),
         ToolDefinition(
             name = "write_note",
@@ -262,24 +291,28 @@ object ToolDefinitions {
             parameters = schema {
                 property("text", "string", "Note content")
                 required("text")
-            }
+            },
+            briefDescription = "Save a note."
         ),
         ToolDefinition(
             name = "list_notes",
             description = "List the user's saved notes.",
-            parameters = schema { }
+            parameters = schema { },
+            briefDescription = "List saved notes."
         ),
         ToolDefinition(
             name = "take_photo",
             description = "Capture a photo using the phone's camera and look at it.",
             parameters = schema {
                 property("use_front_camera", "boolean", "true for the selfie camera, false for the rear camera")
-            }
+            },
+            briefDescription = "Take a photo and look at it."
         ),
         ToolDefinition(
             name = "listen_microphone",
             description = "Listen to the microphone and transcribe what's said.",
-            parameters = schema { }
+            parameters = schema { },
+            briefDescription = "Listen and transcribe what's said."
         ),
 
         // ------------------------------------------------------------ memory
@@ -290,7 +323,8 @@ object ToolDefinitions {
                 property("key", "string", "Short identifier, e.g. \"mum's number\", \"favourite music app\"")
                 property("value", "string", "The fact to remember")
                 required("key", "value")
-            }
+            },
+            briefDescription = "Save a durable fact about the user."
         ),
         ToolDefinition(
             name = "forget",
@@ -298,7 +332,8 @@ object ToolDefinitions {
             parameters = schema {
                 property("key", "string", "What to forget")
                 required("key")
-            }
+            },
+            briefDescription = "Delete saved facts matching a query."
         ),
         ToolDefinition(
             name = "recall",
@@ -306,7 +341,8 @@ object ToolDefinitions {
             parameters = schema {
                 property("query", "string", "What to look for")
                 required("query")
-            }
+            },
+            briefDescription = "Search long-term memory."
         )
     )
 
@@ -317,31 +353,57 @@ object ToolDefinitions {
     )
 
     /**
-     * Weak models degrade when handed a large tool surface, so the low tier sees a
-     * focused subset. Everything remains available to stronger models — nothing is
-     * removed from the app, only from that request's menu.
+     * The tools that carry the common cases, in the order they earn their place.
      *
-     * [accessibilityReady] matters for speed as much as correctness: offering screen
-     * tools while the service is off means the model spends round trips discovering
-     * that each one fails. Not offering them at all is both faster and clearer.
+     * A weak model chooses worse from thirty options than from fifteen — the list
+     * itself is a reasoning task. This is the order the budget trims from the bottom
+     * of, so what survives is what a short conversation actually needs.
      */
-    fun forTier(compact: Boolean, visionCapable: Boolean, accessibilityReady: Boolean = true): List<ToolDefinition> {
+    private val byImportance = listOf(
+        // Things that finish a whole job in one call.
+        "message_contact", "open_app", "web_search", "make_call", "set_reminder",
+        // Driving a screen.
+        "tap_text", "type_text", "read_screen", "press_key", "swipe_screen",
+        // Knowing things.
+        "lookup_contact", "device_status", "remember", "recall", "forget",
+        "write_note", "list_notes", "open_url", "wait", "current_app",
+        // Longer tail.
+        "open_settings_page", "set_volume", "clipboard", "fetch_page", "open_contacts",
+        "tap_screen", "look_at_screen", "take_photo", "listen_microphone",
+        "list_files", "read_file", "write_file", "rename_file",
+        "close_app", "send_sms", "send_whatsapp_message"
+    )
+
+    /**
+     * The tool surface for one request, shaped to the model that will see it.
+     *
+     * Nothing is removed from the application — every tool remains callable, and a
+     * stronger model sees all of them. What changes is how many are put in front of
+     * a model at once and how verbosely they're described, because those are the two
+     * things that actually degrade a small model's tool use. The work the trimmed
+     * tools would have done is largely handled locally now (see FastRouter), so the
+     * short list is not a smaller Lain — it's the same Lain asking less of the model.
+     */
+    fun forCapabilities(
+        caps: com.lain.assistant.data.ModelCapabilities,
+        accessibilityReady: Boolean
+    ): List<ToolDefinition> {
         var tools = all
-        if (!visionCapable) {
+        if (!caps.supportsVision) {
             tools = tools.filterNot { it.name == "look_at_screen" || it.name == "take_photo" }
         }
         if (!accessibilityReady) {
+            // Offering screen tools while the service is off means the model spends
+            // round trips discovering that each one fails.
             tools = tools.filterNot { it.name in accessibilityDependent }
         }
-        if (!compact) return tools
 
-        val essentials = setOf(
-            "open_app", "read_screen", "tap_text", "type_text", "press_key", "swipe_screen", "wait",
-            "current_app", "make_call", "message_contact", "lookup_contact",
-            "set_reminder", "write_note", "list_notes", "web_search", "device_status",
-            "remember", "forget", "open_url"
-        )
-        return tools.filter { it.name in essentials }
+        if (tools.size > caps.toolBudget) {
+            val rank = byImportance.withIndex().associate { (i, name) -> name to i }
+            tools = tools.sortedBy { rank[it.name] ?: Int.MAX_VALUE }.take(caps.toolBudget)
+        }
+
+        return tools.map { it.describedFor(caps.useCompactToolDescriptions) }
     }
 
     private class SchemaBuilder {

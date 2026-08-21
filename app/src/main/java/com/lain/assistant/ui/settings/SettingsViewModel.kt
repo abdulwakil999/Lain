@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.lain.assistant.AppContainer
 import com.lain.assistant.data.Gender
+import com.lain.assistant.data.ModelCapabilities
+import com.lain.assistant.data.ModelCapabilityRegistry
 import com.lain.assistant.data.ModelCatalog
 import com.lain.assistant.data.ModelInfo
 import com.lain.assistant.data.Provider
@@ -49,6 +51,16 @@ data class SettingsUiState(
         } else {
             ModelCatalog.forProvider(provider).filterNot { it.id in brokenModels }
         }
+
+    /** The catalogue entry for a model id, so its real capabilities are stored with the choice. */
+    fun infoFor(id: String): ModelInfo? = availableModels.firstOrNull { it.id == id }
+
+    /**
+     * What the currently selected model can do, derived live from the picker's own
+     * catalogue data so it updates the moment the selection changes.
+     */
+    val selectedCapabilities: ModelCapabilities?
+        get() = modelId?.let { ModelCapabilityRegistry.forModel(it, provider, infoFor(it)) }
 
     val canSave: Boolean
         get() = name.isNotBlank() && nickname.isNotBlank() && gender != null &&
@@ -186,7 +198,9 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             val s = _state.value
             container.secureKeyStore.saveApiKey(s.provider, s.apiKey.trim())
-            s.modelId?.let { container.userPreferencesRepository.saveModelSelection(s.provider, it) }
+            s.modelId?.let { id ->
+                container.userPreferencesRepository.saveModelSelection(s.provider, id, s.infoFor(id))
+            }
             val result = container.connectionTester.test(s.provider, s.modelId, s.apiKey.trim())
             _state.update { it.copy(isTesting = false, testResult = result) }
         }
@@ -203,7 +217,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
                 gender = s.gender ?: Gender.FEMALE,
                 nickname = s.nickname.trim()
             )
-            container.userPreferencesRepository.saveModelSelection(s.provider, modelId)
+            container.userPreferencesRepository.saveModelSelection(s.provider, modelId, s.infoFor(modelId))
             container.secureKeyStore.saveApiKey(s.provider, s.apiKey.trim())
             container.userPreferencesRepository.saveKokoroEndpoint(s.kokoroEndpoint.trim())
             _state.update { it.copy(justSaved = true) }

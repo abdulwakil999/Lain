@@ -19,8 +19,23 @@ data class ToolDefinition(
     val name: String,
     val description: String,
     /** JSON Schema for the function's arguments object. */
-    val parameters: JsonObject
-)
+    val parameters: JsonObject,
+    /**
+     * A one-line version of [description], sent to models with small context
+     * windows.
+     *
+     * The full descriptions carry guidance a strong model uses well — when to
+     * prefer this tool, what its failure modes are. On a weak model that same prose
+     * is thousands of tokens of instruction competing with the actual task, and it
+     * measurably degrades tool choice rather than improving it. The capability is
+     * identical either way; only the briefing length changes.
+     */
+    val briefDescription: String = description
+) {
+    /** The description to send, given how much context and attention this model has. */
+    fun describedFor(compact: Boolean): ToolDefinition =
+        if (compact && briefDescription != description) copy(description = briefDescription) else this
+}
 
 data class ToolCall(
     val id: String,

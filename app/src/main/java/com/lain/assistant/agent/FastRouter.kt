@@ -39,7 +39,21 @@ sealed class LocalIntent {
 
     /** "wifi on/off" and friends, which Android only lets an app deep-link to. */
     data class ToggleRequest(val page: String, val what: String) : LocalIntent()
+
+    /** "pause", "skip", "next track" — routed to whichever app owns the media session. */
+    data class Transport(val action: TransportAction) : LocalIntent()
+
+    /**
+     * "play Burna Boy on Spotify", "play something", "put some music on".
+     * [query] blank means "just start playing".
+     */
+    data class PlayMusic(val query: String, val app: String?) : LocalIntent()
+
+    /** "what's 15% of 240", "convert 5km to miles" — answered exactly, offline. */
+    data class Calculate(val result: Calculator.Result) : LocalIntent()
 }
+
+enum class TransportAction { PLAY, PAUSE, TOGGLE, NEXT, PREVIOUS, STOP }
 
 /** Where a message should go. */
 sealed class Route {
@@ -132,7 +146,14 @@ object FastRouter {
 
     private fun localIntent(t: String): LocalIntent? =
         clock(t) ?: battery(t) ?: torch(t) ?: volume(t) ?: timer(t)
-            ?: navigate(t) ?: readScreen(t) ?: settingsOrToggle(t) ?: call(t) ?: openApp(t)
+            ?: navigate(t) ?: readScreen(t) ?: settingsOrToggle(t) ?: call(t)
+            // Music is checked before the generic app launcher so "play spotify" is
+            // understood as playback rather than as opening an app called "spotify".
+            ?: transport(t) ?: playMusic(t)
+            // Arithmetic is checked late: it only matches strings that are
+            // unambiguously expressions, so it can't shadow a real command.
+            ?: calculate(t)
+            ?: openApp(t)
 
     private fun clock(t: String): LocalIntent? = when {
         t.matches(Regex("(what('s| is) the )?time( is it)?")) ||
@@ -262,6 +283,90 @@ object FastRouter {
             LocalIntent.ToggleRequest(page = hit.value, what = hit.key)
         }
     }
+
+    // ---------------------------------------------------------------- music
+
+    /**
+     * Transport controls. These go to whichever app owns the media session, so they
+     * work regardless of which player is running and without any network.
+     */
+    private fun transport(t: String): LocalIntent? {
+        val action = when (t) {
+            "pause", "pause music", "pause the music", "pause it", "pause playback",
+            "stop the music", "stop music" -> TransportAction.PAUSE
+
+            "resume", "resume music", "unpause", "continue playing", "keep playing",
+            "play", "play music", "play it", "carry on" -> TransportAction.PLAY
+
+            "next", "skip", "next song", "next track", "skip song", "skip track",
+            "skip this", "next one" -> TransportAction.NEXT
+
+            "previous", "previous song", "previous track", "go back a song",
+            "last song", "back a track", "replay that" -> TransportAction.PREVIOUS
+
+            "stop", "stop playing", "stop playback" -> TransportAction.STOP
+
+            "toggle playback", "play pause" -> TransportAction.TOGGLE
+
+            else -> return null
+        }
+        return LocalIntent.Transport(action)
+    }
+
+    private val musicApps = listOf(
+        "spotify", "youtube music", "yt music", "youtube", "soundcloud",
+        "deezer", "tidal", "apple music", "audiomack", "boomplay"
+    )
+
+    /** "play <something> [on <player>]", and the vaguer "put some music on". */
+    private fun playMusic(t: String): LocalIntent? {
+        // Bare "some music"/"a song" with no title: let the player choose.
+        if (Regex("^(play|put on|put)\\s+(some\\s+)?(music|songs?|tunes|something)( on)?$").matches(t)) {
+            return LocalIntent.PlayMusic(query = "", app = null)
+        }
+        Regex("^(?:play|put on)\\s+(?:some\\s+)?(?:music|songs?|something)\\s+on\\s+(.+)$").find(t)?.let { m ->
+            val app = musicApps.firstOrNull { m.groupValues[1].contains(it) } ?: return@let
+            return LocalIntent.PlayMusic(query = "", app = app)
+        }
+        // "play spotify" reads as "start Spotify playing", not "open the app".
+        Regex("^(?:play|open up)\\s+(${musicApps.joinToString("|")})$").find(t)?.let { m ->
+            return LocalIntent.PlayMusic(query = "", app = m.groupValues[1])
+        }
+
+        val m = Regex("^play\\s+(.{2,80})$").find(t) ?: return null
+        var rest = m.groupValues[1].trim()
+
+        // Compound instructions belong to the agent loop.
+        if (rest.contains(" and then ") || rest.contains(" then ")) return null
+
+        // "... on spotify" names the player; anything else after "on" is part of the
+        // title ("Live on Broadway"), so only a known player counts.
+        var app: String? = null
+        Regex("^(.*)\\s+(?:on|in|using|through|with)\\s+([a-z ]+)$").find(rest)?.let { split ->
+            val candidate = split.groupValues[2].trim().removeSuffix(" app").trim()
+            val known = musicApps.firstOrNull { it == candidate || candidate == "$it music" }
+            if (known != null) {
+                app = known
+                rest = split.groupValues[1].trim()
+            }
+        }
+
+        // "play the next one", "play it again" are transport, not search.
+        if (rest in setOf("it", "that", "this", "again", "it again", "that again", "the next one")) return null
+        if (rest.isBlank()) return null
+
+        rest = rest.removePrefix("the song ").removePrefix("song ")
+            .removePrefix("the album ").removePrefix("album ")
+            .removePrefix("me ").trim()
+        if (rest.isBlank()) return LocalIntent.PlayMusic(query = "", app = app)
+
+        return LocalIntent.PlayMusic(query = rest, app = app)
+    }
+
+    // ----------------------------------------------------------- arithmetic
+
+    private fun calculate(t: String): LocalIntent? =
+        Calculator.evaluate(t)?.let { LocalIntent.Calculate(it) }
 
     private fun call(t: String): LocalIntent? {
         val m = Regex("^(call|ring|phone|dial)\\s+(.{2,40})$").find(t) ?: return null

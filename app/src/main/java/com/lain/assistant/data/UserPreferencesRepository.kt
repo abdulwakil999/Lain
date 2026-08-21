@@ -28,6 +28,13 @@ class UserPreferencesRepository(private val context: Context) {
         val BATTERY_SAVER = booleanPreferencesKey("battery_saver")
         val MODEL_FALLBACK = booleanPreferencesKey("model_fallback")
         val BROKEN_MODELS = stringSetPreferencesKey("broken_models")
+        // A snapshot of the selected model's catalogue facts, so the capability layer
+        // has real data offline instead of guessing from the slug.
+        val MODEL_LABEL = stringPreferencesKey("model_label")
+        val MODEL_CONTEXT = intPreferencesKey("model_context")
+        val MODEL_VISION = booleanPreferencesKey("model_vision")
+        val MODEL_FREE = booleanPreferencesKey("model_free")
+        val MODEL_STRONG_TOOLS = booleanPreferencesKey("model_strong_tools")
     }
 
     val isOnboarded: Flow<Boolean> = context.dataStore.data.map { it[Keys.ONBOARDED] ?: false }
@@ -99,10 +106,58 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
-    suspend fun saveModelSelection(provider: Provider, modelId: String) {
+    /**
+     * The catalogue facts for whichever model is selected.
+     *
+     * OpenRouter's free tier rotates constantly, so hardcoding what each model can
+     * do goes stale within weeks. The picker already fetches the truth from the
+     * provider; storing it alongside the selection means the engine can shape every
+     * request from real numbers rather than pattern-matching the model's name — and
+     * can still do so with no network.
+     */
+    val selectedModelInfo: Flow<ModelInfo?> = context.dataStore.data.map { prefs ->
+        val id = prefs[Keys.MODEL_ID] ?: return@map null
+        val provider = prefs[Keys.PROVIDER]?.let { runCatching { Provider.valueOf(it) }.getOrNull() }
+            ?: ModelCatalog.defaultProvider
+        ModelInfo(
+            id = id,
+            label = prefs[Keys.MODEL_LABEL] ?: id,
+            provider = provider,
+            isFree = prefs[Keys.MODEL_FREE] ?: id.endsWith(":free"),
+            strongAtTools = prefs[Keys.MODEL_STRONG_TOOLS] ?: false,
+            supportsVision = prefs[Keys.MODEL_VISION] ?: false,
+            contextTokens = prefs[Keys.MODEL_CONTEXT] ?: 0
+        )
+    }
+
+    /**
+     * @param info the picker's catalogue entry for this model, when there is one.
+     *   Passing null keeps whatever facts were already stored rather than wiping
+     *   them, since a caller without the entry knows less, not more.
+     */
+    suspend fun saveModelSelection(provider: Provider, modelId: String, info: ModelInfo? = null) {
         context.dataStore.edit { prefs ->
             prefs[Keys.PROVIDER] = provider.name
+            val changed = prefs[Keys.MODEL_ID] != modelId
             prefs[Keys.MODEL_ID] = modelId
+            when {
+                info != null -> {
+                    prefs[Keys.MODEL_LABEL] = info.label
+                    prefs[Keys.MODEL_CONTEXT] = info.contextTokens
+                    prefs[Keys.MODEL_VISION] = info.supportsVision
+                    prefs[Keys.MODEL_FREE] = info.isFree
+                    prefs[Keys.MODEL_STRONG_TOOLS] = info.strongAtTools
+                }
+                // Switching model without catalogue data: stale facts about the
+                // previous model would be worse than none.
+                changed -> {
+                    prefs.remove(Keys.MODEL_LABEL)
+                    prefs.remove(Keys.MODEL_CONTEXT)
+                    prefs.remove(Keys.MODEL_VISION)
+                    prefs.remove(Keys.MODEL_FREE)
+                    prefs.remove(Keys.MODEL_STRONG_TOOLS)
+                }
+            }
         }
     }
 

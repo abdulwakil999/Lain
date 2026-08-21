@@ -147,6 +147,16 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
                 }
             }
 
+            // What the chosen model can actually do, stated before it matters rather
+            // than discovered when something fails.
+            state.selectedCapabilities?.let { caps ->
+                Spacer(Modifier.height(12.dp))
+                Text(caps.summary(), style = MaterialTheme.typography.bodyMedium, color = LainCream)
+                caps.limitations.forEach { limitation ->
+                    Text("· $limitation", style = MaterialTheme.typography.bodyMedium, color = LainMuted)
+                }
+            }
+
             Spacer(Modifier.height(24.dp))
             SectionLabel("${state.provider.displayName} API key")
             PixelTextField(state.apiKey, viewModel::setApiKey, "API key", isPassword = true)

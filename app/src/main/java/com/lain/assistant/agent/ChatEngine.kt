@@ -74,7 +74,14 @@ data class ChatState(
     val profile: UserProfile? = null,
     val error: String? = null,
     /** Set when automatic fallback swapped the model, so the user is told rather than silently switched. */
-    val activeModelNotice: String? = null
+    val activeModelNotice: String? = null,
+    /**
+     * What the currently selected model can actually do, so the UI can be honest
+     * about it up front rather than only after something fails.
+     */
+    val capabilities: ModelCapabilities? = null,
+    /** Which model produced the most recent reply — "local" when Android answered it. */
+    val lastAnsweredBy: String? = null
 ) {
     val isBusy: Boolean get() = isSending || isListening
 }
@@ -149,6 +156,17 @@ class ChatEngine(
             // Binding the recognition service takes a few hundred milliseconds; doing it
             // now moves that off the gap between tapping the mic and it going live.
             voiceInput.prewarm()
+
+            // Keeps the UI's picture of the model current without any screen having to
+            // ask, including after a fallback rewrites the selection.
+            scope.launch {
+                kotlinx.coroutines.flow.combine(
+                    prefs.selectedModelId,
+                    prefs.selectedProvider,
+                    prefs.selectedModelInfo
+                ) { id, provider, info -> ModelCapabilityRegistry.forModel(id, provider, info) }
+                    .collect { caps -> _state.update { it.copy(capabilities = caps) } }
+            }
 
             val convo = conversations.activeConversation()
             conversationId = convo.id
@@ -339,7 +357,7 @@ class ChatEngine(
 
             val cid = ensureConversation()
             conversations.append(MessageEntity(conversationId = cid, role = "user", content = message))
-            finishTurn(cid, reply, usedModel = "local", fellBack = false)
+            finishTurn(cid, reply, usedModel = "Lain (on-device)", fellBack = false)
             resumeListeningIfHandsFree()
         } catch (_: CancellationException) {
             _state.update { it.copy(isSending = false, statusLine = null) }
@@ -363,7 +381,10 @@ class ChatEngine(
             return
         }
 
-        val caps = ModelCapabilityRegistry.forModel(modelId)
+        // Capabilities come from the provider's own catalogue entry where we have one,
+        // so budgets are set from real context sizes and real vision support rather
+        // than from pattern-matching the model's name.
+        val caps = ModelCapabilityRegistry.forModel(modelId, provider, prefs.selectedModelInfo.first())
         val client = LlmClientFactory.create(provider)
         val accessibilityReady = LainAccessibilityService.isRunning
 
@@ -394,7 +415,7 @@ class ChatEngine(
             }
         }
 
-        val tools = ToolDefinitions.forTier(caps.useCompactPrompt, caps.supportsVision, accessibilityReady)
+        val tools = ToolDefinitions.forCapabilities(caps, accessibilityReady)
 
         var rounds = 0
         var finalText: String? = null
@@ -482,9 +503,7 @@ class ChatEngine(
             }
         }
 
-        val replyText = finalText
-            ?: "I've stopped rather than keep going in circles on that. Here's where I got to: " +
-            (taskState.progressNote() ?: "no progress to report.") + " Tell me what you can see and I'll pick it up."
+        val replyText = finalText ?: gaveUpMessage(caps)
 
         // finalText came from a stream that already spoke it in voice mode; the
         // give-up message did not, so it still needs reading aloud.
@@ -625,7 +644,12 @@ class ChatEngine(
                 isSending = false,
                 statusLine = null,
                 streamingText = null,
-                activeModelNotice = if (fellBack) "Used $usedModel — your selected model was unavailable." else null
+                lastAnsweredBy = usedModel,
+                activeModelNotice = if (fellBack) {
+                    "Answered by $usedModel — your selected model was unavailable."
+                } else {
+                    null
+                }
             )
         }
         if (!alreadySpoken) speak(replyText)
@@ -845,6 +869,31 @@ class ChatEngine(
             }
 
             ErrorClass.OTHER -> StreamOutcomeWithModel(first, modelId, false)
+        }
+    }
+
+    /**
+     * What Lain says when she runs out of rounds without finishing.
+     *
+     * The important property is honesty about *why*. A weak model failing a
+     * ten-step automation is a capability limit, not a mystery, and saying so —
+     * along with what a stronger model would do differently — respects the user
+     * more than a vague apology and is far better than the alternative failure
+     * mode, which is claiming the task succeeded.
+     *
+     * It never nags: the suggestion appears when the model genuinely hit its
+     * ceiling on a multi-step job, not on every hiccup.
+     */
+    private fun gaveUpMessage(caps: ModelCapabilities): String = buildString {
+        append("I've stopped rather than keep going in circles. Here's where I got to: ")
+        append(taskState.progressNote() ?: "no progress to report.")
+        if (!caps.handlesMultiStepAutomation) {
+            append(" Being straight with you: ${caps.label} is a small model, and long ")
+            append("multi-step phone tasks are where it struggles — it loops instead of ")
+            append("moving on. It's fine for chat and single actions. If you need this ")
+            append("kind of task to work reliably, a ★ model in Settings will do it.")
+        } else {
+            append(" Tell me what you can see and I'll pick it up.")
         }
     }
 

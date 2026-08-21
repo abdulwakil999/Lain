@@ -5,6 +5,7 @@ import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.os.BatteryManager
 import com.lain.assistant.agent.LocalIntent
+import com.lain.assistant.agent.TransportAction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -32,6 +33,7 @@ class LocalActions(private val context: Context) {
     private val phone = PhoneController(context)
     private val device = DeviceController(context)
     private val reminders = RemindersRepository(context)
+    private val media = MediaController(context)
 
     /** @return the spoken/displayed reply, or null if this couldn't be handled locally after all. */
     suspend fun execute(intent: LocalIntent): String? = withContext(Dispatchers.Default) {
@@ -48,6 +50,10 @@ class LocalActions(private val context: Context) {
                 is LocalIntent.Torch -> torch(intent.on)
                 is LocalIntent.ReadScreen -> readScreen()
                 is LocalIntent.ToggleRequest -> toggleRequest(intent.page, intent.what)
+                is LocalIntent.Transport -> transport(intent.action)
+                is LocalIntent.PlayMusic -> playMusic(intent.query, intent.app)
+                // Arithmetic was already done by the router; this just phrases it.
+                is LocalIntent.Calculate -> "${intent.result.expression} = ${intent.result.pretty()}"
             }
         }.getOrNull()
     }
@@ -154,6 +160,84 @@ class LocalActions(private val context: Context) {
             "Android doesn't let apps flip $what directly any more — I've opened the settings page for you."
         } else {
             null
+        }
+    }
+
+    // --------------------------------------------------------------- music
+
+    /**
+     * Transport controls report what the device actually did.
+     *
+     * A media key is fire-and-forget — the OS routes it to whoever owns the session,
+     * and if nothing does, nothing happens. Checking `isMusicActive` afterwards is
+     * what stops Lain saying "paused" into silence when no player was running.
+     */
+    private suspend fun transport(action: TransportAction): String? {
+        val wasPlaying = media.isPlaying()
+
+        val dispatched = when (action) {
+            TransportAction.PLAY -> media.play()
+            TransportAction.PAUSE -> media.pause()
+            TransportAction.TOGGLE -> media.playPause()
+            TransportAction.NEXT -> media.next()
+            TransportAction.PREVIOUS -> media.previous()
+            TransportAction.STOP -> media.stop()
+        }
+        if (!dispatched) return null
+
+        // Media sessions react asynchronously; give the player a moment before asking
+        // whether anything changed.
+        kotlinx.coroutines.delay(350)
+        val nowPlaying = media.isPlaying()
+
+        return when (action) {
+            TransportAction.PAUSE, TransportAction.STOP ->
+                if (nowPlaying) "Sent the pause, but something's still playing." else "Paused."
+
+            TransportAction.PLAY, TransportAction.TOGGLE -> when {
+                nowPlaying -> "Playing."
+                // Nothing was playing and nothing started: there is no session to
+                // resume, which is a different problem from a failed key press.
+                !wasPlaying -> "Nothing's queued up to resume — say what you want and I'll start it."
+                else -> "Paused."
+            }
+
+            TransportAction.NEXT -> if (nowPlaying) "Skipped." else "Sent the skip, but nothing's playing."
+            TransportAction.PREVIOUS -> if (nowPlaying) "Went back." else "Sent it, but nothing's playing."
+        }
+    }
+
+    /**
+     * Starts playback via the platform's play-from-search intent, which is the hook
+     * Spotify and the other players expose precisely for this.
+     */
+    private suspend fun playMusic(query: String, app: String?): String? {
+        val target = media.packageFor(app)
+
+        // No search terms: resume whatever was last playing, or open the named player.
+        if (query.isBlank()) {
+            if (media.play()) {
+                kotlinx.coroutines.delay(350)
+                if (media.isPlaying()) return "Playing."
+            }
+            if (target != null && media.openPlayer(target)) {
+                return "Opened ${app?.replaceFirstChar { it.uppercase() } ?: "your music app"} — tell me what to play."
+            }
+            if (media.playFromSearch("", target)) return "Starting something."
+            return null
+        }
+
+        if (!media.playFromSearch(query, target)) return null
+
+        // The intent was accepted; whether audio starts is up to the player and how
+        // well it matched. Report what was asked for rather than claiming a result
+        // that hasn't been verified.
+        kotlinx.coroutines.delay(900)
+        val where = app?.replaceFirstChar { it.uppercase() }
+        return if (media.isPlaying()) {
+            if (where != null) "Playing $query on $where." else "Playing $query."
+        } else {
+            if (where != null) "Asked $where for $query." else "Asked your music app for $query."
         }
     }
 
