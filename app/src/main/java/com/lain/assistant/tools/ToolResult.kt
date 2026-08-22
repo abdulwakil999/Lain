@@ -115,6 +115,17 @@ object ToolRegistry {
         ToolMeta("send_whatsapp_message", "Open a WhatsApp chat with text prefilled (does not send).",
             reversible = true, commonFailures = listOf("WhatsApp not installed")),
         ToolMeta("set_reminder", "Schedule a reminder notification.", permissions = listOf("SCHEDULE_EXACT_ALARM")),
+        ToolMeta("schedule_task", "Set an alarm, reminder or recurring task.",
+            permissions = listOf("SCHEDULE_EXACT_ALARM"),
+            commonFailures = listOf("time couldn't be parsed", "exact alarms not permitted")),
+        ToolMeta("list_scheduled_tasks", "List alarms and scheduled tasks."),
+        ToolMeta("cancel_scheduled_task", "Cancel a scheduled task.", reversible = false),
+        ToolMeta("set_do_not_disturb", "Turn Do Not Disturb on or off, in-app.",
+            permissions = listOf("ACCESS_NOTIFICATION_POLICY"),
+            commonFailures = listOf("notification policy access not granted")),
+        ToolMeta("set_ringer_mode", "Set silent, vibrate or normal, in-app.",
+            permissions = listOf("ACCESS_NOTIFICATION_POLICY")),
+        ToolMeta("open_quick_toggle", "Show the system wifi/data/bluetooth switch over Lain."),
         ToolMeta("write_note", "Save a note."),
         ToolMeta("list_notes", "List saved notes."),
         ToolMeta("take_photo", "Capture a photo and look at it.",
@@ -143,5 +154,18 @@ object ToolRegistry {
 
     fun needsAccessibility(tool: String) = meta[tool]?.needsAccessibility == true
     fun needsVision(tool: String) = meta[tool]?.needsVision == true
-    fun requiresConfirmation(tool: String) = meta[tool]?.requiresConfirmation == true
+    /**
+     * Matches a scheduled task that will reach another person unattended.
+     *
+     * schedule_task is mostly harmless — an alarm, a reminder to take tablets — so
+     * gating every use behind a prompt would make setting an alarm a two-step
+     * conversation. Only the outward-facing forms need approval, and only the SMS
+     * form actually fires on its own: a scheduled call rings and waits for a tap.
+     */
+    private val OUTWARD_SCHEDULE = Regex("\"action\"\\s*:\\s*\"(sms|call)\"", RegexOption.IGNORE_CASE)
+
+    fun requiresConfirmation(tool: String, argumentsJson: String = ""): Boolean {
+        if (meta[tool]?.requiresConfirmation == true) return true
+        return tool == "schedule_task" && OUTWARD_SCHEDULE.containsMatchIn(argumentsJson)
+    }
 }

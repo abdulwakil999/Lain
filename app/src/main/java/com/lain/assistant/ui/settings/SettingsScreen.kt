@@ -40,6 +40,8 @@ import com.lain.assistant.automation.LainNotificationListener
 import com.lain.assistant.automation.OverlayBubbleService
 import com.lain.assistant.data.Gender
 import com.lain.assistant.data.Provider
+import com.lain.assistant.automation.QuickToggles
+import com.lain.assistant.automation.Scheduler
 import com.lain.assistant.ui.common.PixelButton
 import com.lain.assistant.ui.common.PixelChoiceChip
 import com.lain.assistant.ui.common.PixelTextField
@@ -344,6 +346,58 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
                 text = if (notificationsOn) "Manage notification access" else "Grant notification access",
                 onClick = { LainNotificationListener.openSettings(context) }
             )
+
+            Spacer(Modifier.height(24.dp))
+            SectionLabel("Alarms and Do Not Disturb")
+            // Two grants Lain can't give herself. Both are offered, neither is
+            // requested silently, and the current state is read from the system
+            // rather than remembered — a permission revoked outside the app has to
+            // show as revoked here.
+            val scheduler = remember { Scheduler(context) }
+            val toggles = remember { QuickToggles(context) }
+            var exactAlarms by remember { mutableStateOf(scheduler.canScheduleExact()) }
+            var dndAccess by remember { mutableStateOf(toggles.hasDndAccess()) }
+            LaunchedEffect(Unit) {
+                exactAlarms = scheduler.canScheduleExact()
+                dndAccess = toggles.hasDndAccess()
+            }
+
+            Text(
+                if (exactAlarms) {
+                    "Alarms fire on the minute."
+                } else {
+                    "Android is batching Lain's alarms to save power, so they can land a few minutes late. " +
+                        "Fine for a reminder, not for waking up."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (exactAlarms) LainCream else LainMuted
+            )
+            if (!exactAlarms) {
+                Spacer(Modifier.height(8.dp))
+                PixelButton(
+                    text = "Allow exact alarms",
+                    onClick = { scheduler.openExactAlarmSettings() }
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Text(
+                if (dndAccess) {
+                    "Lain can turn Do Not Disturb on and off without leaving the app."
+                } else {
+                    "Do Not Disturb and the silent/vibrate switch need Android's notification-policy access. " +
+                        "Until it's granted Lain will say so rather than pretending she changed it."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (dndAccess) LainCream else LainMuted
+            )
+            if (!dndAccess) {
+                Spacer(Modifier.height(8.dp))
+                PixelButton(
+                    text = "Allow Do Not Disturb access",
+                    onClick = { toggles.openDndAccessSettings() }
+                )
+            }
 
             Spacer(Modifier.height(24.dp))
             SectionLabel("Accessibility Service")

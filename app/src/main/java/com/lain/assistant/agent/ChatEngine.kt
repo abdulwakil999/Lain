@@ -826,7 +826,7 @@ class ChatEngine(
         // Irreversible, outward-facing actions stop here and wait for the user. The
         // tool has NOT run at this point, and the model is told so plainly, because
         // the failure this exists to prevent is Lain reporting a call it never placed.
-        if (ToolRegistry.requiresConfirmation(call.name) && !approvedThisTurn.contains(call.id)) {
+        if (ToolRegistry.requiresConfirmation(call.name, call.argumentsJson) && !approvedThisTurn.contains(call.id)) {
             val args = runCatching {
                 json.parseToJsonElement(call.argumentsJson).jsonObject
                     .mapValues { it.value.jsonPrimitive.contentOrNull.orEmpty() }

@@ -61,6 +61,16 @@ data class PendingConfirmation(
                     "Open WhatsApp to $who with a message drafted?"
                 }
 
+                "schedule_task" -> {
+                    val who = arg("target")
+                    val at = arg("when")
+                    when (arg("action").lowercase()) {
+                        "sms" -> "Every time this fires, text $who \"${arg("message").take(120)}\" — set it for $at?"
+                        "call" -> "Ring you at $at to call $who?"
+                        else -> "Set that for $at?"
+                    }
+                }
+
                 "delete_file" -> "Delete \"${arg("path")}\"? This can't be undone."
 
                 "write_file" -> {

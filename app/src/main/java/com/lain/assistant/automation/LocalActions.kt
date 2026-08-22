@@ -6,6 +6,9 @@ import android.media.AudioManager
 import android.os.BatteryManager
 import com.lain.assistant.agent.LocalIntent
 import com.lain.assistant.agent.TransportAction
+import com.lain.assistant.agent.WhenParser
+import com.lain.assistant.data.ScheduledTask
+import com.lain.assistant.data.TaskAction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -34,6 +37,8 @@ class LocalActions(private val context: Context) {
     private val device = DeviceController(context)
     private val reminders = RemindersRepository(context)
     private val media = MediaController(context)
+    private val scheduler = Scheduler(context)
+    private val toggles = QuickToggles(context)
 
     /** @return the spoken/displayed reply, or null if this couldn't be handled locally after all. */
     suspend fun execute(intent: LocalIntent): String? = withContext(Dispatchers.Default) {
@@ -52,6 +57,11 @@ class LocalActions(private val context: Context) {
                 is LocalIntent.ToggleRequest -> toggleRequest(intent.page, intent.what)
                 is LocalIntent.Transport -> transport(intent.action)
                 is LocalIntent.PlayMusic -> playMusic(intent.query, intent.app)
+                is LocalIntent.Schedule -> schedule(intent.phrase, intent.alarm)
+                is LocalIntent.ListSchedule -> listSchedule()
+                is LocalIntent.CancelSchedule -> cancelSchedule(intent.which)
+                is LocalIntent.Dnd -> toggles.setDoNotDisturb(intent.mode).result
+                is LocalIntent.Ringer -> toggles.setRingerMode(intent.mode).result
                 // Arithmetic was already done by the router; this just phrases it.
                 is LocalIntent.Calculate -> "${intent.result.expression} = ${intent.result.pretty()}"
             }
@@ -140,6 +150,58 @@ class LocalActions(private val context: Context) {
             else -> null
         }
     }
+
+    // ---------------------------------------------------------- scheduling
+
+    /**
+     * Sets an alarm or reminder from the raw phrase, with no model involved.
+     *
+     * The resolved time is always spoken back. That is the safeguard: if "half two"
+     * was read as 14:30 when the user meant 02:30, they hear it now rather than
+     * discovering it tomorrow.
+     */
+    private suspend fun schedule(phrase: String, alarm: Boolean): String? {
+        val parsed = WhenParser.parse(phrase) ?: return null
+        val label = parsed.remainder.ifBlank { if (alarm) "Alarm" else "Reminder" }
+        val task = ScheduledTask(
+            label = label,
+            action = if (alarm) TaskAction.ALARM else TaskAction.REMIND,
+            triggerAtMillis = parsed.triggerAtMillis,
+            repeat = parsed.repeat
+        )
+        return when (val outcome = scheduler.add(task)) {
+            is SchedulingOutcome.Scheduled -> {
+                val when_ = SimpleDateFormat("h:mm a", Locale.getDefault())
+                    .format(Date(outcome.task.triggerAtMillis))
+                    .lowercase(Locale.getDefault())
+                val repeat = if (outcome.task.repeat == com.lain.assistant.data.Repeat.ONCE) ""
+                else ", ${outcome.task.repeat.label}"
+                val drift = if (outcome.exact) "" else
+                    " Android hasn't granted Lain exact alarms, so it could be a few minutes out — " +
+                        "allow \"Alarms & reminders\" for Lain in Settings."
+                if (alarm) "Alarm set for $when_$repeat.$drift"
+                else "I'll remind you at $when_$repeat — $label.$drift"
+            }
+            // A failure here falls back to the model, which can ask the user what
+            // they meant rather than leaving them with nothing.
+            is SchedulingOutcome.Failed -> null
+        }
+    }
+
+    private suspend fun listSchedule(): String {
+        val all = scheduler.all()
+        return if (all.isEmpty()) "Nothing scheduled."
+        else "You've got:\n" + all.joinToString("\n") { "- ${it.describe()}" }
+    }
+
+    private suspend fun cancelSchedule(which: String): String? =
+        when (val outcome = scheduler.cancelMatching(which)) {
+            is CancelOutcome.Cancelled -> "Cancelled ${outcome.task.describe()}."
+            // More than one match, or none: the model asks rather than guessing which
+            // alarm to delete, because that is not undoable.
+            is CancelOutcome.Ambiguous -> null
+            CancelOutcome.NoMatch -> null
+        }
 
     // ------------------------------------------------------------ settings
 

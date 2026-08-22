@@ -322,6 +322,62 @@ object ToolDefinitions {
             briefDescription = "Schedule a reminder notification."
         ),
         ToolDefinition(
+            name = "schedule_task",
+            description = "Set an alarm, a reminder, or a recurring task at a clock time. Handles \"every day\", \"every weekday\", \"tomorrow\" and delays like \"in 20 minutes\" — pass the user's own wording in `when` and Lain resolves it. Use this rather than opening the Clock app: tasks set this way can be listed and cancelled afterwards.",
+            parameters = schema {
+                property("when", "string", "The timing in the user's words, e.g. \"7:30 am every weekday\", \"2:30\", \"in 20 minutes\"")
+                property("action", "string", "remind (notification), alarm (rings with snooze), call (rings with a Call button), sms (sends a text), open_app")
+                property("label", "string", "What it's for, e.g. \"take the tablets\"")
+                property("target", "string", "Contact name or number for call/sms; app name for open_app")
+                property("message", "string", "The text body, for sms only")
+                property("repeat", "string", "once, daily, weekdays, weekends or weekly — only if `when` doesn't already say")
+                required("when")
+            },
+            briefDescription = "Set an alarm, reminder or recurring task."
+        ),
+        ToolDefinition(
+            name = "list_scheduled_tasks",
+            description = "List every alarm, reminder and recurring task Lain has set.",
+            parameters = schema { },
+            briefDescription = "List alarms and scheduled tasks."
+        ),
+        ToolDefinition(
+            name = "cancel_scheduled_task",
+            description = "Cancel a scheduled task by describing it, e.g. \"the 7am alarm\" or \"calling mama\".",
+            parameters = schema {
+                property("which", "string", "Words identifying the task to cancel")
+                required("which")
+            },
+            briefDescription = "Cancel a scheduled task."
+        ),
+        ToolDefinition(
+            name = "set_do_not_disturb",
+            description = "Turn Do Not Disturb on or off. This happens inside Lain with no screen change.",
+            parameters = schema {
+                property("mode", "string", "off, priority (default when turning on), alarms, or silence")
+                required("mode")
+            },
+            briefDescription = "Turn Do Not Disturb on or off."
+        ),
+        ToolDefinition(
+            name = "set_ringer_mode",
+            description = "Put the phone on silent, vibrate or normal. Happens inside Lain.",
+            parameters = schema {
+                property("mode", "string", "silent, vibrate or normal")
+                required("mode")
+            },
+            briefDescription = "Set silent, vibrate or normal."
+        ),
+        ToolDefinition(
+            name = "open_quick_toggle",
+            description = "Bring up the system switch for wifi, mobile data, bluetooth or volume as a panel over Lain. Android has not allowed apps to flip these themselves since Android 10, so this is the real toggle rather than a fake one — say so when reporting back.",
+            parameters = schema {
+                property("what", "string", "wifi, mobile data, bluetooth, volume or nfc")
+                required("what")
+            },
+            briefDescription = "Show the system wifi/data/bluetooth switch over Lain."
+        ),
+        ToolDefinition(
             name = "write_note",
             description = "Save a note for the user.",
             parameters = schema {
@@ -408,7 +464,7 @@ object ToolDefinitions {
      */
     private val byImportance = listOf(
         // Things that finish a whole job in one call.
-        "message_contact", "open_app", "web_search", "make_call", "set_reminder",
+        "message_contact", "open_app", "web_search", "make_call", "schedule_task",
         // Driving a screen.
         "tap_text", "type_text", "read_screen", "press_key", "swipe_screen",
         // Knowing things.

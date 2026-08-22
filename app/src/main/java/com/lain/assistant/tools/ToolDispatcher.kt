@@ -12,9 +12,17 @@ import com.lain.assistant.automation.LainAccessibilityService
 import com.lain.assistant.automation.MessageFlow
 import com.lain.assistant.automation.NotesRepository
 import com.lain.assistant.automation.PhoneController
+import com.lain.assistant.automation.QuickToggles
 import com.lain.assistant.automation.RemindersRepository
+import com.lain.assistant.automation.CancelOutcome
+import com.lain.assistant.automation.Scheduler
+import com.lain.assistant.automation.SchedulingOutcome
 import com.lain.assistant.automation.VoiceInputController
+import com.lain.assistant.agent.WhenParser
 import com.lain.assistant.data.MemoryCategory
+import com.lain.assistant.data.Repeat
+import com.lain.assistant.data.ScheduledTask
+import com.lain.assistant.data.TaskAction
 import com.lain.assistant.data.MemoryStore
 import com.lain.assistant.network.ToolCall
 import com.lain.assistant.network.WebResearch
@@ -51,6 +59,8 @@ class ToolDispatcher(context: Context) {
     private val camera = CameraController(appContext)
     private val voice = VoiceInputController(appContext)
     private val device = DeviceController(appContext)
+    private val scheduler = Scheduler(appContext)
+    private val toggles = QuickToggles(appContext)
     private val messaging = MessageFlow(appContext)
     private val web = WebResearch()
     private val memory = MemoryStore(appContext)
@@ -313,11 +323,20 @@ class ToolDispatcher(context: Context) {
         "write_file" -> device.writeFile(args.str("path"), args.str("content"), args.bool("append"))
         "rename_file" -> device.renameFile(args.str("from"), args.str("to"))
 
-        // ----------------------------------------------------- utility
+        // -------------------------------------------------- scheduling
         "set_reminder" -> reminders.schedule(
             text = args.str("text"),
             triggerAtMillis = System.currentTimeMillis() + (args.num("minutes_from_now") * 60_000).toLong()
         ).asResult(FailureKind.PERMISSION)
+
+        "schedule_task" -> scheduleTask(args)
+        "list_scheduled_tasks" -> listScheduled()
+        "cancel_scheduled_task" -> cancelScheduled(args.str("which"))
+
+        // ---------------------------------------------- device toggles
+        "set_do_not_disturb" -> toggles.setDoNotDisturb(args.str("mode"))
+        "set_ringer_mode" -> toggles.setRingerMode(args.str("mode"))
+        "open_quick_toggle" -> toggles.openPanel(args.str("what"))
 
         "write_note" -> notes.addNote(args.str("text")).let { ToolResult.ok("Saved note: \"${it.text}\"") }
         "list_notes" -> notes.notes.first()
@@ -384,6 +403,96 @@ class ToolDispatcher(context: Context) {
 
         else -> ToolResult.fail(FailureKind.INVALID_INPUT, "Unknown tool: $name")
     }
+
+    // ------------------------------------------------------------ scheduling
+
+    /**
+     * Creates a scheduled task from either an explicit time or a plain phrase.
+     *
+     * The resolved time is always read back in the reply. A misparse ("2:30" landing
+     * in the afternoon when the user meant the small hours) is then visible straight
+     * away, rather than at 2:30.
+     */
+    private suspend fun scheduleTask(args: JsonObject): ToolResult {
+        val phrase = args.str("when")
+        val label = args.str("label")
+        val actionName = args.str("action").ifBlank { "remind" }.uppercase()
+        val action = runCatching { TaskAction.valueOf(actionName) }.getOrNull()
+            ?: return ToolResult.fail(
+                FailureKind.INVALID_INPUT,
+                "action must be one of remind, alarm, call, sms, open_app."
+            )
+
+        val parsed = WhenParser.parse(phrase)
+            ?: return ToolResult.fail(
+                FailureKind.INVALID_INPUT,
+                "Couldn't read a time out of \"$phrase\". Give a clock time (\"7:30 am\"), a delay " +
+                    "(\"in 20 minutes\"), or add a repeat (\"every weekday at 7\")."
+            )
+
+        val repeat = args.str("repeat").takeIf { it.isNotBlank() }
+            ?.let { runCatching { Repeat.valueOf(it.uppercase()) }.getOrNull() }
+            ?: parsed.repeat
+
+        val target = args.str("target")
+        if (action in setOf(TaskAction.CALL, TaskAction.SMS, TaskAction.OPEN_APP) && target.isBlank()) {
+            return ToolResult.fail(
+                FailureKind.INVALID_INPUT,
+                "A ${actionName.lowercase()} task needs a target — who to reach, or which app."
+            )
+        }
+        if (action == TaskAction.SMS && args.str("message").isBlank()) {
+            return ToolResult.fail(FailureKind.INVALID_INPUT, "A scheduled text needs the message to send.")
+        }
+
+        val task = ScheduledTask(
+            label = label.ifBlank { parsed.remainder }.ifBlank { "Alarm" },
+            action = action,
+            target = target,
+            payload = args.str("message"),
+            triggerAtMillis = parsed.triggerAtMillis,
+            repeat = repeat
+        )
+
+        return when (val outcome = scheduler.add(task)) {
+            is SchedulingOutcome.Failed -> ToolResult.fail(FailureKind.TOOL_FAILURE, outcome.reason)
+            is SchedulingOutcome.Scheduled -> {
+                val note = when {
+                    // Android will batch an inexact alarm with others to save power,
+                    // so it can land minutes late. For an alarm that matters.
+                    !outcome.exact ->
+                        " Android hasn't given Lain permission for exact alarms, so this may arrive a few " +
+                            "minutes late — allow \"Alarms & reminders\" for Lain in Settings to fix that."
+                    outcome.task.action == TaskAction.CALL ->
+                        " It'll ring and show a Call button — Lain won't dial on her own while you're away."
+                    else -> ""
+                }
+                ToolResult.ok("Set: ${outcome.task.describe()}.$note")
+            }
+        }
+    }
+
+    private suspend fun listScheduled(): ToolResult {
+        val all = scheduler.all()
+        if (all.isEmpty()) return ToolResult.ok("Nothing scheduled.")
+        return ToolResult.ok(all.joinToString("\n") { "- ${it.describe()}" })
+    }
+
+    private suspend fun cancelScheduled(which: String): ToolResult =
+        when (val outcome = scheduler.cancelMatching(which)) {
+            is CancelOutcome.Cancelled -> ToolResult.ok("Cancelled: ${outcome.task.describe()}.")
+            is CancelOutcome.Ambiguous -> ToolResult.fail(
+                FailureKind.INVALID_INPUT,
+                // Deleting the wrong alarm is not recoverable, so it asks instead.
+                "\"$which\" matches more than one:\n" +
+                    outcome.candidates.joinToString("\n") { "- ${it.describe()}" } +
+                    "\nAsk the user which one."
+            )
+            CancelOutcome.NoMatch -> ToolResult.fail(
+                FailureKind.INVALID_INPUT,
+                "Nothing scheduled matches \"$which\". Call list_scheduled_tasks to see what's set."
+            )
+        }
 
     /**
      * Single gate for anything needing the Accessibility Service, so the agent gets

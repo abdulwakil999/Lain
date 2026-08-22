@@ -49,6 +49,25 @@ sealed class LocalIntent {
      */
     data class PlayMusic(val query: String, val app: String?) : LocalIntent()
 
+    /**
+     * An alarm, reminder or recurring task at a clock time. The phrase is kept
+     * intact and resolved by [WhenParser] at execution, so the router stays free
+     * of calendar arithmetic.
+     */
+    data class Schedule(val phrase: String, val alarm: Boolean) : LocalIntent()
+
+    /** "what alarms have I got", "list my reminders". */
+    object ListSchedule : LocalIntent()
+
+    /** "cancel my 7am alarm". */
+    data class CancelSchedule(val which: String) : LocalIntent()
+
+    /** Do Not Disturb. Genuinely flippable in-process, unlike Wi-Fi and Bluetooth. */
+    data class Dnd(val mode: String) : LocalIntent()
+
+    /** Silent / vibrate / normal. */
+    data class Ringer(val mode: String) : LocalIntent()
+
     /** "what's 15% of 240", "convert 5km to miles" — answered exactly, offline. */
     data class Calculate(val result: Calculator.Result) : LocalIntent()
 }
@@ -145,7 +164,15 @@ object FastRouter {
     // ------------------------------------------------------------------ intents
 
     private fun localIntent(t: String): LocalIntent? =
-        clock(t) ?: battery(t) ?: torch(t) ?: volume(t) ?: timer(t)
+        clock(t) ?: battery(t) ?: torch(t)
+            // Do Not Disturb before the generic volume matcher: "silence my phone"
+            // means the ringer, not the media stream.
+            ?: dnd(t) ?: ringer(t)
+            ?: volume(t)
+            // Scheduling is checked before timer(), which only understands delays;
+            // "set an alarm for 2:30" is a clock time and would otherwise fall
+            // through to the model.
+            ?: listSchedule(t) ?: cancelSchedule(t) ?: schedule(t) ?: timer(t)
             ?: navigate(t) ?: readScreen(t) ?: settingsOrToggle(t) ?: call(t)
             // Music is checked before the generic app launcher so "play spotify" is
             // understood as playback rather than as opening an app called "spotify".
@@ -227,6 +254,79 @@ object FastRouter {
             ?: Regex("\\babout\\s+(.+)$").find(t)?.groupValues?.get(1)?.trim()
             ?: ""
         return LocalIntent.Timer(minutes = minutes, label = label)
+    }
+
+    // ------------------------------------------------------------ scheduling
+
+    private val scheduleOpeners = listOf(
+        "set an alarm", "set a alarm", "set alarm", "alarm for", "wake me",
+        "remind me", "reminder", "schedule", "every day at", "every morning",
+        "every weekday", "each day at"
+    )
+
+    /**
+     * "set an alarm for 2:30", "wake me at 7 every weekday", "call mama every day at 8".
+     *
+     * Only claimed when a time can actually be resolved. A phrase the parser can't
+     * read goes to the model rather than producing a confidently wrong alarm.
+     */
+    private fun schedule(t: String): LocalIntent? {
+        val opener = scheduleOpeners.any { t.contains(it) }
+        val recurring = Regex(
+            "\\bevery (day|morning|night|weekday|weekend|week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\\b"
+        ).containsMatchIn(t)
+        if (!opener && !recurring) return null
+        // Requires a resolvable time, so "remind me about this later" still reaches
+        // the model, which can ask what "later" means.
+        val parsed = WhenParser.parse(t) ?: return null
+
+        // A plain countdown ("remind me in two hours") is a timer, and timer() already
+        // phrases that better — "in two hours" rather than a wall-clock time. Only
+        // clock times and repeats belong to the scheduler.
+        val countdownOnly = parsed.repeat == com.lain.assistant.data.Repeat.ONCE &&
+            Regex("\\bin\\s+(a|an|\\d+)\\s*(second|sec|minute|min|hour|hr)s?\\b").containsMatchIn(t)
+        if (countdownOnly) return null
+
+        val alarm = t.contains("alarm") || t.contains("wake me")
+        return LocalIntent.Schedule(phrase = t, alarm = alarm)
+    }
+
+    private fun listSchedule(t: String): LocalIntent? = when {
+        Regex("\\b(what|which|any|list|show|do i have)\\b").containsMatchIn(t) &&
+            Regex("\\b(alarms?|reminders?|scheduled)\\b").containsMatchIn(t) -> LocalIntent.ListSchedule
+        else -> null
+    }
+
+    private fun cancelSchedule(t: String): LocalIntent? {
+        if (!Regex("\\b(cancel|delete|remove|clear)\\b").containsMatchIn(t)) return null
+        if (!Regex("\\b(alarms?|reminders?|scheduled task)\\b").containsMatchIn(t)) return null
+        val which = t
+            .replace(Regex("\\b(cancel|delete|remove|clear|my|the|for)\\b"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        return LocalIntent.CancelSchedule(which.ifBlank { "alarm" })
+    }
+
+    // ------------------------------------------------------- sound profile
+
+    private fun dnd(t: String): LocalIntent? {
+        val mentions = t.contains("do not disturb") || t.contains("dnd") || t.contains("don't disturb")
+        if (!mentions) return null
+        val off = Regex("\\b(off|disable|stop|end|cancel)\\b").containsMatchIn(t)
+        return LocalIntent.Dnd(if (off) "off" else "priority")
+    }
+
+    private fun ringer(t: String): LocalIntent? {
+        // Scoped to phrases that clearly mean the ringer, so "mute the video" is
+        // left to the volume matcher.
+        val phone = t.contains("phone") || t.contains("ringer") || t.contains("ring")
+        return when {
+            (t.contains("silent") || t.contains("silence")) && phone -> LocalIntent.Ringer("silent")
+            t.contains("vibrate") || t.contains("vibration only") -> LocalIntent.Ringer("vibrate")
+            (t.contains("unmute") || t.contains("normal") || t.contains("sound on")) && phone ->
+                LocalIntent.Ringer("normal")
+            else -> null
+        }
     }
 
     private fun navigate(t: String): LocalIntent? = when (t) {
