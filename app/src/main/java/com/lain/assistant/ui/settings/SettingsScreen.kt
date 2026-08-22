@@ -21,6 +21,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
@@ -30,6 +33,7 @@ import android.provider.Settings
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.lain.assistant.automation.LainAccessibilityService
+import com.lain.assistant.automation.LainNotificationListener
 import com.lain.assistant.automation.OverlayBubbleService
 import com.lain.assistant.data.Gender
 import com.lain.assistant.data.Provider
@@ -211,21 +215,62 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     state.memories.take(40).forEach { m ->
-                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                            Text(
-                                "[${m.category.lowercase()}] ${m.fact}",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = LainCream,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Text(
-                                "Forget",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = LainSalmon,
-                                modifier = Modifier
-                                    .clickable { viewModel.deleteMemory(m.id) }
-                                    .padding(start = 10.dp, top = 4.dp, bottom = 4.dp)
-                            )
+                        // Editing in place rather than delete-and-retype: a wrong fact is
+                        // usually wrong in one detail, and retyping it loses when Lain
+                        // learned it and which conversation it came from.
+                        var editing by remember(m.id) { mutableStateOf(false) }
+                        var draft by remember(m.id) { mutableStateOf(m.fact) }
+
+                        if (editing) {
+                            Column {
+                                PixelTextField(draft, { draft = it }, "What Lain should remember")
+                                Spacer(Modifier.height(6.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Text(
+                                        "Save",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = LainSalmon,
+                                        modifier = Modifier.clickable {
+                                            if (draft.isNotBlank()) viewModel.editMemory(m.id, draft)
+                                            editing = false
+                                        }.padding(vertical = 4.dp)
+                                    )
+                                    Text(
+                                        "Cancel",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = LainMuted,
+                                        modifier = Modifier.clickable {
+                                            draft = m.fact
+                                            editing = false
+                                        }.padding(vertical = 4.dp)
+                                    )
+                                }
+                            }
+                        } else {
+                            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                Text(
+                                    "[${m.category.lowercase()}] ${m.fact}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = LainCream,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    "Edit",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = LainSalmon,
+                                    modifier = Modifier
+                                        .clickable { draft = m.fact; editing = true }
+                                        .padding(start = 10.dp, top = 4.dp, bottom = 4.dp)
+                                )
+                                Text(
+                                    "Forget",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = LainSalmon,
+                                    modifier = Modifier
+                                        .clickable { viewModel.deleteMemory(m.id) }
+                                        .padding(start = 10.dp, top = 4.dp, bottom = 4.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -274,6 +319,26 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
                 PixelChoiceChip("On", state.batterySaver, { viewModel.setBatterySaver(true) }, modifier = Modifier.weight(1f))
                 PixelChoiceChip("Off", !state.batterySaver, { viewModel.setBatterySaver(false) }, modifier = Modifier.weight(1f))
             }
+
+            Spacer(Modifier.height(24.dp))
+            SectionLabel("Notification access")
+            val notificationsOn = LainNotificationListener.isEnabledInSettings(context)
+            Text(
+                if (notificationsOn) {
+                    "Granted — Lain can tell you what's in your notification shade."
+                } else {
+                    "Off. Without it Lain can't answer \"what did I miss\". Android only allows this to be " +
+                        "granted from its own settings screen, and nothing is stored or sent anywhere — " +
+                        "Lain reads the shade live when you ask, and not otherwise."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (notificationsOn) LainCream else LainMuted
+            )
+            Spacer(Modifier.height(8.dp))
+            PixelButton(
+                text = if (notificationsOn) "Manage notification access" else "Grant notification access",
+                onClick = { LainNotificationListener.openSettings(context) }
+            )
 
             Spacer(Modifier.height(24.dp))
             SectionLabel("Accessibility Service")

@@ -1,7 +1,7 @@
 package com.lain.assistant
 
 import com.lain.assistant.agent.IntentClassifier
-import com.lain.assistant.agent.TaskState
+import com.lain.assistant.agent.WorkingMemory
 import com.lain.assistant.agent.TurnIntent
 import com.lain.assistant.network.OpenRouterModelsClient
 import com.lain.assistant.data.ModelCapabilityRegistry
@@ -50,7 +50,7 @@ class AgentLogicTest {
 
     @Test
     fun `an approach is exhausted after two identical failures`() {
-        val state = TaskState()
+        val state = WorkingMemory()
         val args = """{"text":"Send"}"""
         assertFalse(state.isExhausted("tap_text", args))
 
@@ -63,7 +63,7 @@ class AgentLogicTest {
 
     @Test
     fun `differing arguments are tracked independently`() {
-        val state = TaskState()
+        val state = WorkingMemory()
         repeat(2) {
             state.record("tap_text", """{"text":"Send"}""", false, FailureKind.INVALID_INPUT, "no")
         }
@@ -76,7 +76,7 @@ class AgentLogicTest {
 
     @Test
     fun `app switches are counted so churn can be capped`() {
-        val state = TaskState()
+        val state = WorkingMemory()
         state.record("open_app", "{}", true, null, "ok")
         state.record("close_app", "{}", true, null, "ok")
         state.record("read_screen", "{}", true, null, "ok")
@@ -85,7 +85,7 @@ class AgentLogicTest {
 
     @Test
     fun `progress note stays silent early and reports failures once drifting`() {
-        val state = TaskState()
+        val state = WorkingMemory()
         state.record("open_app", "{}", true, null, "ok")
         assertNull("no note before there is anything to say", state.progressNote())
 
@@ -99,7 +99,7 @@ class AgentLogicTest {
 
     @Test
     fun `reset clears state between requests`() {
-        val state = TaskState()
+        val state = WorkingMemory()
         state.record("open_app", "{}", false, FailureKind.APP_UNAVAILABLE, "no")
         state.reset()
         assertEquals(0, state.appSwitches)

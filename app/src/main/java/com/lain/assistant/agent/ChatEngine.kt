@@ -27,6 +27,7 @@ import com.lain.assistant.network.ToolCall
 import com.lain.assistant.tools.FailureKind
 import com.lain.assistant.tools.ToolDefinitions
 import com.lain.assistant.tools.ToolDispatcher
+import com.lain.assistant.tools.ToolRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
@@ -81,7 +82,12 @@ data class ChatState(
      */
     val capabilities: ModelCapabilities? = null,
     /** Which model produced the most recent reply — "local" when Android answered it. */
-    val lastAnsweredBy: String? = null
+    val lastAnsweredBy: String? = null,
+    /**
+     * Set when an irreversible action is waiting on the user. The UI shows this as
+     * a question with the exact thing that will happen.
+     */
+    val pendingConfirmation: String? = null
 ) {
     val isBusy: Boolean get() = isSending || isListening
 }
@@ -133,8 +139,14 @@ class ChatEngine(
     private var ttsEngine: TtsEngine? = null
     private var speaker: StreamingSpeaker? = null
     private var conversationId: String? = null
-    private val taskState = TaskState()
+    private val working = WorkingMemory()
     private val localActions = LocalActions(appContext)
+
+    /** The irreversible action waiting on the user, if any. */
+    private var pendingConfirmation: PendingConfirmation? = null
+
+    /** Call ids the user has approved, so the retry actually runs instead of re-asking. */
+    private val approvedThisTurn = mutableSetOf<String>()
 
     /** Set when the current turn came from speech, so the reply is kept speakable. */
     private var deliveryMode = DeliveryMode.TEXT
@@ -232,6 +244,7 @@ class ChatEngine(
     fun stop() {
         activeJob?.cancel()
         activeJob = null
+        clearPendingConfirmation()
         silence()
         AgentForegroundService.stop(appContext)
         _state.update { it.copy(isSending = false, isListening = false, statusLine = null, conversationMode = false) }
@@ -265,7 +278,15 @@ class ChatEngine(
         if (message.isBlank() || _state.value.isSending) return
 
         deliveryMode = if (fromVoice) DeliveryMode.VOICE else DeliveryMode.TEXT
-        taskState.reset()
+
+        // A reply to a pending confirmation is an answer, not a new request — it must
+        // not be re-routed, re-planned, or treated as a fresh objective.
+        pendingConfirmation?.let { pending ->
+            activeJob = scope.launch { resolveConfirmation(pending, message) }
+            return
+        }
+
+        working.begin(message)
         val trace = Trace.start(message)
 
         _state.update {
@@ -312,6 +333,64 @@ class ChatEngine(
                 AgentForegroundService.stop(appContext)
                 trace.finish()
             }
+        }
+    }
+
+    /**
+     * Handles the user's answer to a pending confirmation.
+     *
+     * Approval re-runs the exact call that was held — same arguments, same id — so
+     * what happens is precisely what was described, not the model's second attempt
+     * at expressing it. A refusal drops the action and says so; it never gets
+     * quietly retried later in the turn.
+     */
+    private suspend fun resolveConfirmation(pending: PendingConfirmation, reply: String) {
+        pendingConfirmation = null
+        _state.update {
+            it.copy(
+                messages = it.messages + ChatMessage(sender = Sender.USER, text = reply),
+                input = "",
+                pendingConfirmation = null
+            )
+        }
+
+        val cid = ensureConversation()
+        conversations.append(MessageEntity(conversationId = cid, role = "user", content = reply))
+
+        if (!PendingConfirmation.isApproval(reply)) {
+            finishTurn(cid, "Left it. Nothing was sent.", usedModel = "Lain (on-device)", fellBack = false)
+            return
+        }
+
+        approvedThisTurn += pending.call.id
+        _state.update { it.copy(isSending = true, statusLine = "Doing it…") }
+        try {
+            val images = mutableListOf<String>()
+            val outcome = executeCall(cid, pending.call, images)
+            // Report what the tool actually returned rather than assuming success —
+            // approval means "you may try", not "it worked".
+            val spoken = if (outcome.startsWith("SUCCESS")) {
+                outcome.removePrefix("SUCCESS: ").trim()
+            } else {
+                "That didn't go through. " + outcome.substringAfter(": ").trim()
+            }
+            finishTurn(cid, spoken, usedModel = "Lain (on-device)", fellBack = false)
+        } catch (_: CancellationException) {
+            _state.update { it.copy(isSending = false, statusLine = null) }
+        } catch (t: Throwable) {
+            _state.update { it.copy(isSending = false, statusLine = null, error = t.message ?: "That failed") }
+        } finally {
+            approvedThisTurn.remove(pending.call.id)
+            if (_state.value.isSending) _state.update { it.copy(isSending = false, statusLine = null) }
+        }
+    }
+
+    /** Drops a pending confirmation, e.g. when the user hits STOP. */
+    private fun clearPendingConfirmation() {
+        pendingConfirmation = null
+        approvedThisTurn.clear()
+        if (_state.value.pendingConfirmation != null) {
+            _state.update { it.copy(pendingConfirmation = null) }
         }
     }
 
@@ -485,8 +564,16 @@ class ChatEngine(
                         }
                     }
 
-                    // Nudge with concrete progress once a task starts drifting.
-                    taskState.progressNote()?.takeIf { rounds >= 4 }?.let { note ->
+                    // Working memory (layer 1) goes back as its own turn, refreshed every
+                    // round so it describes the state *now*. This is what stops a weak
+                    // model re-deriving "what have I already tried" from raw transcript.
+                    working.digest()?.let { digest ->
+                        history.add(LlmMessage(role = LlmMessage.Role.USER, text = digest))
+                    }
+
+                    // A nudge on top, once a task starts drifting. Separate because it's
+                    // advice rather than state.
+                    working.progressNote()?.takeIf { rounds >= 4 }?.let { note ->
                         history.add(LlmMessage(role = LlmMessage.Role.USER, text = note))
                     }
 
@@ -729,17 +816,34 @@ class ChatEngine(
 
     private suspend fun executeCall(cid: String, call: ToolCall, images: MutableList<String>): String {
         // Refuse app churn before it happens rather than explaining it afterwards.
-        if ((call.name == "open_app" || call.name == "close_app") && taskState.appSwitches >= MAX_APP_SWITCHES) {
+        if ((call.name == "open_app" || call.name == "close_app") && working.appSwitches >= MAX_APP_SWITCHES) {
             return "FAILED [loop]: too many app switches for one request. Work with the screen you're on, or stop and explain."
         }
-        if (taskState.isExhausted(call.name, call.argumentsJson)) {
+        if (working.isExhausted(call.name, call.argumentsJson)) {
             return "FAILED [exhausted]: this exact call has already failed twice. Do not try it again — change approach or stop."
+        }
+
+        // Irreversible, outward-facing actions stop here and wait for the user. The
+        // tool has NOT run at this point, and the model is told so plainly, because
+        // the failure this exists to prevent is Lain reporting a call it never placed.
+        if (ToolRegistry.requiresConfirmation(call.name) && !approvedThisTurn.contains(call.id)) {
+            val args = runCatching {
+                json.parseToJsonElement(call.argumentsJson).jsonObject
+                    .mapValues { it.value.jsonPrimitive.contentOrNull.orEmpty() }
+            }.getOrDefault(emptyMap())
+
+            val summary = PendingConfirmation.describe(call, args)
+            pendingConfirmation = PendingConfirmation(call, summary, cid)
+            _state.update { it.copy(pendingConfirmation = summary) }
+            return "AWAITING CONFIRMATION: this action needs the user's approval and has NOT been performed. " +
+                "Lain has asked them: \"$summary\". Stop here and say nothing more — do not describe it as done, " +
+                "and do not try another way round it."
         }
 
         setStatus(statusFor(call))
         val result = toolDispatcher.execute(call)
 
-        taskState.record(
+        working.record(
             tool = call.name,
             args = call.argumentsJson,
             succeeded = result.success,
@@ -886,7 +990,7 @@ class ChatEngine(
      */
     private fun gaveUpMessage(caps: ModelCapabilities): String = buildString {
         append("I've stopped rather than keep going in circles. Here's where I got to: ")
-        append(taskState.progressNote() ?: "no progress to report.")
+        append(working.progressNote() ?: "no progress to report.")
         if (!caps.handlesMultiStepAutomation) {
             append(" Being straight with you: ${caps.label} is a small model, and long ")
             append("multi-step phone tasks are where it struggles — it loops instead of ")

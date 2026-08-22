@@ -284,8 +284,30 @@ class ToolDispatcher(context: Context) {
             else -> device.readClipboard()
         }
 
+        // ----------------------------------------------- notifications
+        "read_notifications" -> {
+            val items = com.lain.assistant.automation.LainNotificationListener.current(appContext)
+            when {
+                items == null -> ToolResult.fail(
+                    FailureKind.PERMISSION,
+                    "Notification access isn't granted. Android only allows it from Settings > Notifications > " +
+                        "Device & app notifications > Lain — tell the user to switch it on there; it can't be done from here."
+                )
+                items.isEmpty() -> ToolResult.ok("The notification shade is empty.")
+                else -> ToolResult.ok(
+                    items.joinToString("\n") { n ->
+                        val body = listOf(n.title, n.text).filter { it.isNotBlank() }.joinToString(" — ")
+                        "${n.app}: $body"
+                    }
+                )
+            }
+        }
+
         // ------------------------------------------------------- files
         "list_files" -> device.listFiles(args.str("path"))
+        "delete_file" -> device.deleteFile(args.str("path"))
+        "make_folder" -> device.makeFolder(args.str("path"))
+        "find_files" -> device.findFiles(args.str("query"))
         "read_file" -> device.readFile(args.str("path"))
         "write_file" -> device.writeFile(args.str("path"), args.str("content"), args.bool("append"))
         "rename_file" -> device.renameFile(args.str("from"), args.str("to"))
@@ -330,6 +352,22 @@ class ToolDispatcher(context: Context) {
             }
         }
 
+        "edit_memory" -> {
+            val updated = memory.edit(
+                id = args.str("id"),
+                fact = args.str("fact").takeIf { it.isNotBlank() },
+                importance = args.num("importance").toInt().takeIf { it in 1..5 }
+            )
+            if (updated == null) {
+                ToolResult.fail(
+                    FailureKind.INVALID_INPUT,
+                    "No memory with that id — call recall first to get the right one."
+                )
+            } else {
+                ToolResult.ok("Updated — ${updated.subject}: ${updated.fact}")
+            }
+        }
+
         "forget" -> {
             val removed = memory.forget(args.str("key"))
             if (removed > 0) ToolResult.ok("Forgot $removed memory item(s) matching \"${args.str("key")}\".")
@@ -339,7 +377,8 @@ class ToolDispatcher(context: Context) {
         "recall" -> {
             val hits = memory.retrieveRelevant(args.str("query"), limit = 8)
             if (hits.isEmpty()) ToolResult.ok("Nothing relevant in memory.")
-            else ToolResult.ok(hits.joinToString("\n") { "- [${it.category.lowercase()}] ${it.fact}" })
+            // Ids are included so edit_memory has something to address.
+            else ToolResult.ok(hits.joinToString("\n") { "- [${it.category.lowercase()}] ${it.fact} (id: ${it.id})" })
         }
 
         else -> ToolResult.fail(FailureKind.INVALID_INPUT, "Unknown tool: $name")

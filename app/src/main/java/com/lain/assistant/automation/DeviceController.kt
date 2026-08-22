@@ -210,6 +210,73 @@ class DeviceController(private val context: Context) {
         }
     }
 
+    /**
+     * Deletes a file or an empty folder.
+     *
+     * Refuses a non-empty directory outright rather than recursing: a mistaken
+     * recursive delete is the one file operation with no recovery, and the model
+     * gets a clear instruction to be explicit instead.
+     */
+    fun deleteFile(path: String): ToolResult {
+        val file = resolve(path) ?: return ToolResult.fail(FailureKind.INVALID_INPUT, "Path is outside Lain's storage")
+        if (!file.exists()) return ToolResult.fail(FailureKind.INVALID_INPUT, "Nothing at $path")
+        if (file.isDirectory && (file.listFiles()?.isNotEmpty() == true)) {
+            return ToolResult.fail(
+                FailureKind.INVALID_INPUT,
+                "\"$path\" is a folder with things in it. Delete the contents first, one at a time."
+            )
+        }
+        return try {
+            // Verify rather than trust the return value: report what the filesystem
+            // actually looks like afterwards.
+            file.delete()
+            if (file.exists()) {
+                ToolResult.fail(FailureKind.TOOL_FAILURE, "Couldn't delete $path — it's still there.")
+            } else {
+                ToolResult.ok("Deleted ${file.name}.")
+            }
+        } catch (t: Throwable) {
+            ToolResult.fail(FailureKind.TOOL_FAILURE, "Couldn't delete $path", t.message)
+        }
+    }
+
+    fun makeFolder(path: String): ToolResult {
+        val dir = resolve(path) ?: return ToolResult.fail(FailureKind.INVALID_INPUT, "Path is outside Lain's storage")
+        if (dir.exists()) {
+            return if (dir.isDirectory) ToolResult.ok("${dir.name} already exists.")
+            else ToolResult.fail(FailureKind.INVALID_INPUT, "$path is a file, not a folder")
+        }
+        return if (dir.mkdirs()) ToolResult.ok("Created ${dir.name}.")
+        else ToolResult.fail(FailureKind.TOOL_FAILURE, "Couldn't create $path")
+    }
+
+    /**
+     * Finds files by name fragment, so "the project doc" can be located without the
+     * model guessing paths and calling read_file until one hits.
+     */
+    fun findFiles(query: String, limit: Int = 25): ToolResult {
+        val needle = query.trim().lowercase()
+        if (needle.isEmpty()) return ToolResult.fail(FailureKind.INVALID_INPUT, "Give something to search for")
+
+        val root = baseDir()
+        val hits = mutableListOf<File>()
+        // Bounded walk: the sandbox is small, but a symlink loop or a pathological
+        // tree shouldn't be able to hang a tool call.
+        root.walkTopDown().maxDepth(6).forEach { f ->
+            if (hits.size >= limit) return@forEach
+            if (f.isFile && f.name.lowercase().contains(needle)) hits += f
+        }
+
+        if (hits.isEmpty()) return ToolResult.ok("Nothing in Lain's storage matches \"$query\".")
+        return ToolResult.ok(
+            hits.sortedByDescending { it.lastModified() }.joinToString("\n") {
+                "${it.relativeTo(root).path} (${it.length()} bytes, modified ${
+                    java.text.SimpleDateFormat("d MMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(it.lastModified()))
+                })"
+            }
+        )
+    }
+
     fun openContacts(): ToolResult = try {
         context.startActivity(
             Intent(Intent.ACTION_VIEW).apply {

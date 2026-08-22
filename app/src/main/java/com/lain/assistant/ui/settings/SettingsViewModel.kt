@@ -115,6 +115,11 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch { container.userPreferencesRepository.setModelFallbackEnabled(enabled) }
     }
 
+    /** Corrects a stored fact in place, keeping its id and provenance. */
+    fun editMemory(id: String, fact: String) {
+        viewModelScope.launch { container.memoryStore.edit(id = id, fact = fact) }
+    }
+
     fun deleteMemory(id: String) {
         viewModelScope.launch { container.memoryStore.deleteById(id) }
     }

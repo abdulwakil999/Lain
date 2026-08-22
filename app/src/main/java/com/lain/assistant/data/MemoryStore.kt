@@ -140,6 +140,36 @@ class MemoryStore(private val context: Context) {
         matches.size
     }
 
+    /**
+     * Revises a stored memory in place, keeping its identity and creation time.
+     *
+     * Distinct from [remember], which matches on subject and may create. Editing by
+     * id is what the UI and an explicit correction need: the user pointing at one
+     * specific fact and saying "that's wrong, it's actually this". Creation time
+     * and source conversation are preserved because they are provenance — when and
+     * where Lain learned something stays true even after the fact is corrected.
+     *
+     * @return the updated memory, or null if that id no longer exists.
+     */
+    suspend fun edit(
+        id: String,
+        fact: String? = null,
+        subject: String? = null,
+        category: MemoryCategory? = null,
+        importance: Int? = null
+    ): MemoryEntity? = withContext(Dispatchers.IO) {
+        val existing = dao.all().firstOrNull { it.id == id } ?: return@withContext null
+        val updated = existing.copy(
+            fact = fact?.trim()?.take(MAX_FACT_CHARS)?.ifBlank { null } ?: existing.fact,
+            subject = subject?.trim()?.lowercase(Locale.ROOT)?.take(80)?.ifBlank { null } ?: existing.subject,
+            category = category?.name ?: existing.category,
+            importance = importance?.coerceIn(1, 5) ?: existing.importance,
+            updatedAt = System.currentTimeMillis()
+        )
+        dao.upsert(updated)
+        updated
+    }
+
     suspend fun deleteById(id: String) = withContext(Dispatchers.IO) { dao.deleteById(id) }
     suspend fun clear() = withContext(Dispatchers.IO) { dao.clear() }
     suspend fun all(): List<MemoryEntity> = withContext(Dispatchers.IO) { dao.all() }
@@ -194,7 +224,40 @@ class MemoryStore(private val context: Context) {
         text.lowercase(Locale.ROOT)
             .split(Regex("[^a-z0-9+#.]+"))
             .filter { it.length > 2 && it !in STOPWORDS }
+            .map { stem(it) }
             .toSet()
+
+    /**
+     * Crude suffix stripping, so "projects" matches "project" and "running"
+     * matches "run".
+     *
+     * Exact token matching quietly loses a large share of real hits: the user
+     * writes "how are my projects going" and the stored fact says "current
+     * project", and nothing matches. A full stemmer would be overkill here — this
+     * is English suffix trimming with a length guard so short words survive
+     * intact, which recovers most of that loss for a few microseconds of work and
+     * no dependency.
+     */
+    private fun stem(word: String): String {
+        if (word.length <= 4) return word
+        for (suffix in STEM_SUFFIXES) {
+            if (word.length - suffix.length >= 3 && word.endsWith(suffix)) {
+                val base = word.dropLast(suffix.length)
+                // "running" -> "runn" -> "run": undo the doubled consonant.
+                return if (base.length > 3 && base.last() == base[base.length - 2] && base.last() !in "sl") {
+                    base.dropLast(1)
+                } else {
+                    base
+                }
+            }
+        }
+        return word
+    }
+
+    /** Longest first, so "ities" is stripped before "ies". */
+    private val STEM_SUFFIXES = listOf(
+        "ities", "ation", "ings", "ies", "ing", "ers", "ed", "es", "er", "ly", "s"
+    )
 
     private fun inferCategory(key: String, value: String): MemoryCategory {
         val blob = (key + " " + value).lowercase(Locale.ROOT)

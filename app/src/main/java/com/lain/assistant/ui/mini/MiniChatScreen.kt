@@ -146,6 +146,11 @@ fun MiniChatScreen(viewModel: ChatViewModel, autoListen: Boolean, onDismiss: () 
                 )
             }
 
+            state.pendingConfirmation?.let { question ->
+                Spacer(Modifier.height(6.dp))
+                Text(question, color = LainCream, style = MaterialTheme.typography.bodyMedium)
+            }
+
             state.statusLine?.let {
                 Spacer(Modifier.height(6.dp))
                 Text(it, color = LainMuted, style = MaterialTheme.typography.bodyMedium)

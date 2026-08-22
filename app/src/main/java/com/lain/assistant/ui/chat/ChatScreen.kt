@@ -172,6 +172,39 @@ fun ChatScreen(viewModel: ChatViewModel, container: AppContainer, autoListenToke
             maxWidth = window.contentMaxWidth,
             horizontalPadding = window.gutter
         ) {
+            // An irreversible action waiting on an answer. Shown as the exact thing that
+            // will happen, so approving is an informed decision rather than a reflex.
+            state.pendingConfirmation?.let { question ->
+                Column(modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
+                    Text(question, color = LainCream, style = MaterialTheme.typography.bodyLarge)
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(LainSalmon)
+                                .clickable { viewModel.send("yes") }
+                                .padding(vertical = 12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("Yes", color = LainInk, style = MaterialTheme.typography.labelLarge)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(LainSalmonDeep.copy(alpha = 0.5f))
+                                .clickable { viewModel.send("no") }
+                                .padding(vertical = 12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("No", color = LainCream, style = MaterialTheme.typography.labelLarge)
+                        }
+                    }
+                }
+            }
+
             // Stop-speaking. Distinct from STOP (which kills the task) and from the MUTED
             // pill (a lasting preference): this shuts up the sentence currently being read
             // aloud and nothing else, which is what someone wants when they've finished

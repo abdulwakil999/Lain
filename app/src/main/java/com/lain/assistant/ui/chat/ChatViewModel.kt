@@ -26,6 +26,9 @@ class ChatViewModel(container: AppContainer) : ViewModel() {
     fun onAwaken() = engine.onAwaken()
     fun startVoiceInput() = engine.startVoiceInput()
     fun send() = engine.send()
+
+    /** Sends a specific reply — used by the confirmation buttons. */
+    fun send(text: String) = engine.send(text)
     fun stop() = engine.stop()
     fun toggleMute() = engine.toggleMute()
 

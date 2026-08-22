@@ -148,6 +148,42 @@ object ToolDefinitions {
             briefDescription = "Rename or move a file in Lain's storage."
         ),
 
+        ToolDefinition(
+            name = "delete_file",
+            description = "Delete a file from Lain's storage. Irreversible — the user is asked to confirm before it happens. Won't delete a folder that still has things in it.",
+            parameters = schema {
+                property("path", "string", "File path")
+                required("path")
+            },
+            briefDescription = "Delete a file from Lain's storage. Asks the user first."
+        ),
+        ToolDefinition(
+            name = "make_folder",
+            description = "Create a folder in Lain's storage.",
+            parameters = schema {
+                property("path", "string", "Folder path")
+                required("path")
+            },
+            briefDescription = "Create a folder in Lain's storage."
+        ),
+        ToolDefinition(
+            name = "find_files",
+            description = "Search Lain's storage for files whose name contains something. Use this to locate a document before reading or opening it, instead of guessing paths.",
+            parameters = schema {
+                property("query", "string", "Part of the filename to look for")
+                required("query")
+            },
+            briefDescription = "Find files by name in Lain's storage."
+        ),
+
+        // ----------------------------------------------- notifications
+        ToolDefinition(
+            name = "read_notifications",
+            description = "Read what's currently in the notification shade — app, title and text. Use for \"what did I miss\" or \"any messages\". Requires notification access, which only the user can grant in Android Settings; if it's off, say so rather than guessing.",
+            parameters = schema { },
+            briefDescription = "Read the current notifications."
+        ),
+
         // ------------------------------------------------- screen perception
         ToolDefinition(
             name = "read_screen",
@@ -327,6 +363,17 @@ object ToolDefinitions {
             briefDescription = "Save a durable fact about the user."
         ),
         ToolDefinition(
+            name = "edit_memory",
+            description = "Correct a fact you already saved, keeping the same entry rather than adding a contradicting one. Use when the user corrects something specific. Call recall first to get the id.",
+            parameters = schema {
+                property("id", "string", "The memory's id, from recall")
+                property("fact", "string", "The corrected fact")
+                property("importance", "number", "1-5, if it should change")
+                required("id", "fact")
+            },
+            briefDescription = "Correct a saved fact by id."
+        ),
+        ToolDefinition(
             name = "forget",
             description = "Delete remembered facts matching a query. Use when the user asks you to forget something.",
             parameters = schema {
@@ -368,9 +415,10 @@ object ToolDefinitions {
         "lookup_contact", "device_status", "remember", "recall", "forget",
         "write_note", "list_notes", "open_url", "wait", "current_app",
         // Longer tail.
+        "read_notifications", "find_files", "edit_memory",
         "open_settings_page", "set_volume", "clipboard", "fetch_page", "open_contacts",
         "tap_screen", "look_at_screen", "take_photo", "listen_microphone",
-        "list_files", "read_file", "write_file", "rename_file",
+        "list_files", "read_file", "write_file", "rename_file", "make_folder", "delete_file",
         "close_app", "send_sms", "send_whatsapp_message"
     )
 

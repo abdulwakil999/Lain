@@ -130,6 +130,15 @@ object ToolRegistry {
         ToolMeta("list_files", "List files in app-accessible storage."),
         ToolMeta("read_file", "Read a text file."),
         ToolMeta("write_file", "Create or overwrite a text file.", reversible = false),
+        ToolMeta("delete_file", "Delete a file from app storage.",
+            requiresConfirmation = true, reversible = false,
+            commonFailures = listOf("folder not empty", "no such file")),
+        ToolMeta("make_folder", "Create a folder in app storage."),
+        ToolMeta("find_files", "Search app storage for a file by name."),
+        ToolMeta("read_notifications", "Read the current notification shade.",
+            permissions = listOf("BIND_NOTIFICATION_LISTENER_SERVICE"),
+            commonFailures = listOf("notification access not granted")),
+        ToolMeta("edit_memory", "Correct a stored fact in place.", reversible = false),
     ).associateBy { it.name }
 
     fun needsAccessibility(tool: String) = meta[tool]?.needsAccessibility == true
