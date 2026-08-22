@@ -341,7 +341,7 @@ class OverlayBubbleService : LifecycleService() {
             )
         }
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("Lain is one tap away")
             .setContentText("Turn this off in Lain's settings")
             .setOngoing(true)

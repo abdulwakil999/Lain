@@ -134,7 +134,7 @@
         <service
             android:name=".automation.VoiceInputTileService"
             android:exported="true"
-            android:icon="@mipmap/ic_launcher"
+            android:icon="@drawable/ic_notification"
             android:label="Lain: Hello Lain"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>

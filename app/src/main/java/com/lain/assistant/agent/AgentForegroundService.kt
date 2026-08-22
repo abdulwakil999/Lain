@@ -113,7 +113,7 @@ class AgentForegroundService : Service() {
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("Lain is on it")
             .setContentText(status)
             .setOngoing(true)

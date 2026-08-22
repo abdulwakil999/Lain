@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Status-bar glyph.
+
+    Notification icons are alpha masks: Android discards every colour in the
+    drawable and tints the remaining shape to match the system theme. Passing a
+    full-colour launcher icon (which every service here was doing) therefore
+    renders as a solid white square, because the whole opaque bitmap becomes the
+    mask. Only the silhouette can carry meaning, so this is a single flat path
+    with nothing but transparency around it.
+
+    A vector rather than five PNGs: the shape is simple enough to describe
+    exactly, and one file then renders crisply at every density and at whatever
+    size a future Android decides status-bar icons should be.
+
+    Drawn on the 24dp canvas Android expects, with the shape kept a little inside
+    the edges so the system's own padding doesn't clip it.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFFFF">
+
+    <!--
+        A speech bubble: Lain is an assistant that talks, and this is the one
+        shape that reads instantly at 24dp without committing the app to any
+        particular branding.
+    -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M5,3 h14 a3,3 0 0 1 3,3 v9 a3,3 0 0 1 -3,3 h-8 l-5,4 v-4 h-1 a3,3 0 0 1 -3,-3 v-9 a3,3 0 0 1 3,-3 z" />
+</vector>

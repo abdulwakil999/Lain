@@ -112,7 +112,7 @@ class ScreenCaptureService : Service() {
             )
         }
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("Lain is watching your screen")
             .setContentText("Tap to stop screen sharing")
             .setOngoing(true)
