@@ -37,6 +37,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.lain.assistant.data.Sender
 import com.lain.assistant.ui.chat.ChatViewModel
+import com.lain.assistant.ui.common.MessageBubble
 import com.lain.assistant.ui.common.PixelTextField
 import com.lain.assistant.ui.common.rememberLainWindow
 import com.lain.assistant.ui.theme.LainCream
@@ -126,27 +127,15 @@ fun MiniChatScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(state.messages.takeLast(8), key = { it.id }) { message ->
-                    val isUser = message.sender == Sender.USER
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .widthIn(max = window.bubbleMaxWidth)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(
-                                    if (isUser) LainCream.copy(alpha = 0.85f) else LainSalmonDeep.copy(alpha = 0.85f)
-                                )
-                                .padding(horizontal = 12.dp, vertical = 8.dp)
-                        ) {
-                            Text(
-                                text = message.text,
-                                color = if (isUser) LainInk else LainCream,
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
-                    }
+                    MessageBubble(
+                        message = message,
+                        maxWidth = window.bubbleMaxWidth,
+                        busy = state.isSending,
+                        onCopyToInput = { viewModel.copyToInput(message.text) },
+                        onResend = { viewModel.resend(message.id) },
+                        onDelete = { viewModel.deleteMessage(message.id) },
+                        compact = true
+                    )
                 }
             }
 

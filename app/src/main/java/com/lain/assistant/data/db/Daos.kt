@@ -57,6 +57,16 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE conversationId = :cid AND hidden = 0 ORDER BY createdAt ASC")
     fun observeVisible(cid: String): Flow<List<MessageEntity>>
 
+    /**
+     * Removes one message the user deleted from the transcript.
+     *
+     * Safe to do mid-conversation: the model history is rebuilt from user and
+     * assistant rows only, and tool rows are replayed as a plain recap rather than
+     * as tool messages, so removing a visible turn cannot orphan a tool call.
+     */
+    @Query("DELETE FROM messages WHERE id = :id")
+    suspend fun deleteById(id: String)
+
     /** Drops stale captured screens; they're the most expensive thing to keep around. */
     @Query("DELETE FROM messages WHERE conversationId = :cid AND hidden = 1 AND createdAt < :before")
     suspend fun pruneHiddenBefore(cid: String, before: Long)

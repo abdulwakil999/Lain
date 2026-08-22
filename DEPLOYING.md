@@ -41,8 +41,8 @@ unsigned — useful for checking size without holding the key.
 | | |
 |---|---|
 | Package | `com.lain.assistant` |
-| Version | 1.0.0 (versionCode 19) |
-| Size | 4.8 MB |
+| Version | 1.1.0 (versionCode 20) |
+| Size | 4.9 MB |
 | Min / target | Android 8.0 (26) / Android 15 (35) |
 | Signature | v2 |
 

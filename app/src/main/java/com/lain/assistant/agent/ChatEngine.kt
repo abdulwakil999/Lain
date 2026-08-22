@@ -188,7 +188,13 @@ class ChatEngine(
             val restored = conversations.recentMessages(convo.id, ConversationStore.RECENT_WINDOW)
                 .filter { !it.hidden && (it.role == "user" || it.role == "assistant") && it.content.isNotBlank() }
                 .map {
+                    // Same id as the stored row. Without this the transcript and the
+                    // database each had their own UUID for the same message, and a
+                    // delete could only ever remove one of them — the message would
+                    // vanish from the screen and come back on the next restart, still
+                    // in the model's context the whole time.
                     ChatMessage(
+                        id = it.id,
                         sender = if (it.role == "user") Sender.USER else Sender.LAIN,
                         text = it.content,
                         timestamp = it.createdAt
@@ -201,6 +207,51 @@ class ChatEngine(
     }
 
     fun onInputChange(value: String) = _state.update { it.copy(input = value) }
+
+    // ------------------------------------------------------ message actions
+    //
+    // A transcript the user cannot touch is one they have to work around: a typo
+    // means retyping the whole request, a reply worth keeping has to be
+    // screenshotted, and something said by mistake stays in the model's context
+    // for the rest of the conversation. These four cover it.
+
+    /**
+     * Copies a message into the composer so it can be edited and sent again.
+     *
+     * Deliberately not sent straight away — the reason to reach for an old message
+     * is usually that it needs a word changed.
+     */
+    fun copyToInput(text: String) = _state.update { it.copy(input = text) }
+
+    /**
+     * Sends a message again as a fresh turn.
+     *
+     * On one of Lain's replies this re-runs the request that produced it, which is
+     * what "try that again" means. Nothing is rewritten in place: the new turn is
+     * appended and visible, because silently replacing a reply hides the fact that
+     * two different answers were given to the same question.
+     */
+    fun resend(messageId: String) {
+        if (_state.value.isSending) return
+        val request = MessageActions.resendTarget(_state.value.messages, messageId) ?: return
+        send(request)
+    }
+
+    /**
+     * Removes a message from the transcript and from storage.
+     *
+     * Both, or it isn't a delete: dropping it from the list alone would leave the
+     * row in the database, still feeding the model and reappearing on the next
+     * restart. Safe mid-conversation — model history is rebuilt from user and
+     * assistant rows, and tool rows are replayed as a plain recap rather than as
+     * tool messages, so removing a turn cannot orphan a tool call.
+     */
+    fun deleteMessage(messageId: String) {
+        _state.update { it.copy(messages = it.messages.filterNot { m -> m.id == messageId }) }
+        scope.launch {
+            runCatching { conversations.deleteMessage(messageId) }
+        }
+    }
 
     fun onAwaken() {
         if (_state.value.hasAwakened) return
@@ -289,9 +340,12 @@ class ChatEngine(
         working.begin(message)
         val trace = Trace.start(message)
 
+        // Minted here and used for both the transcript entry and the stored row.
+        val messageId = java.util.UUID.randomUUID().toString()
+
         _state.update {
             it.copy(
-                messages = it.messages + ChatMessage(sender = Sender.USER, text = message),
+                messages = it.messages + ChatMessage(id = messageId, sender = Sender.USER, text = message),
                 input = "",
                 isSending = true,
                 error = null,
@@ -317,7 +371,9 @@ class ChatEngine(
         activeJob = scope.launch {
             try {
                 val cid = ensureConversation()
-                conversations.append(MessageEntity(conversationId = cid, role = "user", content = message))
+                conversations.append(
+                    MessageEntity(id = messageId, conversationId = cid, role = "user", content = message)
+                )
                 runAgentLoop(cid, message, route, trace)
             } catch (_: CancellationException) {
                 _state.update {
@@ -724,10 +780,13 @@ class ChatEngine(
         fellBack: Boolean,
         alreadySpoken: Boolean = false
     ) {
-        conversations.append(MessageEntity(conversationId = cid, role = "assistant", content = replyText))
+        val messageId = java.util.UUID.randomUUID().toString()
+        conversations.append(
+            MessageEntity(id = messageId, conversationId = cid, role = "assistant", content = replyText)
+        )
         _state.update {
             it.copy(
-                messages = it.messages + ChatMessage(sender = Sender.LAIN, text = replyText),
+                messages = it.messages + ChatMessage(id = messageId, sender = Sender.LAIN, text = replyText),
                 isSending = false,
                 statusLine = null,
                 streamingText = null,

@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -47,6 +48,7 @@ import com.lain.assistant.AppContainer
 import com.lain.assistant.data.ChatMessage
 import com.lain.assistant.data.Sender
 import com.lain.assistant.ui.LainViewModelFactory
+import com.lain.assistant.ui.common.MessageBubble
 import com.lain.assistant.ui.common.AccessibilityServiceBanner
 import com.lain.assistant.ui.common.HoveringPanel
 import com.lain.assistant.ui.common.rememberLainWindow
@@ -136,7 +138,14 @@ fun ChatScreen(viewModel: ChatViewModel, container: AppContainer, autoListenToke
             ) {
                 item { AccessibilityServiceBanner(modifier = Modifier.fillMaxWidth()) }
                 items(state.messages, key = { it.id }) { message ->
-                    MessageBubble(message, maxWidth = window.bubbleMaxWidth)
+                    MessageBubble(
+                        message = message,
+                        maxWidth = window.bubbleMaxWidth,
+                        busy = state.isSending,
+                        onCopyToInput = { viewModel.copyToInput(message.text) },
+                        onResend = { viewModel.resend(message.id) },
+                        onDelete = { viewModel.deleteMessage(message.id) }
+                    )
                 }
                 // The reply currently being generated, rendered token by token. It lives
                 // outside `messages` so a cancelled turn leaves nothing behind, and it is
@@ -337,31 +346,6 @@ private fun StreamingBubble(text: String, maxWidth: Dp) {
             Text(
                 text = if (text.isEmpty()) "…" else "$text▍",
                 color = LainCream,
-                style = MaterialTheme.typography.bodyLarge
-            )
-        }
-    }
-}
-
-@Composable
-private fun MessageBubble(message: ChatMessage, maxWidth: Dp) {
-    val isUser = message.sender == Sender.USER
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
-    ) {
-        Box(
-            modifier = Modifier
-                // Derived from the window rather than a fixed 300dp, which was a third of
-                // a tablet and most of a small phone.
-                .widthIn(max = maxWidth)
-                .clip(RoundedCornerShape(10.dp))
-                .background(if (isUser) LainCream.copy(alpha = 0.92f) else LainSalmonDeep.copy(alpha = 0.92f))
-                .padding(horizontal = 14.dp, vertical = 10.dp)
-        ) {
-            Text(
-                text = message.text,
-                color = if (isUser) LainInk else LainCream,
                 style = MaterialTheme.typography.bodyLarge
             )
         }

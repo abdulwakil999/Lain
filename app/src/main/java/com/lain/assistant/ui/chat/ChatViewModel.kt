@@ -35,6 +35,15 @@ class ChatViewModel(container: AppContainer) : ViewModel() {
     /** Stops the current utterance only — the task keeps running and the mute setting is untouched. */
     fun silence() = engine.silence()
     fun setConversationMode(enabled: Boolean) = engine.setConversationMode(enabled)
+
+    /** Puts a message's text in the composer, ready to edit and send again. */
+    fun copyToInput(text: String) = engine.copyToInput(text)
+
+    /** Re-runs a request — either this user message, or the one Lain was answering. */
+    fun resend(messageId: String) = engine.resend(messageId)
+
+    /** Removes a message from the transcript, from storage and from the model's context. */
+    fun deleteMessage(messageId: String) = engine.deleteMessage(messageId)
 }
 
 /** Kept as an alias so screens can keep referring to the shape they already use. */

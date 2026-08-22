@@ -53,6 +53,11 @@ class ConversationStore(context: Context) {
         }
     }
 
+    /** Deletes a single message, so a deleted turn stops reaching the model too. */
+    suspend fun deleteMessage(id: String) = withContext(Dispatchers.IO) {
+        messages.deleteById(id)
+    }
+
     suspend fun recentMessages(conversationId: String, limit: Int = RECENT_WINDOW): List<MessageEntity> =
         withContext(Dispatchers.IO) {
             messages.pruneHiddenBefore(conversationId, System.currentTimeMillis() - HIDDEN_TTL_MS)
