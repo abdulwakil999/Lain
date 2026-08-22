@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -14,14 +16,55 @@ android {
         applicationId = "com.lain.assistant"
         minSdk = 26
         targetSdk = 35
-        versionCode = 18
-        versionName = "0.15.0"
+        versionCode = 19
+        versionName = "1.0.0"
+    }
+
+    /**
+     * Release signing, when the developer has supplied a keystore.
+     *
+     * Read from `keystore.properties` (git-ignored) or the matching environment
+     * variables, so nothing secret lives in the repository. With neither present the
+     * release build still produces an unsigned APK rather than failing — useful for
+     * checking size and shrinking without holding the signing key.
+     */
+    val keystoreProperties = Properties().apply {
+        val f = rootProject.file("keystore.properties")
+        if (f.exists()) f.inputStream().use { load(it) }
+    }
+    fun secret(key: String, env: String): String? =
+        keystoreProperties.getProperty(key) ?: System.getenv(env)
+
+    val releaseStore = secret("storeFile", "LAIN_KEYSTORE")?.let { file(it) }
+
+    signingConfigs {
+        if (releaseStore != null && releaseStore.exists()) {
+            create("release") {
+                storeFile = releaseStore
+                storePassword = secret("storePassword", "LAIN_KEYSTORE_PASSWORD")
+                keyAlias = secret("keyAlias", "LAIN_KEY_ALIAS")
+                keyPassword = secret("keyPassword", "LAIN_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 on: a smaller dex is less to verify, load and keep resident, which
+            // shows up as faster cold start and lower memory on the cheap phones this
+            // is meant to run well on. Keep rules live in proguard-rules.pro; the
+            // framework entry points named there cannot be inferred by R8 because the
+            // manifest references them by string.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.findByName("release")
+        }
+        debug {
+            // Distinct id so a debug build sits alongside a release one instead of
+            // forcing an uninstall to switch between them.
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
         }
     }
 
@@ -82,7 +125,6 @@ dependencies {
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 

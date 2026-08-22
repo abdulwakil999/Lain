@@ -1,4 +1,7 @@
 <resources>
     <string name="app_name">Lain</string>
     <string name="accessibility_service_description">Lets Lain read what\'s on your screen and tap/swipe on your behalf so it can operate apps for you — the same mechanism screen readers use. Required for hands-free and screen-automation features.</string>
+    <string name="widget_square_description">Lain, one tap from the home screen.</string>
+    <string name="widget_mic_description">A single button that starts listening straight away.</string>
+    <string name="widget_bar_description">A bar with a mic, a question box and a read-the-screen button.</string>
 </resources>

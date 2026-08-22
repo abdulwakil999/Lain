@@ -161,7 +161,15 @@ class OverlayBubbleService : LifecycleService() {
         var touchY = 0f
         var dragged = false
 
-        view.setOnTouchListener { _, event ->
+        // Also click-activatable, not just touch-draggable. A raw touch listener is
+        // invisible to TalkBack and to Lain's own Accessibility Service: neither can
+        // synthesise a drag, so without a real click path the bubble was unreachable
+        // by exactly the eyes-free users it exists for.
+        view.isClickable = true
+        view.contentDescription = "Lain"
+        view.setOnClickListener { togglePanel() }
+
+        view.setOnTouchListener { v, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     initialX = params.x
@@ -181,7 +189,10 @@ class OverlayBubbleService : LifecycleService() {
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (!dragged) togglePanel()
+                    // performClick rather than togglePanel directly, so the tap goes
+                    // through the same path an accessibility action takes and gets
+                    // announced.
+                    if (!dragged) v.performClick()
                     true
                 }
                 else -> false

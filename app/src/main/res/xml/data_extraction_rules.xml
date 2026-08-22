@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Nothing leaves the device.
+
+    Lain holds an API key, the user's conversation history and her long-term memory
+    about them. None of that belongs in a cloud backup or a device-to-device
+    transfer, so both paths are excluded outright rather than filtered. This mirrors
+    allowBackup="false", which Android 12+ deprecated in favour of these rules.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="file" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="file" />
+        <exclude domain="external" />
+    </device-transfer>
+</data-extraction-rules>

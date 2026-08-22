@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The wide bar: a search-bar shape with three separate targets, so the common
+    jobs are one tap from the home screen rather than one tap plus a sentence.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_pill"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingStart="14dp"
+    android:paddingEnd="8dp"
+    android:paddingTop="8dp"
+    android:paddingBottom="8dp"
+    android:baselineAligned="false">
+
+    <ImageView
+        android:id="@+id/widget_icon"
+        android:layout_width="26dp"
+        android:layout_height="26dp"
+        android:src="@drawable/ic_lain_glyph"
+        android:contentDescription="Lain"
+        android:adjustViewBounds="true" />
+
+    <TextView
+        android:id="@+id/widget_type"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="12dp"
+        android:text="Ask Lain anything"
+        android:textColor="#F3EEDF"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:textSize="14sp" />
+
+    <TextView
+        android:id="@+id/widget_screen"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:background="@drawable/widget_button"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp"
+        android:layout_marginEnd="6dp"
+        android:text="SCREEN"
+        android:textColor="#14161C"
+        android:textStyle="bold"
+        android:maxLines="1"
+        android:textSize="11sp" />
+
+    <TextView
+        android:id="@+id/widget_mic"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:background="@drawable/widget_button"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp"
+        android:text="MIC"
+        android:textColor="#14161C"
+        android:textStyle="bold"
+        android:maxLines="1"
+        android:textSize="11sp" />
+
+</LinearLayout>

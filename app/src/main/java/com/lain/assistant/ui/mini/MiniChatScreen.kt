@@ -53,15 +53,29 @@ import com.lain.assistant.ui.theme.LainSalmonDeep
  * dismisses it, so it behaves like a sheet, not a launch.
  */
 @Composable
-fun MiniChatScreen(viewModel: ChatViewModel, autoListen: Boolean, onDismiss: () -> Unit) {
+fun MiniChatScreen(
+    viewModel: ChatViewModel,
+    autoListen: Boolean,
+    onDismiss: () -> Unit,
+    /** A command to run immediately, from a widget button. */
+    command: String? = null,
+    /** Changes on every fresh launch, so a repeat tap re-fires the same request. */
+    requestKey: Long = 0L
+) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
     val listState = rememberLazyListState()
     val window = rememberLainWindow()
 
-    LaunchedEffect(Unit) {
-        viewModel.attachTts(context)
-        if (autoListen) viewModel.startVoiceInput()
+    LaunchedEffect(Unit) { viewModel.attachTts(context) }
+
+    // Keyed on the launch nonce rather than Unit: the activity is singleTask, so the
+    // composition survives a second widget tap and a Unit key would ignore it.
+    LaunchedEffect(requestKey) {
+        when {
+            !command.isNullOrBlank() -> viewModel.send(command)
+            autoListen -> viewModel.startVoiceInput()
+        }
     }
 
     LaunchedEffect(state.messages.size) {

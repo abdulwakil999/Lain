@@ -47,6 +47,10 @@ private val corePermissions: Array<String> = buildList {
     add(Manifest.permission.RECORD_AUDIO)
     add(Manifest.permission.CAMERA)
     add(Manifest.permission.CALL_PHONE)
+    // Declared in the manifest but never requested, which meant every call-state
+    // read returned IDLE and every successful call was reported as having failed.
+    // Only used to answer "did that call actually connect".
+    add(Manifest.permission.READ_PHONE_STATE)
     add(Manifest.permission.SEND_SMS)
     add(Manifest.permission.READ_CONTACTS)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

@@ -315,19 +315,6 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             }
 
             Spacer(Modifier.height(24.dp))
-            SectionLabel("Battery saver")
-            Text(
-                "Stops \"Hello Lain\" listening while the screen is off. Leaving this on costs you hands-free wake-ups in your pocket, but saves a lot of battery — continuous listening is genuinely expensive.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = LainMuted
-            )
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                PixelChoiceChip("On", state.batterySaver, { viewModel.setBatterySaver(true) }, modifier = Modifier.weight(1f))
-                PixelChoiceChip("Off", !state.batterySaver, { viewModel.setBatterySaver(false) }, modifier = Modifier.weight(1f))
-            }
-
-            Spacer(Modifier.height(24.dp))
             SectionLabel("Notification access")
             val notificationsOn = LainNotificationListener.isEnabledInSettings(context)
             Text(

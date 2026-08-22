@@ -26,8 +26,8 @@ import com.lain.assistant.tools.ToolResult
  *    What Android offers instead is [Settings.Panel]: a real system switch that
  *    slides up *over* Lain. The user never leaves the app, and the toggle is the
  *    genuine one. That is the honest maximum, and it is what this does.
- *  - System dark mode needs WRITE_SECURE_SETTINGS, which is adb-only. Lain's own
- *    theme is hers to change; the system's is not, and she says which is which.
+ *  - System dark mode needs WRITE_SECURE_SETTINGS, which is adb-only, so it is not
+ *    offered here at all. Lain's own look is fixed and doesn't need a switch.
  */
 class QuickToggles(private val context: Context) {
 
@@ -192,29 +192,6 @@ class QuickToggles(private val context: Context) {
         }
 
         return DeviceController(context).openSettingsPage(friendly)
-    }
-
-    // --------------------------------------------------------------- theme
-
-    /**
-     * Android's dark mode, honestly split in two.
-     *
-     * Lain's own appearance is hers to set and applies immediately. The device-wide
-     * setting needs WRITE_SECURE_SETTINGS, which is granted over adb and never to a
-     * normal app — so that half opens Display settings and says why.
-     */
-    fun themeGuidance(scope: String): ToolResult = when (scope.trim().lowercase()) {
-        "system", "device", "phone" -> {
-            DeviceController(context).openSettingsPage("display")
-            ToolResult.ok(
-                "Display settings are open — the system-wide dark mode switch is there. Android reserves that " +
-                    "one for the system itself, so no app can flip it. Lain's own theme she can change: just say so."
-            )
-        }
-        else -> ToolResult.fail(
-            FailureKind.INVALID_INPUT,
-            "Say whether you mean Lain's own theme or the whole phone's."
-        )
     }
 
     // -------------------------------------------------------------- status

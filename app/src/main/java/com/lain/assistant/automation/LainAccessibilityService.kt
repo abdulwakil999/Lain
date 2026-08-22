@@ -547,6 +547,7 @@ class LainAccessibilityService : AccessibilityService() {
         }
     }
 
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.R)
     private suspend fun captureScreenshotBitmap(): Bitmap? = suspendCancellableCoroutine { cont ->
         takeScreenshot(
             Display.DEFAULT_DISPLAY,

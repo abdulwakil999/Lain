@@ -13,15 +13,40 @@ import kotlinx.coroutines.delay
 /** Native telephony actions — these have real platform hooks, no accessibility trickery needed. */
 class PhoneController(private val context: Context) {
 
+    private companion object {
+        /** Long enough for a SIM picker to be answered, short enough not to hang a turn. */
+        const val CALL_WAIT_MS = 12_000L
+        const val CALL_POLL_MS = 400L
+
+        val DIALER_HINTS = listOf(
+            "dialer", "telecom", "incallui", "phone", "truecaller", "contacts"
+        )
+    }
+
     private fun granted(permission: String) =
         ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 
     /**
-     * ACTION_CALL normally dials immediately, but when a third-party dialer like
-     * Truecaller is installed it can intercept the intent and just show its own
-     * screen — the banner appears and nothing is dialled. We can't force that
-     * app's hand, so instead of assuming success we check the telephony state
-     * afterwards and report what actually happened.
+     * Places a call and then finds out whether it actually started.
+     *
+     * Three things get in the way of "did it work", and the previous version fell
+     * into all of them:
+     *
+     *  - **READ_PHONE_STATE was never requested at runtime.** It sat in the manifest
+     *    and nothing ever asked for it, so the state read returned IDLE every single
+     *    time and every successful call was reported as a failure. That is the worst
+     *    class of bug this app can have: Lain telling the user something didn't
+     *    happen when it did. It is now requested with the other core permissions,
+     *    and when it genuinely isn't granted the answer is "placed, can't verify" —
+     *    never "didn't work".
+     *  - **A SIM picker on a dual-SIM phone.** The call is waiting on a tap, which
+     *    can take as long as the user takes. A single check at 2.5s calls that a
+     *    failure.
+     *  - **A third-party dialer** (Truecaller and friends) intercepting the intent
+     *    and showing its own screen.
+     *
+     * So this polls to a deadline rather than sampling once, and distinguishes
+     * "connected", "waiting for you", and "we cannot tell".
      */
     suspend fun placeCall(phoneNumber: String): AutomationResult {
         if (!granted(android.Manifest.permission.CALL_PHONE)) {
@@ -32,20 +57,72 @@ class PhoneController(private val context: Context) {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(intent)
-            delay(2500) // give the dialer time to actually go off-hook
 
-            when (callState()) {
-                TelephonyManager.CALL_STATE_OFFHOOK, TelephonyManager.CALL_STATE_RINGING ->
+            if (!granted(android.Manifest.permission.READ_PHONE_STATE)) {
+                // Honest: the intent went, and we have no way to observe the outcome.
+                // Reporting failure here would be a lie, and reporting success would
+                // be a guess.
+                return AutomationResult.Success(
+                    "Dialling $phoneNumber. Lain can't confirm the call connected — that needs the phone-state " +
+                        "permission, which hasn't been granted. If a SIM picker appears, choose a SIM."
+                )
+            }
+
+            when (awaitCallState()) {
+                CallOutcome.CONNECTED ->
                     AutomationResult.Success("Calling $phoneNumber — the call is connecting.")
-                else -> AutomationResult.Failure(
-                    "The dialer opened for $phoneNumber but no call started — a third-party dialer (Truecaller or similar) " +
-                        "is probably showing its own screen waiting for a tap. Use read_screen to see what's on screen and " +
-                        "tap the call button, or tell the user to tap it."
+
+                CallOutcome.PENDING_USER -> AutomationResult.Success(
+                    "The dialler is up for $phoneNumber and waiting on you — pick a SIM, or tap the call " +
+                        "button if a third-party dialler is showing its own screen. Lain can't choose a SIM " +
+                        "for you; Android hands that decision to the user."
+                )
+
+                CallOutcome.IDLE -> AutomationResult.Failure(
+                    "The dialler opened for $phoneNumber but no call started within ${CALL_WAIT_MS / 1000}s. " +
+                        "Check the screen: a third-party dialler may be waiting for a tap."
                 )
             }
         } catch (t: Throwable) {
             AutomationResult.Failure(t.message ?: "Could not place call")
         }
+    }
+
+    private enum class CallOutcome { CONNECTED, PENDING_USER, IDLE }
+
+    /**
+     * Polls until the call is up or the deadline passes.
+     *
+     * Returns as soon as it goes off-hook, so a call that connects in 400ms costs
+     * 400ms rather than the whole window. Anything still idle at the deadline while
+     * a dialler is on screen is reported as waiting on the user rather than as
+     * having failed — on a dual-SIM phone that is the normal case, not an error.
+     */
+    private suspend fun awaitCallState(): CallOutcome {
+        val deadline = android.os.SystemClock.elapsedRealtime() + CALL_WAIT_MS
+        var sawDialler = false
+        while (android.os.SystemClock.elapsedRealtime() < deadline) {
+            when (callState()) {
+                TelephonyManager.CALL_STATE_OFFHOOK, TelephonyManager.CALL_STATE_RINGING ->
+                    return CallOutcome.CONNECTED
+                else -> Unit
+            }
+            // A dialler in the foreground with no call yet means a decision is pending.
+            if (!sawDialler) sawDialler = dialerInForeground()
+            delay(CALL_POLL_MS)
+        }
+        return if (sawDialler) CallOutcome.PENDING_USER else CallOutcome.IDLE
+    }
+
+    /**
+     * Whether a dialler is what's on screen, via the Accessibility Service if it is
+     * connected. Absent that this returns false and the caller degrades to the
+     * plain timeout answer — it never asserts anything it can't see.
+     */
+    private fun dialerInForeground(): Boolean {
+        val service = LainAccessibilityService.instance ?: return false
+        val pkg = runCatching { service.foregroundApp()?.first }.getOrNull() ?: return false
+        return DIALER_HINTS.any { pkg.contains(it, ignoreCase = true) }
     }
 
     private fun callState(): Int = try {

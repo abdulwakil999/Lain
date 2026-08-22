@@ -17,7 +17,6 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import com.lain.assistant.LainApplication
 import com.lain.assistant.MiniActivity
 import com.lain.assistant.R
 import kotlinx.coroutines.CoroutineScope
@@ -35,11 +34,18 @@ import kotlinx.coroutines.launch
  * transcript (partials included) for the wake phrase, restart if not, hand off
  * if so.
  *
- * Because that costs real power, it is aggressively gated: listening stops
- * entirely while the screen is off (the common case — a phone in a pocket), and
- * repeated recognizer errors back off exponentially instead of hot-looping. The
- * honest tradeoff is that it can't hear you with the screen off, which is what
- * makes it survivable for a battery.
+ * Idle listening runs only while the screen is on. That is not a setting and not
+ * a compromise the user is asked to make — it is the only correct behaviour.
+ * Active audio capture holds the audio HAL's wake lock, so a recognizer looping
+ * with the screen off stops the device suspending at all; the phone then discharges
+ * overnight in a pocket while hearing nothing useful. Nothing is lost that matters:
+ * a task already running is driven by AgentForegroundService and is never cut off
+ * by the screen going dark, and the Quick Settings tile, the home-screen widget and
+ * the floating bubble all reach Lain in one tap regardless.
+ *
+ * Where the platform has an on-device recogniser (Android 13+) it is used in
+ * preference to the default one, which keeps every listen cycle off the network.
+ * Repeated recognizer errors back off exponentially rather than hot-looping.
  */
 class WakeWordService : Service() {
 
@@ -77,9 +83,7 @@ class WakeWordService : Service() {
     private var listening = false
 
     /**
-     * Screen state is the main battery lever, but it's the user's call: with
-     * battery saver off, Lain keeps listening with the screen locked. Note this
-     * only ever gates *idle wake-word listening* — a task already running is
+     * Screen state gates *idle wake-word listening only*. A task already running is
      * driven by AgentForegroundService and is never interrupted by the screen
      * going off.
      */
@@ -87,13 +91,10 @@ class WakeWordService : Service() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_ON -> resumeListening()
-                Intent.ACTION_SCREEN_OFF -> if (batterySaver) pauseListening()
+                Intent.ACTION_SCREEN_OFF -> pauseListening()
             }
         }
     }
-
-    @Volatile
-    private var batterySaver: Boolean = true
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -101,21 +102,18 @@ class WakeWordService : Service() {
         super.onCreate()
         isRunning = true
         startForeground(NOTIFICATION_ID, buildNotification())
-        registerReceiver(
+        // Explicitly not exported. These are protected system broadcasts so the flag
+        // isn't strictly required, but being implicit here is what trips apps up on
+        // Android 14, and an unexported receiver is what we actually want.
+        ContextCompat.registerReceiver(
+            this,
             screenReceiver,
             IntentFilter().apply {
                 addAction(Intent.ACTION_SCREEN_ON)
                 addAction(Intent.ACTION_SCREEN_OFF)
-            }
+            },
+            ContextCompat.RECEIVER_NOT_EXPORTED
         )
-
-        val prefs = (application as LainApplication).container.userPreferencesRepository
-        scope.launch {
-            prefs.isBatterySaver.collect { enabled ->
-                batterySaver = enabled
-                if (!enabled) resumeListening() else if (!isScreenOn()) pauseListening()
-            }
-        }
 
         if (isScreenOn()) resumeListening()
     }
@@ -162,7 +160,16 @@ class WakeWordService : Service() {
         if (!SpeechRecognizer.isRecognitionAvailable(this)) return
 
         teardownRecognizer()
-        val r = SpeechRecognizer.createSpeechRecognizer(this)
+        // On-device where the platform has it: every listen cycle then costs no
+        // network, no radio wake-up and no round trip, which on a loop like this is
+        // the difference between a background drain and a negligible one.
+        val r = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            SpeechRecognizer.isOnDeviceRecognitionAvailable(this)
+        ) {
+            SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
+        } else {
+            SpeechRecognizer.createSpeechRecognizer(this)
+        }
         recognizer = r
 
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
@@ -243,7 +250,7 @@ class WakeWordService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("Listening for \"Hello Lain\"")
-            .setContentText("Battery saver pauses this while the screen is off")
+            .setContentText("Pauses while the screen is off")
             .addAction(0, "Stop", stopIntent)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)

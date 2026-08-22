@@ -33,6 +33,14 @@ class AgentForegroundService : Service() {
         const val EXTRA_STATUS = "status"
 
         /**
+         * Backstop on the CPU wake lock, refreshed on every status update. Long
+         * enough that a genuine multi-step task never trips it, short enough that a
+         * wedged run releases the CPU within a few minutes rather than draining the
+         * battery until the user notices.
+         */
+        private const val TASK_WAKE_LOCK_MS = 4 * 60 * 1000L
+
+        /**
          * Android 12+ blocks starting a foreground service from the background.
          * Holding "display over other apps" (which the bubble requires) exempts
          * us, but a user driving Lain from the widget without that permission
@@ -73,18 +81,21 @@ class AgentForegroundService : Service() {
     }
 
     private fun acquireWakeLock() {
-        if (wakeLock?.isHeld == true) return
         val pm = getSystemService(PowerManager::class.java)
         // PARTIAL_WAKE_LOCK keeps the CPU alive with the screen off — exactly what a
         // multi-step task needs. Timeout is a safety net so a wedged run can't hold
         // the CPU indefinitely.
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Lain::AgentWork").apply {
-            setReferenceCounted(false)
-            // Held only for the life of a task — the service stops as soon as the turn
-            // ends, releasing this. The timeout is a backstop against a wedged run
-            // pinning the CPU, not the expected duration.
-            acquire(4 * 60 * 1000L)
-        }
+        // Reused rather than replaced, so a status update can't leak a second lock.
+        val lock = wakeLock ?: pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Lain::AgentWork")
+            .also { it.setReferenceCounted(false) }
+        wakeLock = lock
+        // Re-acquiring resets the timeout. This used to return early when the lock
+        // was already held, so a task running longer than the backstop lost the CPU
+        // mid-run and stalled until the screen came back on. Held only for the life
+        // of a task — the service stops when the turn ends, releasing it — and the
+        // timeout is a backstop against a wedged run pinning the CPU, not the
+        // expected duration.
+        lock.acquire(TASK_WAKE_LOCK_MS)
     }
 
     override fun onDestroy() {

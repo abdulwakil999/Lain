@@ -26,7 +26,6 @@ data class SettingsUiState(
     val apiKey: String = "",
     val kokoroEndpoint: String = "",
     val overlayEnabled: Boolean = false,
-    val batterySaver: Boolean = true,
     val loaded: Boolean = false,
     val justSaved: Boolean = false,
     val testResult: String? = null,
@@ -80,7 +79,6 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             val apiKey = container.secureKeyStore.getApiKey(provider).orEmpty()
             val kokoroEndpoint = container.userPreferencesRepository.kokoroEndpoint.first().orEmpty()
             val overlayEnabled = container.userPreferencesRepository.isOverlayEnabled.first()
-            val batterySaver = container.userPreferencesRepository.isBatterySaver.first()
             val fallback = container.userPreferencesRepository.isModelFallbackEnabled.first()
             val broken = container.userPreferencesRepository.brokenModels.first()
             _state.update {
@@ -94,7 +92,6 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
                     apiKey = apiKey,
                     kokoroEndpoint = kokoroEndpoint,
                     overlayEnabled = overlayEnabled,
-                    batterySaver = batterySaver,
                     modelFallback = fallback,
                     brokenModels = broken,
                     loaded = true
@@ -164,11 +161,6 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     fun setOverlayEnabled(enabled: Boolean) {
         _state.update { it.copy(overlayEnabled = enabled) }
         viewModelScope.launch { container.userPreferencesRepository.setOverlayEnabled(enabled) }
-    }
-
-    fun setBatterySaver(enabled: Boolean) {
-        _state.update { it.copy(batterySaver = enabled) }
-        viewModelScope.launch { container.userPreferencesRepository.setBatterySaver(enabled) }
     }
 
     private fun fetchLiveModelsIfNeeded() {

@@ -1,8 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    The square widget. minResizeWidth/Height let the user shrink it to a single
+    cell; targetCellWidth/Height (Android 12+) is what modern launchers actually
+    read when placing it, and without them it lands at whatever the launcher
+    guesses from minWidth.
+
+    updatePeriodMillis is 0 deliberately: this widget shows no live data, so a
+    periodic update would be a wake-up that redraws an identical view.
+-->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:minWidth="110dp"
     android:minHeight="110dp"
+    android:minResizeWidth="57dp"
+    android:minResizeHeight="57dp"
+    android:maxResizeWidth="250dp"
+    android:maxResizeHeight="250dp"
+    android:targetCellWidth="2"
+    android:targetCellHeight="2"
     android:updatePeriodMillis="0"
     android:initialLayout="@layout/widget_lain"
+    android:previewLayout="@layout/widget_lain"
+    android:description="@string/widget_square_description"
     android:resizeMode="horizontal|vertical"
-    android:widgetCategory="home_screen" />
+    android:widgetCategory="home_screen|keyguard" />

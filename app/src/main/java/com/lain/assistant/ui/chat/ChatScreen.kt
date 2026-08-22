@@ -100,7 +100,11 @@ fun ChatScreen(viewModel: ChatViewModel, container: AppContainer, autoListenToke
 
     val window = rememberLainWindow()
 
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+    // A plain Box, not BoxWithConstraints. Nothing in here reads the constraints —
+    // the art size comes from rememberLainWindow — and BoxWithConstraints forces a
+    // subcomposition on every measure, which is real work per recomposition on the
+    // one screen the user spends all their time in.
+    Box(modifier = Modifier.fillMaxSize()) {
         // The portrait is square, and how big it's allowed to be is a function of both
         // screen dimensions — see LainWindow.artSize. Drawing it at the full window width
         // is what made it swallow a tablet screen and crowd out the conversation.

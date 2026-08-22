@@ -22,8 +22,26 @@
     <!-- Do Not Disturb. Not granted by install: the user allows it on a Settings
          screen, and until they do, Lain says so rather than pretending. -->
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!--
+         Exact alarms. Lain is an alarm clock now — she rings, snoozes and repeats —
+         which is precisely the use these two exist for. SCHEDULE_EXACT_ALARM is the
+         user-grantable form; USE_EXACT_ALARM is install-granted on Android 13+ for
+         alarm and calendar apps, so a user who sets an alarm is not sent hunting
+         through Settings before it can ring on the minute. Lint flags the pair as
+         system-only, which is wrong for an alarm app; both are documented as
+         available to exactly this case.
+    -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"
+        tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
+    <!-- The alarm vibrates. Without this the pattern is silently ignored, so an
+         alarm on a muted phone does nothing at all. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Used only by close_app's background-process path, which is the one thing
+         Android still allows a normal app to stop. -->
+    <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- Floating bubble so Lain can be commanded from outside the app -->
@@ -64,7 +82,9 @@
     <application
         android:name=".LainApplication"
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:theme="@style/Theme.Lain"
         android:supportsRtl="true">
@@ -165,8 +185,8 @@
         <service
             android:name=".automation.VoiceInputTileService"
             android:exported="true"
-            android:icon="@drawable/ic_notification"
-            android:label="Lain: Hello Lain"
+            android:icon="@drawable/ic_lain_glyph"
+            android:label="Lain"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
@@ -194,16 +214,53 @@
             </intent-filter>
         </receiver>
 
-        <!-- Home screen widget: one tap opens Lain straight into listening mode. -->
+        <!--
+             Home screen widgets. Three shapes for three habits: a square for the
+             home screen, a single cell for people who keep a tidy dock, and a wide
+             bar whose separate buttons make "read the screen" one tap.
+
+             exported="true" on all of them, and it is load-bearing: a widget
+             provider is a receiver the launcher broadcasts to from its own process.
+             With export off the system cannot deliver APPWIDGET_UPDATE, the click
+             targets are never bound, and the widget simply does nothing when tapped.
+        -->
         <receiver
             android:name=".automation.LainWidgetProvider"
-            android:exported="false">
+            android:label="Lain"
+            android:icon="@mipmap/ic_launcher"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/lain_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".automation.LainMicWidgetProvider"
+            android:label="Lain button"
+            android:icon="@mipmap/ic_launcher"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/lain_widget_mic_info" />
+        </receiver>
+
+        <receiver
+            android:name=".automation.LainBarWidgetProvider"
+            android:label="Lain bar"
+            android:icon="@mipmap/ic_launcher"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/lain_widget_bar_info" />
         </receiver>
 
     </application>

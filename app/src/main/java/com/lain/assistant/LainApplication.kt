@@ -3,10 +3,23 @@ package com.lain.assistant
 import android.app.Application
 import com.lain.assistant.agent.Trace
 import com.lain.assistant.automation.AccessibilityMonitor
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 
 class LainApplication : Application() {
     lateinit var container: AppContainer
         private set
+
+    companion object {
+        /**
+         * One scope for work that legitimately outlives whatever started it — a
+         * scheduled task firing from a receiver, an alarm snoozing as its Activity
+         * finishes. These were each creating a CoroutineScope on the spot, which
+         * leaks a Job nothing ever cancels. A SupervisorJob keeps one failure from
+         * taking the rest down with it.
+         */
+        val appScope = CoroutineScope(SupervisorJob())
+    }
 
     override fun onCreate() {
         super.onCreate()

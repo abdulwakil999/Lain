@@ -17,6 +17,9 @@ import android.os.VibratorManager
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -32,6 +35,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.lain.assistant.LainApplication
 import com.lain.assistant.automation.AutomationResult
 import com.lain.assistant.automation.PhoneController
 import com.lain.assistant.automation.Scheduler
@@ -43,7 +47,6 @@ import com.lain.assistant.ui.theme.LainInk
 import com.lain.assistant.ui.theme.LainMuted
 import com.lain.assistant.ui.theme.LainSalmon
 import com.lain.assistant.ui.theme.LainTheme
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -90,6 +93,7 @@ class AlarmActivity : ComponentActivity() {
 
     private var ringtone: Ringtone? = null
     private var vibrator: Vibrator? = null
+    private var loopJob: kotlinx.coroutines.Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -101,6 +105,8 @@ class AlarmActivity : ComponentActivity() {
             .getOrDefault(TaskAction.ALARM)
 
         startRinging()
+        startLoopWatchdog()
+        blockBackDismissal()
 
         setContent {
             LainTheme {
@@ -147,7 +153,10 @@ class AlarmActivity : ComponentActivity() {
                     .setUsage(AudioAttributes.USAGE_ALARM)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                     .build()
-                isLooping = true
+                // setLooping arrived in Android 9. Below that the ringtone plays once
+                // and the watchdog below restarts it, so an alarm on an Android 8
+                // phone still rings until it's dismissed rather than chirping once.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) isLooping = true
                 play()
             }
         }
@@ -163,7 +172,26 @@ class AlarmActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Keeps the ringtone going on Android 8, which has no looping flag.
+     *
+     * Cheap: one check a second while the alarm screen is up, cancelled the moment
+     * it is dismissed.
+     */
+    private fun startLoopWatchdog() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) return
+        loopJob = lifecycleScope.launch {
+            while (isActive) {
+                delay(1000)
+                val r = ringtone ?: break
+                if (!runCatching { r.isPlaying }.getOrDefault(true)) runCatching { r.play() }
+            }
+        }
+    }
+
     private fun stopRinging() {
+        loopJob?.cancel()
+        loopJob = null
         runCatching { ringtone?.stop() }
         runCatching { vibrator?.cancel() }
         ringtone = null
@@ -173,7 +201,9 @@ class AlarmActivity : ComponentActivity() {
         stopRinging()
         val at = System.currentTimeMillis() + SNOOZE_MINUTES * 60_000L
         val app = applicationContext
-        CoroutineScope(Dispatchers.IO).launch {
+        // Application-scoped on purpose: the work must outlive this Activity, which
+        // finishes immediately. A fresh CoroutineScope per call would leak its Job.
+        LainApplication.appScope.launch(Dispatchers.IO) {
             Scheduler(app).add(
                 ScheduledTask(
                     label = label.ifBlank { "Alarm" },
@@ -192,7 +222,7 @@ class AlarmActivity : ComponentActivity() {
     private fun placeCall(target: String) {
         stopRinging()
         val app = applicationContext
-        CoroutineScope(Dispatchers.IO).launch {
+        LainApplication.appScope.launch(Dispatchers.IO) {
             val phone = PhoneController(app)
             val number = (phone.lookupContact(target) as? AutomationResult.Success)
                 ?.message?.lineSequence()?.firstOrNull()?.substringAfter(": ")?.trim()
@@ -207,9 +237,17 @@ class AlarmActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    /** Back must not silently dismiss an alarm — the user has to choose. */
-    @Deprecated("Back is intentionally inert here")
-    override fun onBackPressed() = Unit
+    /**
+     * Back must not silently dismiss an alarm — the user has to choose Stop or
+     * Snooze. Registered as a callback rather than by overriding onBackPressed,
+     * which is deprecated and, overridden without calling super, breaks predictive
+     * back on Android 13+.
+     */
+    private fun blockBackDismissal() {
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() = Unit
+        })
+    }
 }
 
 @Composable

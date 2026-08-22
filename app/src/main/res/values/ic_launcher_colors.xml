@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The backdrop the launcher art was drawn against, so the adaptive icon's
+         plate matches the artwork instead of banding against it. -->
+    <color name="ic_launcher_background">#383B4D</color>
+</resources>

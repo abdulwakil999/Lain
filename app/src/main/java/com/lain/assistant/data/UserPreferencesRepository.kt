@@ -25,7 +25,6 @@ class UserPreferencesRepository(private val context: Context) {
         val KOKORO_ENDPOINT = stringPreferencesKey("kokoro_endpoint")
         val MUTED = booleanPreferencesKey("muted")
         val OVERLAY_ENABLED = booleanPreferencesKey("overlay_enabled")
-        val BATTERY_SAVER = booleanPreferencesKey("battery_saver")
         val MODEL_FALLBACK = booleanPreferencesKey("model_fallback")
         val BROKEN_MODELS = stringSetPreferencesKey("broken_models")
         // A snapshot of the selected model's catalogue facts, so the capability layer
@@ -75,16 +74,6 @@ class UserPreferencesRepository(private val context: Context) {
 
     suspend fun setOverlayEnabled(enabled: Boolean) {
         context.dataStore.edit { it[Keys.OVERLAY_ENABLED] = enabled }
-    }
-
-    /**
-     * When on, the wake-word listener stops entirely while the screen is off
-     * rather than looping the recognizer in the user's pocket.
-     */
-    val isBatterySaver: Flow<Boolean> = context.dataStore.data.map { it[Keys.BATTERY_SAVER] ?: true }
-
-    suspend fun setBatterySaver(enabled: Boolean) {
-        context.dataStore.edit { it[Keys.BATTERY_SAVER] = enabled }
     }
 
     /**

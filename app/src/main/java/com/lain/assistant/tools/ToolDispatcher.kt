@@ -277,7 +277,22 @@ class ToolDispatcher(context: Context) {
         )
 
         "send_sms" -> phone.sendSms(args.str("phone_number"), args.str("message")).asResult(FailureKind.PERMISSION)
-        "make_call" -> phone.placeCall(args.str("phone_number")).asResult(FailureKind.PERMISSION)
+        "make_call" -> {
+            val outcome = phone.placeCall(args.str("phone_number")).asResult(FailureKind.PERMISSION)
+            // Attach the *real* Accessibility state. Left to infer it, a model that
+            // hit a dialler it couldn't drive announced "the Accessibility Service is
+            // off" while it was connected the whole time — a confident, wrong
+            // explanation for a real problem, which is worse than no explanation.
+            AccessibilityMonitor.reconcile(appContext)
+            val screenControl = if (AccessibilityMonitor.isUsable) {
+                "Accessibility is connected, so you can read_screen and tap the call button yourself."
+            } else {
+                "Accessibility is not connected (${AccessibilityMonitor.state.value}), so you cannot tap the " +
+                    "screen — ask the user to tap it."
+            }
+            if (outcome.success) outcome
+            else outcome.copy(error = listOfNotNull(outcome.error, screenControl).joinToString(" "))
+        }
         "lookup_contact" -> phone.lookupContact(args.str("name")).asResult(FailureKind.PERMISSION)
         "send_whatsapp_message" ->
             phone.openWhatsAppChat(args.str("phone_number"), args.str("message")).asResult(FailureKind.APP_UNAVAILABLE)

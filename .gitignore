@@ -11,3 +11,8 @@ captures/
 local.properties
 /app/build/
 /build/
+
+# Release signing — never committed.
+keystore.properties
+*.jks
+*.keystore

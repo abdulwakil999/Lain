@@ -13,7 +13,7 @@ import com.lain.assistant.R
 import com.lain.assistant.data.ScheduledTask
 import com.lain.assistant.data.TaskAction
 import com.lain.assistant.ui.alarm.AlarmActivity
-import kotlinx.coroutines.CoroutineScope
+import com.lain.assistant.LainApplication
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
@@ -49,7 +49,9 @@ class ScheduledTaskReceiver : BroadcastReceiver() {
         val app = context.applicationContext
         val pending = goAsync()
 
-        CoroutineScope(Dispatchers.IO).launch {
+        // goAsync() buys about ten seconds; the shared application scope keeps the
+        // work off a per-call Job that nothing would ever cancel.
+        LainApplication.appScope.launch(Dispatchers.IO) {
             try {
                 val scheduler = Scheduler(app)
                 val task = scheduler.all().firstOrNull { it.id == id }
@@ -132,7 +134,7 @@ class BootReceiver : BroadcastReceiver() {
         ) return
         val app = context.applicationContext
         val pending = goAsync()
-        CoroutineScope(Dispatchers.IO).launch {
+        LainApplication.appScope.launch(Dispatchers.IO) {
             try {
                 Scheduler(app).restoreAll()
             } finally {

@@ -1,5 +1,6 @@
 package com.lain.assistant.ui.onboarding
 
+import android.os.Build
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,6 +31,12 @@ import com.lain.assistant.data.Gender
 import com.lain.assistant.data.Provider
 import com.lain.assistant.ui.common.HoveringPanel
 import com.lain.assistant.ui.common.PixelBackground
+import com.lain.assistant.automation.AccessibilityMonitor
+import com.lain.assistant.automation.AccessibilityState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import com.lain.assistant.ui.theme.LainSalmon
 import com.lain.assistant.ui.common.PixelButton
 import com.lain.assistant.ui.common.PixelChoiceChip
 import com.lain.assistant.ui.common.PixelTextField
@@ -265,28 +272,137 @@ private fun ApiKeyStep(provider: Provider, value: String, onChange: (String) -> 
 @Composable
 private fun PermissionsPrimer() {
     val context = LocalContext.current
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+
+    // Android 13 gates sideloaded apps out of Accessibility until the user clears
+    // "restricted settings" from App Info. Before 13 there is no gate at all, so
+    // showing that step would be sending people to a screen with nothing to do on it.
+    val gated = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+
+    val a11yState by AccessibilityMonitor.state.collectAsState()
+    val connected = a11yState == AccessibilityState.CONNECTED
+
+    // Whether the user has been to App Info. Not a claim that the gate is cleared —
+    // nothing readable tells us that — just that they've been shown where it is, so
+    // step two can stop being the greyed-out one.
+    var visitedAppInfo by remember { mutableStateOf(false) }
+
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                AccessibilityMonitor.reconcile(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        AccessibilityMonitor.reconcile(context)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     androidx.compose.foundation.layout.Column {
         Text(
-            "Next, Lain will ask for a few permissions — microphone, camera, phone/SMS — so she can actually act on your phone instead of just talking. You can grant them now or later; features that need one will just ask again when you use them.",
+            "Lain will ask for a few permissions next — microphone, camera, phone, SMS — so she can act on " +
+                "your phone rather than just talk about it. Grant them now or later; anything that needs one " +
+                "asks again when you use it.",
             style = MaterialTheme.typography.bodyMedium,
             color = LainCream
         )
-        Spacer(Modifier.height(12.dp))
+
+        Spacer(Modifier.height(16.dp))
         Text(
-            "One more thing worth doing now: her Accessibility Service, which lets her read and tap your screen (this is also what makes her usable hands-free/eyes-free). The button below takes you straight to her switch.",
+            "Then her Accessibility Service, which is how she reads and taps your screen — and what makes her " +
+                "usable hands-free and eyes-free.",
             style = MaterialTheme.typography.bodyMedium,
             color = LainCream
         )
+
+        if (connected) {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Accessibility is already on. Nothing else to do.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = LainSalmon
+            )
+            return@Column
+        }
+
+        if (gated) {
+            // Two numbered steps in the order they have to happen. Presented as one
+            // route rather than a button plus a footnote, because the footnote was
+            // the step people actually needed first: on Android 13+ the Accessibility
+            // toggle is greyed out until restricted settings are cleared, so anyone
+            // who pressed the obvious button landed on a switch they could not move.
+            Spacer(Modifier.height(16.dp))
+            OnboardingStepRow(
+                number = "1",
+                title = "Allow restricted settings",
+                body = "Android blocks sideloaded apps from Accessibility until you clear this. In app info, " +
+                    "tap ⋮ in the top corner, then \"Allow restricted settings\". No Intent can do it for you.",
+                done = visitedAppInfo,
+                button = "Open app info",
+                emphasised = true,
+                onClick = {
+                    visitedAppInfo = true
+                    openAppInfo(context)
+                }
+            )
+            Spacer(Modifier.height(14.dp))
+            OnboardingStepRow(
+                number = "2",
+                title = "Turn on Lain's switch",
+                body = "Takes you straight to Lain in Accessibility settings. If her toggle is still greyed " +
+                    "out, step 1 hasn't been cleared yet.",
+                done = false,
+                button = "Open accessibility settings",
+                emphasised = visitedAppInfo,
+                onClick = { openAccessibilitySettingsForLain(context) }
+            )
+        } else {
+            Spacer(Modifier.height(12.dp))
+            PixelButton(
+                text = "Turn on Accessibility",
+                onClick = { openAccessibilitySettingsForLain(context) }
+            )
+        }
+
         Spacer(Modifier.height(10.dp))
-        PixelButton(text = "Turn on Accessibility", onClick = { openAccessibilitySettingsForLain(context) })
-        Spacer(Modifier.height(8.dp))
-        // Only needed on a fresh sideload, and only once — so it's a quiet second link
-        // rather than the primary route it used to be.
         Text(
-            "If Lain's toggle is greyed out, Android is gating sideloaded apps: open app info → ⋮ → \"Allow restricted settings\", then come back.",
+            "Both are optional — Lain works without them, she just can't see or touch the screen.",
             style = MaterialTheme.typography.bodyMedium,
-            color = LainMuted,
-            modifier = Modifier.clickable { openAppInfo(context) }.padding(vertical = 4.dp)
+            color = LainMuted
         )
+    }
+}
+
+/**
+ * One numbered step.
+ *
+ * [emphasised] is what carries the ordering: the step that isn't the user's next
+ * move is drawn quietly rather than disabled, because a disabled button on a
+ * screen full of optional setup reads as "broken" rather than "later".
+ */
+@Composable
+private fun OnboardingStepRow(
+    number: String,
+    title: String,
+    body: String,
+    done: Boolean,
+    button: String,
+    emphasised: Boolean,
+    onClick: () -> Unit
+) {
+    androidx.compose.foundation.layout.Column {
+        Text(
+            "$number. $title" + if (done) "  ✓" else "",
+            style = MaterialTheme.typography.labelLarge,
+            color = if (emphasised) LainSalmon else LainCream
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            body,
+            style = MaterialTheme.typography.bodyMedium,
+            color = LainMuted
+        )
+        Spacer(Modifier.height(8.dp))
+        PixelButton(text = button, onClick = onClick)
     }
 }
