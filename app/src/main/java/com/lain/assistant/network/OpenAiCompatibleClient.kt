@@ -28,6 +28,10 @@ import java.util.concurrent.TimeUnit
  * dialect: OpenRouter, OpenAI itself, xAI Grok, and Gemini via its
  * OpenAI-compatibility endpoint.
  */
+private const val REASONING_ONLY =
+    "That model returned only its internal working and no actual answer. Ask again, or pick a " +
+        "different model in Settings — some free models do this under load."
+
 class OpenAiCompatibleClient(
     private val baseUrl: String,
     private val httpReferer: String? = null,
@@ -90,12 +94,22 @@ class OpenAiCompatibleClient(
                 put("tools", buildToolsArray(tools))
                 put("tool_choice", "auto")
             }
-            // OpenRouter's normalised reasoning control. Providers that don't
-            // recognise it ignore unknown top-level fields, so this is safe to send.
+            // OpenRouter's normalised reasoning control.
+            //
+            // `exclude` is the important half and was missing: without it the
+            // provider returns the model's internal reasoning alongside the answer,
+            // which is how it ended up on screen. The model still reasons — it just
+            // keeps it to itself, which is the behaviour a user expects.
+            //
+            // `include_reasoning: false` is the older spelling of the same thing;
+            // both are sent because which one a given endpoint honours varies, and
+            // unknown fields are ignored.
             if (isOpenRouter) {
                 put("reasoning", buildJsonObject {
                     put("effort", if (tuning.deliberate) "medium" else "low")
+                    put("exclude", true)
                 })
+                put("include_reasoning", false)
             }
         }
 
@@ -153,6 +167,9 @@ class OpenAiCompatibleClient(
 
             val text = StringBuilder()
             val toolAccumulator = sortedMapOf<Int, PartialToolCall>()
+            // Second line of defence: even with `exclude` asked for, some models emit
+            // their reasoning inline in `content` and the provider passes it through.
+            val reasoning = ReasoningFilter()
 
             while (true) {
                 val line = try {
@@ -167,10 +184,15 @@ class OpenAiCompatibleClient(
                 if (payload.isEmpty()) continue
                 if (payload == "[DONE]") break
 
-                val delta = runCatching { parseStreamChunk(payload, toolAccumulator) }.getOrNull() ?: continue
-                if (delta.isNotEmpty()) {
-                    text.append(delta)
-                    emit(StreamEvent.Delta(delta))
+                val raw = runCatching { parseStreamChunk(payload, toolAccumulator) }.getOrNull() ?: continue
+                if (raw.isNotEmpty()) {
+                    // Only what survives the filter is shown or spoken. A fragment may
+                    // legitimately yield nothing — mid-thought, or mid-marker.
+                    val visible = reasoning.push(raw)
+                    if (visible.isNotEmpty()) {
+                        text.append(visible)
+                        emit(StreamEvent.Delta(visible))
+                    }
                 }
             }
 
@@ -182,8 +204,20 @@ class OpenAiCompatibleClient(
                     argumentsJson = partial.arguments.toString().ifBlank { "{}" }
                 )
             }
+            val tail = reasoning.flush()
+            if (tail.isNotEmpty()) {
+                text.append(tail)
+                emit(StreamEvent.Delta(tail))
+            }
+
             when {
+                // Tool calls are untouched by the filter — it only ever sees `content`.
                 calls.isNotEmpty() -> emit(StreamEvent.Tools(calls))
+                // Everything the model produced was reasoning and it never closed the
+                // block. Reporting that is honest; showing a blank reply is not, and
+                // showing the reasoning is the leak this exists to stop.
+                !reasoning.emittedAnything && reasoning.strippedAnything ->
+                    emit(StreamEvent.Failed(REASONING_ONLY))
                 else -> emit(StreamEvent.Done(text.toString()))
             }
         }
@@ -305,7 +339,11 @@ class OpenAiCompatibleClient(
             return LlmResult.ToolCalls(calls)
         }
 
+        // `reasoning` / `reasoning_content` are deliberately not read: the model's
+        // internal working is never shown, summarised or spoken.
         val content = message["content"]?.jsonPrimitive?.contentOrNull ?: ""
-        return LlmResult.Message(content)
+        val answer = ReasoningFilter.clean(content)
+            ?: return LlmResult.Error(REASONING_ONLY)
+        return LlmResult.Message(answer)
     }
 }

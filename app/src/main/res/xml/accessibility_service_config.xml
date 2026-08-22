@@ -16,6 +16,10 @@
     button among them) frequently mark themselves not-important-for-accessibility
     and are otherwise invisible to a tree walk. The extra nodes are filtered out
     during rendering, so the model never sees the bulk.
+
+    canTakeScreenshot is required for AccessibilityService.takeScreenshot(), which
+    look_at_screen depends on. Without it the platform refuses every capture, so
+    the vision path failed on every device rather than only on pre-Android-11 ones.
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeWindowsChanged"
@@ -23,5 +27,6 @@
     android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows|flagReportViewIds|flagIncludeNotImportantViews"
     android:canPerformGestures="true"
     android:canRetrieveWindowContent="true"
+    android:canTakeScreenshot="true"
     android:description="@string/accessibility_service_description"
     android:notificationTimeout="100" />

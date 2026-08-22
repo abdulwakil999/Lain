@@ -154,6 +154,9 @@ class AnthropicClient(private val baseUrl: String) : LlmClient {
         for (block in blocks) {
             val obj = block.jsonObject
             when (obj["type"]?.jsonPrimitive?.contentOrNull) {
+                // "thinking" and "redacted_thinking" blocks are deliberately not read:
+                // the model's internal working is never shown, summarised or spoken.
+                // Only "text" reaches the user.
                 "text" -> textBuilder.append(obj["text"]?.jsonPrimitive?.contentOrNull.orEmpty())
                 "tool_use" -> toolCalls += ToolCall(
                     id = obj["id"]?.jsonPrimitive?.contentOrNull ?: "",
@@ -163,6 +166,15 @@ class AnthropicClient(private val baseUrl: String) : LlmClient {
             }
         }
 
-        return if (toolCalls.isNotEmpty()) LlmResult.ToolCalls(toolCalls) else LlmResult.Message(textBuilder.toString())
+        if (toolCalls.isNotEmpty()) return LlmResult.ToolCalls(toolCalls)
+
+        // Defence in depth, matching the OpenAI-compatible path: a model that inlines
+        // its reasoning into a text block gets it stripped here too.
+        val answer = ReasoningFilter.clean(textBuilder.toString())
+            ?: return LlmResult.Error(
+                "That model returned only its internal working and no actual answer. Ask again, or " +
+                    "pick a different model in Settings."
+            )
+        return LlmResult.Message(answer)
     }
 }

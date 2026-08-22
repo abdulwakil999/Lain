@@ -19,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,6 +33,8 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.lain.assistant.automation.AccessibilityMonitor
+import com.lain.assistant.automation.AccessibilityState
 import com.lain.assistant.automation.LainAccessibilityService
 import com.lain.assistant.automation.LainNotificationListener
 import com.lain.assistant.automation.OverlayBubbleService
@@ -43,6 +46,8 @@ import com.lain.assistant.ui.common.PixelTextField
 import com.lain.assistant.ui.common.rememberLainWindow
 import com.lain.assistant.ui.common.openAccessibilitySettingsForLain
 import com.lain.assistant.ui.common.openAppInfo
+import com.lain.assistant.ui.common.isIgnoringBatteryOptimisations
+import com.lain.assistant.ui.common.openBatteryOptimisationSettings
 import com.lain.assistant.ui.theme.LainCream
 import com.lain.assistant.ui.theme.LainMuted
 import com.lain.assistant.ui.theme.LainNavyDeep
@@ -342,31 +347,25 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
 
             Spacer(Modifier.height(24.dp))
             SectionLabel("Accessibility Service")
-            // Three states, not two: "on in Settings but not connected" is its own
-            // problem with its own fix, and calling it "not enabled" is what sent people
-            // looking for a switch that was already flipped.
-            val health = LainAccessibilityService.health(context)
+            // Four states, not two. "On in Settings but not connected" is its own
+            // problem with its own fix, and calling it "not enabled" is what sent
+            // people looking for a switch that was already flipped.
+            val a11yState by AccessibilityMonitor.state.collectAsState()
+            LaunchedEffect(Unit) { AccessibilityMonitor.reconcile(context) }
+
             Text(
-                when (health) {
-                    LainAccessibilityService.ServiceHealth.READY ->
-                        "Connected — Lain can read and tap your screen."
-                    LainAccessibilityService.ServiceHealth.STALLED ->
-                        "Switched on, but not connected right now. Android drops the service after an update or " +
-                            "when it reclaims memory. Toggle Lain off and back on below to restore it."
-                    LainAccessibilityService.ServiceHealth.OFF ->
-                        "Not enabled. Without it Lain can't read or tap your screen."
-                },
+                AccessibilityMonitor.advice(),
                 style = MaterialTheme.typography.bodyMedium,
-                color = when (health) {
-                    LainAccessibilityService.ServiceHealth.READY -> LainCream
-                    LainAccessibilityService.ServiceHealth.STALLED -> LainSalmon
-                    LainAccessibilityService.ServiceHealth.OFF -> LainMuted
+                color = when (a11yState) {
+                    AccessibilityState.CONNECTED -> LainCream
+                    AccessibilityState.CONNECTING -> LainSalmon
+                    else -> LainMuted
                 }
             )
             Spacer(Modifier.height(8.dp))
             PixelButton(
-                text = when (health) {
-                    LainAccessibilityService.ServiceHealth.STALLED -> "Reconnect (off, then on)"
+                text = when (a11yState) {
+                    AccessibilityState.CONNECTING -> "Reconnect (off, then on)"
                     else -> "Open Lain's accessibility settings"
                 },
                 onClick = { openAccessibilitySettingsForLain(context) }
@@ -378,6 +377,53 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
                 color = LainMuted,
                 modifier = Modifier.clickable { openAppInfo(context) }.padding(vertical = 4.dp)
             )
+
+            // Aggressive OEM battery managers (Xiaomi, Huawei, Samsung, Oppo) kill the
+            // host process, which takes the Accessibility Service with it. That is the
+            // most common cause of it "randomly" disconnecting, and the only fix is a
+            // user-granted exemption — offered here, never requested silently.
+            if (!isIgnoringBatteryOptimisations(context)) {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "Android is allowed to shut Lain down in the background on this device, which also " +
+                        "disconnects the Accessibility Service. If it keeps dropping, exempting Lain from " +
+                        "battery optimisation usually stops it.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = LainMuted
+                )
+                Spacer(Modifier.height(8.dp))
+                PixelButton(
+                    text = "Battery optimisation settings",
+                    onClick = { openBatteryOptimisationSettings(context) }
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+            var showLog by remember { mutableStateOf(false) }
+            Text(
+                if (showLog) "Hide diagnostic log" else "Show diagnostic log",
+                style = MaterialTheme.typography.labelLarge,
+                color = LainSalmon,
+                modifier = Modifier.clickable { showLog = !showLog }.padding(vertical = 4.dp)
+            )
+            if (showLog) {
+                val log = remember(showLog) { AccessibilityMonitor.dump() }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    log,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = LainMuted,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                )
+                Spacer(Modifier.height(8.dp))
+                PixelButton(
+                    text = "Copy log",
+                    onClick = {
+                        val cm = context.getSystemService(android.content.ClipboardManager::class.java)
+                        cm?.setPrimaryClip(android.content.ClipData.newPlainText("Lain accessibility log", log))
+                    }
+                )
+            }
 
             Spacer(Modifier.height(28.dp))
             PixelButton(text = if (state.justSaved) "Saved" else "Save", onClick = viewModel::save, enabled = state.loaded && state.canSave)

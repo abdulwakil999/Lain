@@ -32,22 +32,6 @@ import kotlin.coroutines.resume
  */
 class LainAccessibilityService : AccessibilityService() {
 
-    /**
-     * The three states worth distinguishing, because the fix differs for each and
-     * telling a user to "turn it on" when it is already on is what made this feel
-     * broken.
-     */
-    enum class ServiceHealth {
-        /** Bound and usable. */
-        READY,
-
-        /** Switched on in Settings, but our process has no live binding — needs an off/on. */
-        STALLED,
-
-        /** Genuinely switched off. */
-        OFF
-    }
-
     companion object {
         @Volatile
         var instance: LainAccessibilityService? = null
@@ -70,55 +54,77 @@ class LainAccessibilityService : AccessibilityService() {
         private const val COMPACT_LABEL_CHARS = 48
 
         /**
-         * The authoritative check. [isRunning] only reflects whether our process
-         * currently holds a bound service instance — after an app update, a process
-         * restart, or a system-initiated service kill, the user can have Lain switched
-         * ON in Settings while `instance` is momentarily null. Reporting "turn on
-         * Accessibility" in that state is exactly what made Lain insist the service was
-         * off while the toggle was visibly already on.
+         * Whether the user has granted the service, regardless of whether it is
+         * bound right now.
+         *
+         * [isRunning] only reflects a live binding in this process. After an app
+         * update, a process restart, or the system reclaiming the service, the user
+         * can have Lain switched ON in Settings while `instance` is momentarily
+         * null — and telling them to enable something already enabled is exactly
+         * what made this look broken.
          */
-        fun isEnabledInSettings(context: Context): Boolean {
-            val expected = ComponentName(context, LainAccessibilityService::class.java)
-            val enabled = Settings.Secure.getString(
-                context.contentResolver,
-                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-            ) ?: return false
-            val splitter = TextUtils.SimpleStringSplitter(':')
-            splitter.setString(enabled)
-            for (entry in splitter) {
-                val parsed = ComponentName.unflattenFromString(entry) ?: continue
-                if (parsed == expected) return true
-            }
-            return false
+        fun isEnabledInSettings(context: Context): Boolean =
+            AccessibilityMonitor.isEnabledInSettings(context)
+
+        /**
+         * The current state, reconciled against Settings first so a disconnect that
+         * arrived without a callback (process killed) is caught.
+         */
+        fun currentState(context: Context): AccessibilityState {
+            AccessibilityMonitor.reconcile(context)
+            return AccessibilityMonitor.state.value
         }
 
-        fun health(context: Context): ServiceHealth = when {
-            isRunning -> ServiceHealth.READY
-            isEnabledInSettings(context) -> ServiceHealth.STALLED
-            else -> ServiceHealth.OFF
+        /** Why the service isn't usable right now, phrased for the user. */
+        fun unavailableReason(context: Context): String {
+            AccessibilityMonitor.reconcile(context)
+            return AccessibilityMonitor.advice()
         }
+    }
 
-        /** Human-readable explanation of *why* the service isn't usable right now. */
-        fun unavailableReason(context: Context): String = when (health(context)) {
-            ServiceHealth.READY -> "Accessibility is available."
-            ServiceHealth.OFF ->
-                "Lain's Accessibility Service is switched off. Tell the user to tap the banner in Lain to open " +
-                    "Settings > Accessibility > Lain and turn it on."
-            ServiceHealth.STALLED ->
-                "Lain's Accessibility Service is switched on in Settings but has lost its connection (this happens " +
-                    "after an app update or when Android restarts the service). Tell the user to tap the banner in " +
-                    "Lain, then toggle Lain off and back on in Accessibility. This takes about five seconds."
-        }
+    // ------------------------------------------------------------- lifecycle
+    //
+    // Every transition is recorded, because a disconnect previously left no
+    // evidence at all and there was nothing to investigate afterwards. None of
+    // this tries to keep the service alive or restart it — an app cannot do that,
+    // and shouldn't: the user owns this permission. It observes and reports.
+
+    override fun onCreate() {
+        super.onCreate()
+        AccessibilityMonitor.onCreated()
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
         lastEventAt = SystemClock.uptimeMillis()
+        AccessibilityMonitor.onConnected()
+    }
+
+    /**
+     * onInterrupt means "stop announcing what you were announcing" — it does NOT
+     * mean the binding is gone. Treating it as a disconnect would report a fault
+     * that hasn't happened, so it is recorded and otherwise ignored.
+     */
+    override fun onInterrupt() {
+        AccessibilityMonitor.onInterrupted()
+    }
+
+    /**
+     * Fires when the system tears the binding down — a settings toggle, an app
+     * update, or the framework reclaiming the service. Clearing `instance` here
+     * rather than waiting for onDestroy closes the window where an action could
+     * be dispatched into a service that is already going away.
+     */
+    override fun onUnbind(intent: android.content.Intent?): Boolean {
+        instance = null
+        AccessibilityMonitor.onUnbound()
+        return super.onUnbind(intent)
     }
 
     override fun onDestroy() {
         instance = null
+        AccessibilityMonitor.onDestroyed()
         super.onDestroy()
     }
 
@@ -132,14 +138,29 @@ class LainAccessibilityService : AccessibilityService() {
     @Volatile
     private var lastEventAt: Long = 0L
 
+    /**
+     * The entire event handler: one volatile write.
+     *
+     * This runs on the service's main thread for every window change on the
+     * device, so anything expensive here would slow the whole system down. It
+     * records only when the UI last changed, which is what [awaitSettle] reads —
+     * no allocation, no I/O, no parsing.
+     *
+     * It also serves as a liveness signal: events only arrive on a bound service,
+     * so a stale `instance` gets corrected here. That correction is recorded
+     * rather than silent, because if it ever fires it means a lifecycle callback
+     * was missed and that is worth knowing about.
+     */
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         lastEventAt = SystemClock.uptimeMillis()
-        // A rebind can leave the companion pointing at a dead instance; events only
-        // arrive on a live one, so this is a free correction.
-        if (instance !== this) instance = this
+        if (instance !== this) {
+            instance = this
+            AccessibilityMonitor.record(
+                AccessibilityMonitor.Event.SERVICE_RESTARTED,
+                "recovered a stale instance from the event stream"
+            )
+        }
     }
-
-    override fun onInterrupt() = Unit
 
     /**
      * Waits until the screen stops changing, then returns.
@@ -510,10 +531,26 @@ class LainAccessibilityService : AccessibilityService() {
         )
     }
 
+    /**
+     * Executor for screenshot callbacks.
+     *
+     * Deliberately NOT the main executor, which is what this used to pass. The
+     * callback copies the hardware buffer into a software bitmap — roughly 10MB on
+     * a 1080x2400 screen — and doing that on the UI thread of the process that
+     * hosts the Accessibility Service is a direct route to jank and, on a slower
+     * device, an ANR. A single background thread is enough: screenshots are
+     * sequential and infrequent.
+     */
+    private val screenshotExecutor: java.util.concurrent.Executor by lazy {
+        java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+            Thread(r, "Lain-Screenshot").apply { isDaemon = true }
+        }
+    }
+
     private suspend fun captureScreenshotBitmap(): Bitmap? = suspendCancellableCoroutine { cont ->
         takeScreenshot(
             Display.DEFAULT_DISPLAY,
-            ContextCompat.getMainExecutor(this),
+            screenshotExecutor,
             object : TakeScreenshotCallback {
                 override fun onSuccess(result: ScreenshotResult) {
                     val hardwareBitmap = Bitmap.wrapHardwareBuffer(result.hardwareBuffer, result.colorSpace)
@@ -524,6 +561,10 @@ class LainAccessibilityService : AccessibilityService() {
                 }
 
                 override fun onFailure(errorCode: Int) {
+                    AccessibilityMonitor.record(
+                        AccessibilityMonitor.Event.COMMAND_REJECTED,
+                        "takeScreenshot failed, code $errorCode"
+                    )
                     if (cont.isActive) cont.resume(null)
                 }
             }

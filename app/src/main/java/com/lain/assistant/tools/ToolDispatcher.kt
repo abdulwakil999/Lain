@@ -7,6 +7,7 @@ import com.lain.assistant.automation.AppLauncher
 import com.lain.assistant.automation.AutomationResult
 import com.lain.assistant.automation.CameraController
 import com.lain.assistant.automation.DeviceController
+import com.lain.assistant.automation.AccessibilityMonitor
 import com.lain.assistant.automation.LainAccessibilityService
 import com.lain.assistant.automation.MessageFlow
 import com.lain.assistant.automation.NotesRepository
@@ -108,7 +109,7 @@ class ToolDispatcher(context: Context) {
             }
         }
 
-        "close_app" -> withService { service ->
+        "close_app" -> withService("close_app") { service ->
             service.closeCurrentApp()
             ToolResult.ok("Closed ${args.str("app_name")}.")
         }
@@ -117,16 +118,16 @@ class ToolDispatcher(context: Context) {
 
         "open_settings_page" -> device.openSettingsPage(args.str("page"))
 
-        "current_app" -> withService { service ->
+        "current_app" -> withService("current_app") { service ->
             val fg = service.foregroundApp()
             if (fg == null) ToolResult.ok("Lain's own screen is in the foreground — no other app is open.")
             else ToolResult.ok("Foreground app: ${fg.second} (${fg.first})")
         }
 
         // ---------------------------------------------------- perception
-        "read_screen" -> withService { ToolResult.ok(it.readScreenText()) }
+        "read_screen" -> withService("read_screen") { ToolResult.ok(it.readScreenText()) }
 
-        "look_at_screen" -> withService { service ->
+        "look_at_screen" -> withService("look_at_screen") { service ->
             val shot = service.captureScreenshotBase64()
             if (shot == null) {
                 ToolResult.fail(
@@ -144,7 +145,7 @@ class ToolDispatcher(context: Context) {
         // screen dump back through the model. On a ten-step task that's ten dense
         // screens and seven seconds of pure sleeping. They now wait for the UI to
         // actually settle and return the compact, interactive-only view.
-        "tap_text" -> withService { service ->
+        "tap_text" -> withService("tap_text") { service ->
             val label = args.str("text")
             if (service.findTapPointByText(label) == null) {
                 ToolResult.fail(
@@ -160,7 +161,7 @@ class ToolDispatcher(context: Context) {
             }
         }
 
-        "tap_screen" -> withService { service ->
+        "tap_screen" -> withService("tap_screen") { service ->
             val x = args.num("x"); val y = args.num("y")
             val tapped = service.tap(x, y)
             if (tapped) {
@@ -171,7 +172,7 @@ class ToolDispatcher(context: Context) {
             }
         }
 
-        "type_text" -> withService { service ->
+        "type_text" -> withService("type_text") { service ->
             val text = args.str("text")
             if (service.typeText(text)) {
                 // Typing redraws the field; a short settle is enough, and submitting
@@ -201,7 +202,7 @@ class ToolDispatcher(context: Context) {
             }
         }
 
-        "press_key" -> withService { service ->
+        "press_key" -> withService("press_key") { service ->
             val key = args.str("key").lowercase()
             val label = when (key) {
                 "back" -> { service.goBack(); "Pressed back." }
@@ -230,7 +231,7 @@ class ToolDispatcher(context: Context) {
             ToolResult.ok(label, data = mapOf("screen" to service.readScreenCompact()))
         }
 
-        "swipe_screen" -> withService { service ->
+        "swipe_screen" -> withService("swipe_screen") { service ->
             service.swipe(args.num("x1"), args.num("y1"), args.num("x2"), args.num("y2"))
             service.awaitSettle()
             ToolResult.ok("Swiped.", data = mapOf("screen" to service.readScreenCompact()))
@@ -387,14 +388,52 @@ class ToolDispatcher(context: Context) {
     /**
      * Single gate for anything needing the Accessibility Service, so the agent gets
      * a precise reason (off vs. enabled-but-not-bound) instead of a generic refusal.
+     *
+     * Also the single point where screen commands are recorded. Every command that
+     * reaches the service produces a RECEIVED and then exactly one of EXECUTED,
+     * VERIFIED, REJECTED or EXCEPTION, so a log read after a failure shows whether
+     * the command arrived, whether it ran, and whether the outcome was confirmed.
+     * The distinction matters: "Lain said it tapped and nothing happened" and "Lain
+     * never got the tap" are different bugs and had previously looked identical.
      */
-    private suspend fun withService(block: suspend (LainAccessibilityService) -> ToolResult): ToolResult {
+    private suspend fun withService(
+        command: String,
+        block: suspend (LainAccessibilityService) -> ToolResult
+    ): ToolResult {
+        AccessibilityMonitor.record(AccessibilityMonitor.Event.COMMAND_RECEIVED, command)
         val service = LainAccessibilityService.instance
-            ?: return ToolResult.fail(
+        if (service == null) {
+            // Re-read Settings before answering: the state may have gone stale while
+            // the app was backgrounded, and the advice differs per state.
+            AccessibilityMonitor.reconcile(appContext)
+            AccessibilityMonitor.record(
+                AccessibilityMonitor.Event.COMMAND_REJECTED,
+                "$command: no bound service"
+            )
+            return ToolResult.fail(
                 FailureKind.PERMISSION,
                 LainAccessibilityService.unavailableReason(appContext)
             )
-        return block(service)
+        }
+        val startedAt = android.os.SystemClock.elapsedRealtime()
+        val result = try {
+            block(service)
+        } catch (t: Throwable) {
+            AccessibilityMonitor.recordException(command, t)
+            throw t
+        }
+        val took = android.os.SystemClock.elapsedRealtime() - startedAt
+        // A screen payload means the post-state was actually read back off the device,
+        // which is the only verification available to us. Without it we know the call
+        // returned, not that the screen changed — so it stays EXECUTED, not VERIFIED.
+        val event = when {
+            !result.success -> AccessibilityMonitor.Event.COMMAND_REJECTED
+            result.data.containsKey("screen") || result.image != null ->
+                AccessibilityMonitor.Event.COMMAND_VERIFIED
+            else -> AccessibilityMonitor.Event.COMMAND_EXECUTED
+        }
+        AccessibilityMonitor.record(event, "$command in ${took}ms")
+        return result
     }
 
     private fun AutomationResult.asResult(permissionKind: FailureKind): ToolResult = when (this) {

@@ -23,6 +23,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,6 +36,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.lain.assistant.automation.AccessibilityMonitor
+import com.lain.assistant.automation.AccessibilityState
 import com.lain.assistant.automation.LainAccessibilityService
 import com.lain.assistant.ui.theme.LainCream
 import com.lain.assistant.ui.theme.LainNavy
@@ -121,6 +124,40 @@ fun openAppInfo(context: Context) {
 fun openAppInfoForAccessibility(context: Context) = openAccessibilitySettingsForLain(context)
 
 /**
+ * Whether Android has stopped applying background restrictions to Lain.
+ *
+ * Relevant to Accessibility specifically: when an OEM battery manager kills the
+ * app's process, the Accessibility binding dies with it, and the user sees a
+ * service that "randomly turns itself off". Knowing which side of that line we
+ * are on is the difference between useful advice and a shrug.
+ */
+fun isIgnoringBatteryOptimisations(context: Context): Boolean = runCatching {
+    val power = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+    power?.isIgnoringBatteryOptimizations(context.packageName) ?: false
+}.getOrDefault(false)
+
+/**
+ * Opens the battery-optimisation *list*, where the user picks Lain themselves.
+ *
+ * Deliberately not `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`: that is the
+ * one-tap "allow?" dialog, it needs the REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+ * permission, and Play policy limits it to apps whose core function genuinely
+ * requires it. Lain works fine without the exemption — it just drops the
+ * Accessibility binding more often on aggressive OEMs — so this offers the
+ * setting rather than requesting the grant.
+ */
+fun openBatteryOptimisationSettings(context: Context) {
+    val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    try {
+        context.startActivity(intent)
+    } catch (_: ActivityNotFoundException) {
+        // Some OEM ROMs drop the AOSP screen and keep only their own battery UI.
+        openAppInfo(context)
+    }
+}
+
+/**
  * Banner shown whenever screen automation isn't currently available.
  *
  * It distinguishes "never switched on" from "switched on but the binding died",
@@ -132,22 +169,27 @@ fun openAppInfoForAccessibility(context: Context) = openAccessibilitySettingsFor
 fun AccessibilityServiceBanner(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    var resumeTick by remember { mutableStateOf(0) }
 
+    // Observed, not polled. The previous version only re-checked on ON_RESUME, so a
+    // service that dropped while the app was open showed nothing until the user left
+    // and came back — which is precisely the moment the user is wondering why Lain
+    // stopped responding.
+    val state by AccessibilityMonitor.state.collectAsState()
+
+    // Settings can change without any callback reaching this process (the user
+    // switching it off, or Android killing us), so reconcile against Settings.Secure
+    // whenever the app comes forward.
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) resumeTick++
+            if (event == Lifecycle.Event.ON_RESUME) AccessibilityMonitor.reconcile(context)
         }
         lifecycleOwner.lifecycle.addObserver(observer)
+        AccessibilityMonitor.reconcile(context)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // health() reads a plain static plus a Settings.Secure lookup — neither is observable
-    // state, so resumeTick is what forces this to be re-evaluated after a trip to Settings.
-    val health = remember(resumeTick) { LainAccessibilityService.health(context) }
-    if (health == LainAccessibilityService.ServiceHealth.READY) return
-
-    val stalled = health == LainAccessibilityService.ServiceHealth.STALLED
+    if (state == AccessibilityState.CONNECTED) return
+    val stalled = state == AccessibilityState.CONNECTING
 
     Column(
         modifier = modifier
@@ -159,17 +201,15 @@ fun AccessibilityServiceBanner(modifier: Modifier = Modifier) {
     ) {
         Text(
             if (stalled) {
-                "Lain's Accessibility Service is on but has lost its connection — Android does this after an update " +
+                "Lain's Accessibility Service is on but not connected — Android does this after an update " +
                     "or when it reclaims memory. Tap here, then switch Lain off and back on. Five seconds."
             } else {
-                "Turn on Lain's Accessibility Service so she can read and tap your screen. Tap here to go straight " +
-                    "to her switch."
+                "Turn on Lain's Accessibility Service so she can read and tap your screen. Tap here to go " +
+                    "straight to her switch."
             },
             color = LainCream,
             style = MaterialTheme.typography.bodyMedium
         )
-        // Only surfaced for the genuinely-off case: it's the restricted-settings escape
-        // hatch for a fresh sideload, and irrelevant once the service has ever run.
         if (!stalled) {
             Spacer(Modifier.height(8.dp))
             Text(

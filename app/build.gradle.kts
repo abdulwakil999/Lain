@@ -14,14 +14,22 @@ android {
         applicationId = "com.lain.assistant"
         minSdk = 26
         targetSdk = 35
-        versionCode = 16
-        versionName = "0.13.1"
+        versionCode = 17
+        versionName = "0.14.0"
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+    }
+
+    testOptions {
+        unitTests {
+            // AccessibilityMonitor logs through android.util.Log; without this the
+            // JVM stubs throw "not mocked" and the state machine can't be tested at all.
+            isReturnDefaultValues = true
         }
     }
 
