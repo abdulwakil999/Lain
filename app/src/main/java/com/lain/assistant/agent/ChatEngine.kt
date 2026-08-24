@@ -130,6 +130,31 @@ class ChatEngine(
         /** How many past tool results are replayed as context, and how much of each. */
         /** Ceiling on pictures sent in one turn; each is a large slice of the window. */
         private const val MAX_ATTACHED_IMAGES = 3
+        /** Said when a model narrates twice instead of acting. */
+        private const val STALLED_MESSAGE =
+            "That model kept describing what it was going to do instead of doing it, so nothing has " +
+                "happened. Its working is below. A stronger model in Settings handles this better."
+
+        /** Said when a model runs out of room twice over. */
+        private const val TRUNCATED_MESSAGE =
+            "That model ran out of room before it got to the action, twice — so nothing has happened. " +
+                "Its working is below. Try a shorter request, or a stronger model in Settings."
+
+        /** Ceiling on stashed working, so a stalling model can't fill the transcript. */
+        private const val MAX_WORKING_CHARS = 4_000
+
+        /**
+         * Words that make a request depend on the one before it. Padded with spaces
+         * at the call site so "it" doesn't match inside "with" or "digital".
+         */
+        private val BACKWARD_REFERENCES = listOf(
+            " it ", " it.", " it?", " that ", " that.", " that?", " them ", " those ",
+            " again", " same ", " her ", " him ", " they ", " this one", " the one",
+            " instead", " too ", " as well", " also send", " and send", " resend",
+            " like before", " like last", " previous", " earlier", " just did",
+            " you sent", " you called", " you opened", " undo", " cancel that"
+        )
+
         private const val RECENT_ACTIONS = 3
         private const val ACTION_RECAP_CHARS = 140
     }
@@ -640,6 +665,7 @@ class ChatEngine(
         // is a summary; the same words with nothing done is a stall.
         var toolsRan = false
         var nudgedForDeliberation = false
+        var retriedAfterTruncation = false
         // Kept, not discarded: the user asked to be able to open it up and look.
         var monologue: String? = null
         // Explicit type: the null check above smart-casts the val, but `var` inference
@@ -655,6 +681,10 @@ class ChatEngine(
             // ceiling is lifted only for the final round, where the model is likely
             // writing the actual answer rather than picking an action.
             val tuning = when {
+                // Given room precisely once, and only after being cut off. Raising the
+                // ceiling for everyone would buy longer monologues rather than fewer;
+                // the instruction sent with it is what does the work.
+                retriedAfterTruncation -> RequestTuning.TOOL_STEP.copy(maxTokens = 2000)
                 deliveryMode == DeliveryMode.VOICE -> RequestTuning.SPOKEN
                 rounds == 1 -> RequestTuning.TOOL_STEP
                 else -> RequestTuning.TOOL_STEP.copy(maxTokens = 1000)
@@ -672,21 +702,53 @@ class ChatEngine(
             when (val result = outcome.result) {
                 is StreamOutcome.Text -> {
                     // A model that narrates its plan instead of acting has not
-                    // answered — showing that paragraph as the reply is how Lain ends
-                    // up talking to herself in front of the user. Pushed once, and
-                    // only once: if it does it again the text is surfaced honestly
-                    // rather than retried forever.
-                    if (!nudgedForDeliberation &&
-                        route !is Route.Chat &&
+                    // answered. Showing that paragraph as the reply is how Lain ends up
+                    // talking to herself in front of the user, so it never becomes the
+                    // reply body: it is stashed as working, and the model is pushed to
+                    // act. If it stalls again the turn ends with a plain statement of
+                    // what went wrong and the narration folded away behind it.
+                    if (route !is Route.Chat &&
                         Deliberation.isThinkingOutLoud(result.text, actedThisTurn = toolsRan)
                     ) {
-                        nudgedForDeliberation = true
                         speaker?.stop()
-                        history.add(LlmMessage(role = LlmMessage.Role.ASSISTANT, text = result.text))
-                        history.add(LlmMessage(role = LlmMessage.Role.USER, text = Deliberation.NUDGE))
-                        monologue = result.text
+                        monologue = appendWorking(monologue, result.text)
+                        if (!nudgedForDeliberation) {
+                            nudgedForDeliberation = true
+                            history.add(LlmMessage(role = LlmMessage.Role.ASSISTANT, text = result.text))
+                            history.add(LlmMessage(role = LlmMessage.Role.USER, text = Deliberation.NUDGE))
+                        } else {
+                            // Twice is a pattern, not a slip. Stop rather than loop.
+                            finalText = STALLED_MESSAGE
+                        }
                     } else {
                         finalText = result.text
+                    }
+                }
+
+                is StreamOutcome.Truncated -> {
+                    // Ran out of room mid-sentence. This is the failure behind "it
+                    // replies with its thinking and never does the thing": a model that
+                    // spends its whole budget narrating gets cut off before it ever
+                    // emits the tool call, and the half-written thought was being shown
+                    // as the answer.
+                    //
+                    // Retried once with real room and an instruction to lead with the
+                    // tool call — not simply a bigger number, which would just buy a
+                    // longer monologue. The partial goes to working, never to the reply.
+                    speaker?.stop()
+                    monologue = appendWorking(monologue, result.partial)
+                    if (!retriedAfterTruncation) {
+                        retriedAfterTruncation = true
+                        history.add(
+                            LlmMessage(
+                                role = LlmMessage.Role.USER,
+                                text = "Your last reply was cut off — you used the whole budget before doing " +
+                                    "anything. Start with the tool call itself. No preamble, no plan, no " +
+                                    "restating the request."
+                            )
+                        )
+                    } else {
+                        finalText = TRUNCATED_MESSAGE
                     }
                 }
 
@@ -795,6 +857,9 @@ class ChatEngine(
         data class Text(val text: String) : StreamOutcome()
         data class Tools(val calls: List<ToolCall>) : StreamOutcome()
         data class Failed(val message: String) : StreamOutcome()
+
+        /** Cut off at the token ceiling. Not an answer; the caller retries with room. */
+        data class Truncated(val partial: String) : StreamOutcome()
     }
 
     /**
@@ -872,6 +937,13 @@ class ChatEngine(
                         outcome = StreamOutcome.Tools(event.calls)
                     }
 
+                    is StreamEvent.Truncated -> {
+                        trace.mark("truncated")
+                        // Whatever was queued to speak was half a thought. Drop it.
+                        if (speakAloud) speaker?.stop()
+                        outcome = StreamOutcome.Truncated(event.partial)
+                    }
+
                     is StreamEvent.Failed -> {
                         trace.mark("failed")
                         outcome = StreamOutcome.Failed(event.message)
@@ -889,6 +961,17 @@ class ChatEngine(
             _state.update { it.copy(streamingText = null) }
         }
         return outcome
+    }
+
+    /**
+     * Accumulates the model's working across the rounds of one turn.
+     *
+     * Bounded, because a model that stalls repeatedly can produce a great deal of it
+     * and none of it is the answer.
+     */
+    private fun appendWorking(existing: String?, addition: String): String {
+        val next = if (existing.isNullOrBlank()) addition else "$existing\n\n---\n\n$addition"
+        return next.takeLast(MAX_WORKING_CHARS)
     }
 
     /** The single place a completed turn lands in the transcript, the database and the speaker. */
@@ -1246,22 +1329,50 @@ class ChatEngine(
         // it would answer about the message it had already sent instead of placing the
         // call — which is exactly the request mix-up this caused. The request must be
         // the last thing in the window; everything else is background.
-        val actions = raw.filter { it.role == "tool" && it.content.isNotBlank() }.takeLast(RECENT_ACTIONS)
-        if (actions.isNotEmpty()) {
-            val recap = LlmMessage(
-                role = LlmMessage.Role.USER,
-                // Marked as earlier context rather than as outstanding work, so a
-                // finished task from two requests ago cannot read as a pending one.
-                text = "(earlier in this conversation, already finished: " +
-                    actions.joinToString("; ") { it.content.take(ACTION_RECAP_CHARS) } + ")"
-            )
-            val lastUser = out.indexOfLast { it.role == LlmMessage.Role.USER }
-            if (lastUser >= 0) out.add(lastUser, recap) else out += recap
+        // Only when the request actually reaches backwards.
+        //
+        // Including it unconditionally is what made older requests bleed into new
+        // ones: "call Ade" arrived with a paragraph about the message just sent to
+        // Moyo attached, and a weak model treated the nearest concrete detail as the
+        // subject. A fresh, self-contained instruction needs none of that history —
+        // the turns themselves are already in the window. It is added only when the
+        // wording depends on something previous ("send it again", "the same one"),
+        // which is exactly when leaving it out would break the request instead.
+        val lastUserTurn = turns.lastOrNull { it.role == "user" }?.content.orEmpty()
+        if (refersBackwards(lastUserTurn)) {
+            val actions = raw.filter { it.role == "tool" && it.content.isNotBlank() }.takeLast(RECENT_ACTIONS)
+            if (actions.isNotEmpty()) {
+                val recap = LlmMessage(
+                    role = LlmMessage.Role.USER,
+                    // Marked as finished history rather than outstanding work, so a
+                    // completed task cannot read as a pending one.
+                    text = "(earlier in this conversation, already finished: " +
+                        actions.joinToString("; ") { it.content.take(ACTION_RECAP_CHARS) } + ")"
+                )
+                val lastUser = out.indexOfLast { it.role == LlmMessage.Role.USER }
+                if (lastUser >= 0) out.add(lastUser, recap) else out += recap
+            }
         }
 
         // A provider will reject a history that opens on an assistant turn.
         while (out.isNotEmpty() && out.first().role != LlmMessage.Role.USER) out.removeAt(0)
         return out
+    }
+
+    /**
+     * Whether a request depends on what came before it.
+     *
+     * A bare pronoun or a word like "again" means the sentence cannot be understood
+     * on its own; anything else is self-contained, and handing it the previous
+     * task's details only gives a weak model something wrong to latch onto.
+     *
+     * Errs towards including: a false positive costs a few tokens of context, while
+     * a false negative breaks "send it again" outright.
+     */
+    private fun refersBackwards(message: String): Boolean {
+        val t = " ${message.lowercase().trim()} "
+        if (t.isBlank()) return false
+        return BACKWARD_REFERENCES.any { t.contains(it) }
     }
 
     private suspend fun persistAssistantToolCalls(cid: String, calls: List<ToolCall>) {

@@ -49,7 +49,13 @@ class ReasoningFilter {
             // the final channel is the answer. Treating "final" as a closer means
             // everything before it is dropped and everything after is kept.
             "<|channel|>analysis<|message|>" to "<|channel|>final<|message|>",
-            "<|channel|>commentary<|message|>" to "<|channel|>final<|message|>"
+            "<|channel|>commentary<|message|>" to "<|channel|>final<|message|>",
+            // Moonshot/Kimi use guillemet-style brackets rather than angle ones, so
+            // nothing above catches them and the whole thought lands in the reply.
+            "◁think▷" to "◁/think▷",
+            "<|reasoning|>" to "<|/reasoning|>",
+            "[THINK]" to "[/THINK]",
+            "<thought>" to "</thought>"
         )
 
         val OPENERS = PAIRS.map { it.first }
@@ -60,6 +66,9 @@ class ReasoningFilter {
          * appear so a stray one can't end up on screen.
          */
         val STRUCTURAL = listOf("<|start|>assistant", "<|start|>", "<|end|>", "<|return|>", "<|message|>")
+
+        /** Ceiling on retained reasoning. It is context for a failure, not a document. */
+        const val MAX_CAPTURED = 4_000
 
         val LONGEST_MARKER = (OPENERS + CLOSERS + STRUCTURAL).maxOf { it.length }
 
@@ -95,6 +104,19 @@ class ReasoningFilter {
     var emittedAnything = false
         private set
 
+    private val kept = StringBuilder()
+
+    /**
+     * The reasoning that was stripped out.
+     *
+     * Kept rather than thrown away so the caller can fold it into the message as
+     * working the user can open. It matters most in the case that motivated it: a
+     * model cut off inside an unclosed think block emits no visible text at all, so
+     * without this the "her working" section would be empty for exactly the failure
+     * the user most wants to look at.
+     */
+    val captured: String get() = kept.toString().trim()
+
     /**
      * Feeds one streamed fragment.
      *
@@ -127,6 +149,7 @@ class ReasoningFilter {
                 if (at >= 0) {
                     // Everything up to and including the closer is internal. Harmony's
                     // "final" closer is itself a channel header, so it goes too.
+                    retainReasoning(buffer.substring(0, at))
                     buffer.delete(0, at + closer.length)
                     insideReasoning = false
                     closerFor = null
@@ -136,6 +159,7 @@ class ReasoningFilter {
                 // Still thinking. Drop everything that can't be the start of a closer.
                 val keep = if (flushing) 0 else partialMarkerTail(buffer, CLOSERS)
                 if (buffer.length > keep) {
+                    retainReasoning(buffer.substring(0, buffer.length - keep))
                     buffer.delete(0, buffer.length - keep)
                     strippedAnything = true
                 }
@@ -165,6 +189,14 @@ class ReasoningFilter {
         val text = stripStructural(out.toString())
         if (text.isNotEmpty()) emittedAnything = true
         return text
+    }
+
+    /** Accumulates stripped reasoning, bounded so a runaway model can't grow it forever. */
+    private fun retainReasoning(fragment: String) {
+        if (fragment.isEmpty()) return
+        if (kept.length >= MAX_CAPTURED) return
+        kept.append(fragment)
+        if (kept.length > MAX_CAPTURED) kept.setLength(MAX_CAPTURED)
     }
 
     /** The first opening marker present, with its position. */

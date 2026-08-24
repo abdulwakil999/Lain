@@ -156,3 +156,53 @@ class ReasoningFilterTest {
         assertEquals("done <", ReasoningFilter.clean("done <"))
     }
 }
+
+/**
+ * Capturing what was stripped, rather than dropping it.
+ *
+ * The case that matters: a model cut off inside an unclosed think block emits no
+ * visible text at all, so without capture the "her working" section would be empty
+ * for exactly the failure the user most wants to look at.
+ */
+class ReasoningCaptureTest {
+
+    @Test
+    fun `a closed block is stripped and kept`() {
+        val filter = ReasoningFilter()
+        val visible = filter.push("<think>the user wants the time</think>It's 4:14 pm.")
+        assertEquals("It's 4:14 pm.", visible.trim())
+        assertTrue(filter.captured.contains("the user wants the time"))
+    }
+
+    @Test
+    fun `an unclosed block still yields the working`() {
+        val filter = ReasoningFilter()
+        val visible = filter.push("<think>okay so I need to look up the contact and then")
+        val tail = filter.flush()
+        assertEquals("", (visible + tail).trim())
+        assertTrue(filter.captured.contains("look up the contact"))
+    }
+
+    @Test
+    fun `guillemet markers are recognised`() {
+        val filter = ReasoningFilter()
+        val visible = filter.push("◁think▷planning◁/think▷Done.")
+        assertEquals("Done.", visible.trim())
+        assertTrue(filter.captured.contains("planning"))
+    }
+
+    @Test
+    fun `nothing is captured when there was no reasoning`() {
+        val filter = ReasoningFilter()
+        filter.push("Opened Spotify.")
+        assertEquals("", filter.captured)
+    }
+
+    @Test
+    fun `capture is bounded`() {
+        val filter = ReasoningFilter()
+        filter.push("<think>" + "a".repeat(20_000))
+        filter.flush()
+        assertTrue(filter.captured.length <= ReasoningFilter.MAX_CAPTURED)
+    }
+}

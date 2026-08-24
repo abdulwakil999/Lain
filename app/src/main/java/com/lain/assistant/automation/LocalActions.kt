@@ -162,10 +162,31 @@ class LocalActions(private val context: Context) {
      */
     private suspend fun schedule(phrase: String, alarm: Boolean): String? {
         val parsed = WhenParser.parse(phrase) ?: return null
+
+        // "call mama every day at 7" is a scheduled *call*, not a note to self.
+        //
+        // Everything used to become ALARM or REMIND, so the headline case turned into
+        // a reminder captioned "call mama" — a notification the user then had to act
+        // on themselves, which is precisely the work they asked to be rid of. When a
+        // person is named, it becomes a task that rings with a Call button.
+        val outward = outwardTarget(parsed.remainder)
+        val action = when {
+            outward != null -> TaskAction.CALL
+            alarm -> TaskAction.ALARM
+            else -> TaskAction.REMIND
+        }
+
+        // Resolved now rather than at fire time, so an unknown name is corrected while
+        // the user is still here.
+        if (outward != null && phone.resolveContact(outward) !is PhoneController.ContactMatch.One) {
+            return null
+        }
+
         val label = parsed.remainder.ifBlank { if (alarm) "Alarm" else "Reminder" }
         val task = ScheduledTask(
             label = label,
-            action = if (alarm) TaskAction.ALARM else TaskAction.REMIND,
+            action = action,
+            target = outward.orEmpty(),
             triggerAtMillis = parsed.triggerAtMillis,
             repeat = parsed.repeat
         )
@@ -179,13 +200,34 @@ class LocalActions(private val context: Context) {
                 val drift = if (outcome.exact) "" else
                     " Android hasn't granted Lain exact alarms, so it could be a few minutes out — " +
                         "allow \"Alarms & reminders\" for Lain in Settings."
-                if (alarm) "Alarm set for $when_$repeat.$drift"
-                else "I'll remind you at $when_$repeat — $label.$drift"
+                when (outcome.task.action) {
+                    TaskAction.CALL ->
+                        "Set. I'll ring you at $when_$repeat to call ${outcome.task.target} — one tap and " +
+                            "it dials.$drift"
+                    TaskAction.ALARM -> "Alarm set for $when_$repeat.$drift"
+                    else -> "I'll remind you at $when_$repeat — $label.$drift"
+                }
             }
             // A failure here falls back to the model, which can ask the user what
             // they meant rather than leaving them with nothing.
             is SchedulingOutcome.Failed -> null
         }
+    }
+
+    /**
+     * The person a scheduled phrase is aimed at, if any.
+     *
+     * Only fires on an explicit verb of contact followed by a name, so "remind me to
+     * buy milk" stays a reminder. Anything vaguer is left alone — a wrong guess here
+     * schedules a phone call nobody asked for.
+     */
+    private fun outwardTarget(remainder: String): String? {
+        val m = Regex("^(?:call|ring|phone|dial)\\s+(.{2,40})$").find(remainder.trim().lowercase())
+            ?: return null
+        val who = m.groupValues[1].trim().trim('.', ',')
+        // "call it a day", "call back" — speech, not telephony.
+        if (who.startsWith("it") || who.startsWith("back") || who.startsWith("me")) return null
+        return who.takeIf { it.isNotBlank() }
     }
 
     private suspend fun listSchedule(): String {

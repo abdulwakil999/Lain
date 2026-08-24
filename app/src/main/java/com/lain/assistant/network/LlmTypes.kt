@@ -99,6 +99,19 @@ sealed class StreamEvent {
     /** Generation finished cleanly. [text] is the complete assembled message. */
     data class Done(val text: String) : StreamEvent()
 
+    /**
+     * The model hit its token ceiling mid-sentence.
+     *
+     * Reported separately because it is not an answer, and treating it as one is how
+     * a task silently dies: a model that spends its whole budget narrating a plan
+     * gets cut off before it ever emits the tool call, and the half-written thought
+     * is then shown to the user as though it were the reply. The caller can retry
+     * with more room instead.
+     *
+     * @param partial whatever was produced before the cut, for context on a retry
+     */
+    data class Truncated(val partial: String) : StreamEvent()
+
     data class Failed(val message: String) : StreamEvent()
 }
 

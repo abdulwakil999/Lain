@@ -167,6 +167,9 @@ class OpenAiCompatibleClient(
 
             val text = StringBuilder()
             val toolAccumulator = sortedMapOf<Int, PartialToolCall>()
+            // Why generation stopped. Never read before, so a reply cut off at the
+            // token ceiling was indistinguishable from a finished one.
+            var finishReason: String? = null
             // Second line of defence: even with `exclude` asked for, some models emit
             // their reasoning inline in `content` and the provider passes it through.
             val reasoning = ReasoningFilter()
@@ -184,6 +187,7 @@ class OpenAiCompatibleClient(
                 if (payload.isEmpty()) continue
                 if (payload == "[DONE]") break
 
+                runCatching { finishReasonOf(payload) }.getOrNull()?.let { finishReason = it }
                 val raw = runCatching { parseStreamChunk(payload, toolAccumulator) }.getOrNull() ?: continue
                 if (raw.isNotEmpty()) {
                     // Only what survives the filter is shown or spoken. A fragment may
@@ -213,6 +217,21 @@ class OpenAiCompatibleClient(
             when {
                 // Tool calls are untouched by the filter — it only ever sees `content`.
                 calls.isNotEmpty() -> emit(StreamEvent.Tools(calls))
+
+                // Cut off mid-generation. Not an answer, and must not be shown as one:
+                // this is the failure behind "it just replies with its thinking and
+                // never does the thing".
+                finishReason == "length" -> emit(
+                    // The visible text plus whatever was stripped. A model cut off
+                    // inside an unclosed think block produces no visible text at all,
+                    // so without the reasoning there would be nothing to show the user
+                    // for exactly the failure they most want to look at.
+                    StreamEvent.Truncated(
+                        listOf(text.toString().trim(), reasoning.captured)
+                            .filter { it.isNotEmpty() }
+                            .joinToString("\n\n")
+                    )
+                )
                 // Everything the model produced was reasoning and it never closed the
                 // block. Reporting that is honest; showing a blank reply is not, and
                 // showing the reasoning is the leak this exists to stop.
@@ -229,6 +248,17 @@ class OpenAiCompatibleClient(
         var name: String? = null
         val arguments = StringBuilder()
     }
+
+    /**
+     * Why the model stopped, when this chunk says so.
+     *
+     * "length" means the token ceiling was hit; "stop" and "tool_calls" are clean
+     * endings. Providers send it on the final chunk and null everywhere else.
+     */
+    private fun finishReasonOf(payload: String): String? =
+        json.parseToJsonElement(payload).jsonObject["choices"]
+            ?.jsonArray?.firstOrNull()?.jsonObject
+            ?.get("finish_reason")?.jsonPrimitive?.contentOrNull
 
     /** @return the prose fragment in this chunk, if any. Tool fragments go into [into]. */
     private fun parseStreamChunk(payload: String, into: MutableMap<Int, PartialToolCall>): String {
