@@ -16,8 +16,8 @@ android {
         applicationId = "com.lain.assistant"
         minSdk = 26
         targetSdk = 35
-        versionCode = 20
-        versionName = "1.1.0"
+        versionCode = 21
+        versionName = "1.2.0"
     }
 
     /**
@@ -116,6 +116,9 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     implementation("androidx.datastore:datastore-preferences:1.1.1")
+    // Photos carry their rotation in EXIF rather than in the pixels; without this a
+    // portrait photo reaches the model sideways and it describes a sideways scene.
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
 
     // Conversations and long-term memory need real querying and migrations,
     // which JSON-in-preferences can't give us.

@@ -13,6 +13,7 @@ import com.lain.assistant.automation.MessageFlow
 import com.lain.assistant.automation.NotesRepository
 import com.lain.assistant.automation.PhoneController
 import com.lain.assistant.automation.QuickToggles
+import com.lain.assistant.automation.SimPreference
 import com.lain.assistant.automation.RemindersRepository
 import com.lain.assistant.automation.CancelOutcome
 import com.lain.assistant.automation.Scheduler
@@ -61,6 +62,7 @@ class ToolDispatcher(context: Context) {
     private val device = DeviceController(appContext)
     private val scheduler = Scheduler(appContext)
     private val toggles = QuickToggles(appContext)
+    private val sims = SimPreference(appContext)
     private val messaging = MessageFlow(appContext)
     private val web = WebResearch()
     private val memory = MemoryStore(appContext)
@@ -353,6 +355,8 @@ class ToolDispatcher(context: Context) {
         "set_ringer_mode" -> toggles.setRingerMode(args.str("mode"))
         "open_quick_toggle" -> toggles.openPanel(args.str("what"))
 
+        "set_preferred_sim" -> setPreferredSim(args.str("which"))
+
         "write_note" -> notes.addNote(args.str("text")).let { ToolResult.ok("Saved note: \"${it.text}\"") }
         "list_notes" -> notes.notes.first()
             .joinToString("\n") { "- ${it.text}" }
@@ -419,6 +423,42 @@ class ToolDispatcher(context: Context) {
         else -> ToolResult.fail(FailureKind.INVALID_INPUT, "Unknown tool: $name")
     }
 
+    /**
+     * Remembers which SIM to use, so a dual-SIM phone stops asking every time.
+     *
+     * Honest about the split: texts genuinely go out on the chosen SIM with no
+     * prompt, while for calls this is a hint the system dialler honours and some
+     * third-party diallers ignore. Saying "it's set" for both would be half a lie.
+     */
+    private suspend fun setPreferredSim(which: String): ToolResult {
+        val available = sims.available()
+        return when {
+            available.isEmpty() -> ToolResult.fail(
+                FailureKind.CAPABILITY_UNAVAILABLE,
+                "Lain can't read the SIM list — that needs the phone permission, which hasn't been granted."
+            )
+            available.size == 1 -> ToolResult.ok(
+                "There's only one SIM in this phone (${available.first().describe()}), so there's nothing to choose."
+            )
+            which.isBlank() -> ToolResult.fail(
+                FailureKind.INVALID_INPUT,
+                "Which one? " + available.joinToString(", ") { it.describe() }
+            )
+            else -> {
+                val chosen = sims.match(which) ?: return ToolResult.fail(
+                    FailureKind.INVALID_INPUT,
+                    "\"$which\" doesn't match a SIM in this phone. Available: " +
+                        available.joinToString(", ") { it.describe() }
+                )
+                sims.remember(chosen.subscriptionId)
+                ToolResult.ok(
+                    "Texts will go out on ${chosen.describe()} from now on. For calls Lain passes that as a " +
+                        "hint — the system dialler follows it, but a third-party dialler may still ask."
+                )
+            }
+        }
+    }
+
     // ------------------------------------------------------------ scheduling
 
     /**
@@ -450,14 +490,58 @@ class ToolDispatcher(context: Context) {
             ?: parsed.repeat
 
         val target = args.str("target")
-        if (action in setOf(TaskAction.CALL, TaskAction.SMS, TaskAction.OPEN_APP) && target.isBlank()) {
+        val needsTarget = action in setOf(
+            TaskAction.CALL, TaskAction.SMS, TaskAction.WHATSAPP, TaskAction.OPEN_APP
+        )
+        if (needsTarget && target.isBlank()) {
             return ToolResult.fail(
                 FailureKind.INVALID_INPUT,
                 "A ${actionName.lowercase()} task needs a target — who to reach, or which app."
             )
         }
-        if (action == TaskAction.SMS && args.str("message").isBlank()) {
-            return ToolResult.fail(FailureKind.INVALID_INPUT, "A scheduled text needs the message to send.")
+        if (action in setOf(TaskAction.SMS, TaskAction.WHATSAPP) && args.str("message").isBlank()) {
+            return ToolResult.fail(FailureKind.INVALID_INPUT, "A scheduled message needs the text to send.")
+        }
+
+        // Resolved now, not at fire time.
+        //
+        // A task that names a contact who doesn't exist, or an app that isn't
+        // installed, used to be accepted cheerfully and then fail silently at seven
+        // in the morning — the worst possible moment to discover it, and with nobody
+        // watching to notice. Anything checkable is checked while the user is still
+        // here to correct it.
+        when (action) {
+            TaskAction.CALL, TaskAction.SMS, TaskAction.WHATSAPP -> {
+                when (val who = messaging.resolveRecipient(target)) {
+                    is MessageFlow.Recipient.Ambiguous -> return ToolResult.fail(
+                        FailureKind.INVALID_INPUT,
+                        "\"$target\" matches more than one contact:\n" +
+                            who.options.joinToString("\n") { "- ${it.name} (${it.number})" } +
+                            "\nAsk which one before scheduling this."
+                    )
+                    MessageFlow.Recipient.None -> return ToolResult.fail(
+                        FailureKind.INVALID_INPUT,
+                        "No contact matches \"$target\", and it isn't a number either. " +
+                            "Scheduling it would just fail later, so nothing has been set."
+                    )
+                    // Missing contacts permission is not a reason to refuse: the user
+                    // may grant it before the task fires, and a raw number needs no
+                    // lookup at all.
+                    MessageFlow.Recipient.NoPermission -> Unit
+                    is MessageFlow.Recipient.Number -> Unit
+                }
+            }
+
+            TaskAction.OPEN_APP -> {
+                if (apps.resolvePackage(target) == null) {
+                    return ToolResult.fail(
+                        FailureKind.INVALID_INPUT,
+                        "No installed app matches \"$target\", so that task would do nothing. Nothing has been set."
+                    )
+                }
+            }
+
+            else -> Unit
         }
 
         val task = ScheduledTask(
@@ -480,6 +564,9 @@ class ToolDispatcher(context: Context) {
                             "minutes late — allow \"Alarms & reminders\" for Lain in Settings to fix that."
                     outcome.task.action == TaskAction.CALL ->
                         " It'll ring and show a Call button — Lain won't dial on her own while you're away."
+                    outcome.task.action == TaskAction.WHATSAPP ->
+                        " WhatsApp has no send API, so Lain opens the chat with it typed and taps Send " +
+                            "herself if Accessibility is connected. She'll say which happened."
                     else -> ""
                 }
                 ToolResult.ok("Set: ${outcome.task.describe()}.$note")

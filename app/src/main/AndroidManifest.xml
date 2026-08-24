@@ -35,6 +35,11 @@
         tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
+    <!-- Lets a scheduled task raise its own screen when the phone is locked or the
+         screen is off. A plain activity start from a receiver is refused on Android
+         10+, which is why alarms fired on some phones and not others. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
     <!-- The alarm vibrates. Without this the pattern is silently ignored, so an
          alarm on a muted phone does nothing at all. -->
     <uses-permission android:name="android.permission.VIBRATE" />
@@ -192,6 +197,19 @@
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
         </service>
+
+        <!-- Grants the camera app write access to one folder in Lain's cache, and
+             nothing else. Required from Android 7: a bare file:// URI handed to
+             another app throws FileUriExposedException. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
         <receiver
             android:name=".automation.ReminderReceiver"

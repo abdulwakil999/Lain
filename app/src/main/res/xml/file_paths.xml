@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Where a camera capture is written before Lain reads it.
+
+    Scoped to one directory inside the app's own cache. A FileProvider is required
+    because handing a raw file:// URI to the camera app throws FileUriExposedException
+    on Android 7 and later, and the camera cannot write anywhere it does not own.
+-->
+<paths>
+    <cache-path name="captures" path="captures/" />
+</paths>

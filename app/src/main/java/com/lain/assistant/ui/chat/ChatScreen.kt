@@ -48,6 +48,13 @@ import com.lain.assistant.AppContainer
 import com.lain.assistant.data.ChatMessage
 import com.lain.assistant.data.Sender
 import com.lain.assistant.ui.LainViewModelFactory
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import com.lain.assistant.automation.Attachment
+import com.lain.assistant.ui.common.AttachButton
+import com.lain.assistant.ui.theme.LainNavy
 import com.lain.assistant.ui.common.MessageBubble
 import com.lain.assistant.ui.common.AccessibilityServiceBanner
 import com.lain.assistant.ui.common.HoveringPanel
@@ -263,6 +270,26 @@ fun ChatScreen(viewModel: ChatViewModel, container: AppContainer, autoListenToke
                 Spacer(Modifier.height(6.dp))
             }
 
+            // Attached files, above the bar. Shown before sending so a wrong pick can
+            // be dropped, and so a file Lain cannot read says so up front rather than
+            // after a round trip.
+            if (state.attachments.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    state.attachments.forEach { attachment ->
+                        AttachmentChip(
+                            attachment = attachment,
+                            onRemove = { viewModel.removeAttachment(attachment.uri) }
+                        )
+                    }
+                }
+            }
+
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // The stop button grows out of the bar only while something is running.
                 AnimatedVisibility(
@@ -302,11 +329,22 @@ fun ChatScreen(viewModel: ChatViewModel, container: AppContainer, autoListenToke
                     modifier = Modifier.weight(1f)
                 )
                 Spacer(Modifier.width(6.dp))
+                // On the right, next to Send — the two things you do once you've
+                // finished typing sit together.
+                AttachButton(
+                    enabled = !state.isSending,
+                    onAttach = viewModel::attach
+                )
+                Spacer(Modifier.width(6.dp))
+                // An attachment is a complete request on its own: sending a photo
+                // means "look at this", and demanding a caption first is friction for
+                // nothing.
+                val canSend = (state.input.isNotBlank() || state.attachments.isNotEmpty()) && !state.isSending
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(6.dp))
-                        .background(if (state.input.isBlank()) LainSalmon.copy(alpha = 0.4f) else LainSalmon)
-                        .clickable(enabled = state.input.isNotBlank() && !state.isSending) { viewModel.send() }
+                        .background(if (canSend) LainSalmon else LainSalmon.copy(alpha = 0.4f))
+                        .clickable(enabled = canSend) { viewModel.send() }
                         .padding(horizontal = 16.dp, vertical = 14.dp)
                 ) {
                     Text("Send", color = LainInk, style = MaterialTheme.typography.labelLarge)
@@ -349,5 +387,55 @@ private fun StreamingBubble(text: String, maxWidth: Dp) {
                 style = MaterialTheme.typography.bodyLarge
             )
         }
+    }
+}
+
+/**
+ * One attached file, before it is sent.
+ *
+ * Shows what Lain will actually be able to do with it. A `.docx` chip that says so
+ * now is far better than a confident "let me read that" followed by nothing —
+ * [com.lain.assistant.automation.AttachmentReader] has already tried by this point,
+ * so the label is fact rather than a guess from the extension.
+ */
+@Composable
+private fun AttachmentChip(attachment: Attachment, onRemove: () -> Unit) {
+    val unreadable = attachment.imageBase64 == null && attachment.extractedText == null
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(if (unreadable) LainNavy else LainSalmon.copy(alpha = 0.85f))
+            .padding(start = 10.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(
+                attachment.displayName.take(28),
+                style = MaterialTheme.typography.labelLarge,
+                color = if (unreadable) LainCream else LainInk,
+                maxLines = 1
+            )
+            val note = when {
+                attachment.imageBase64 != null -> "image · ${attachment.prettySize()}"
+                attachment.extractedText != null -> "text · ${attachment.prettySize()}"
+                else -> attachment.limitation ?: "can't be read"
+            }
+            Text(
+                note.take(42),
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (unreadable) LainMuted else LainInk.copy(alpha = 0.7f),
+                maxLines = 1
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(
+            "✕",
+            style = MaterialTheme.typography.labelLarge,
+            color = if (unreadable) LainMuted else LainInk,
+            modifier = Modifier
+                .clickable { onRemove() }
+                .padding(horizontal = 4.dp, vertical = 2.dp)
+                .semantics { contentDescription = "Remove ${attachment.displayName}" }
+        )
     }
 }

@@ -30,6 +30,16 @@ enum class TaskAction {
     /** Sends the text. Authored and confirmed when the task was created. */
     SMS,
 
+    /**
+     * Opens WhatsApp with the message drafted, and sends it if the Accessibility
+     * Service is connected.
+     *
+     * WhatsApp exposes no send API, so a scheduled WhatsApp message cannot be
+     * guaranteed the way an SMS can. It is offered anyway because it is what people
+     * actually use — and it reports honestly which of the two happened.
+     */
+    WHATSAPP,
+
     /** Brings an app to the front. */
     OPEN_APP
 }
@@ -84,6 +94,7 @@ data class ScheduledTask(
             TaskAction.ALARM -> "alarm: $label"
             TaskAction.CALL -> "call $target"
             TaskAction.SMS -> "text $target"
+            TaskAction.WHATSAPP -> "message $target on WhatsApp"
             TaskAction.OPEN_APP -> "open $target"
         }
         return "$time$day — $what" + if (!enabled) " (off)" else ""

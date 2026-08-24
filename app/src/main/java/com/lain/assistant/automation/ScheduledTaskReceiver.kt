@@ -69,29 +69,41 @@ class ScheduledTaskReceiver : BroadcastReceiver() {
         }
     }
 
-    private fun act(context: Context, task: ScheduledTask) = when (task.action) {
-        // The two loud ones get a full-screen surface so they work with the screen
-        // off and the phone locked, which is the entire point of an alarm.
-        TaskAction.ALARM, TaskAction.CALL -> AlarmActivity.raise(context, task)
+    private suspend fun act(context: Context, task: ScheduledTask) {
+        when (task.action) {
+            // The loud ones get a full-screen surface so they work with the screen off
+            // and the phone locked, which is the entire point of an alarm.
+            TaskAction.ALARM, TaskAction.CALL -> AlarmActivity.raise(context, task)
 
-        TaskAction.REMIND -> notify(context, task, task.label)
+            TaskAction.REMIND -> notify(context, task, task.label)
 
-        TaskAction.SMS -> {
-            val result = PhoneController(context).sendSms(task.target, task.payload)
-            // Reported either way. A text the user believes went out and didn't is
-            // the failure that actually costs them something.
-            notify(
-                context, task,
-                if (result is AutomationResult.Success) "Sent to ${task.target}: ${task.payload}"
-                else "Couldn't text ${task.target}: ${(result as? AutomationResult.Failure)?.reason ?: "permission missing"}"
-            )
-        }
+            TaskAction.SMS -> {
+                // The target is whatever the user called them — "mama", not a number.
+                // This used to hand that straight to SmsManager, which needs digits, so
+                // every scheduled text to a name failed at the moment it mattered and
+                // succeeded only if the user had typed a raw number.
+                when (val result = MessageFlow(context).send(task.target, task.payload, MessageFlow.Channel.SMS)) {
+                    else -> notify(
+                        context, task,
+                        if (result.success) "Sent to ${task.target}: ${task.payload}"
+                        else "Couldn't text ${task.target} — ${result.error ?: result.result}"
+                    )
+                }
+            }
 
-        TaskAction.OPEN_APP -> {
-            val opened = AppLauncher(context).openApp(task.target)
-            if (opened !is AutomationResult.Success) {
-                notify(context, task, "Couldn't open ${task.target}.")
-            } else Unit
+            TaskAction.WHATSAPP -> {
+                // Needs WhatsApp in the foreground, so it goes through the same
+                // full-screen route as an alarm rather than a background start.
+                AlarmActivity.raise(context, task)
+            }
+
+            TaskAction.OPEN_APP -> {
+                // Also a full-screen intent. A plain startActivity from a receiver is
+                // refused on Android 10+ unless the app happens to hold "display over
+                // other apps", so scheduled app launches worked on some phones and
+                // silently did nothing on others.
+                AlarmActivity.raise(context, task)
+            }
         }
     }
 

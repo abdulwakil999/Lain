@@ -126,6 +126,8 @@ object ToolRegistry {
         ToolMeta("set_ringer_mode", "Set silent, vibrate or normal, in-app.",
             permissions = listOf("ACCESS_NOTIFICATION_POLICY")),
         ToolMeta("open_quick_toggle", "Show the system wifi/data/bluetooth switch over Lain."),
+        ToolMeta("set_preferred_sim", "Remember which SIM to use for calls and texts.",
+            permissions = listOf("READ_PHONE_STATE")),
         ToolMeta("write_note", "Save a note."),
         ToolMeta("list_notes", "List saved notes."),
         ToolMeta("take_photo", "Capture a photo and look at it.",

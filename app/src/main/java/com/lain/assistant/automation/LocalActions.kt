@@ -305,30 +305,27 @@ class LocalActions(private val context: Context) {
 
     // --------------------------------------------------------------- phone
 
-    private suspend fun call(contact: String): String? {
-        val lookup = phone.lookupContact(contact)
-        if (lookup !is AutomationResult.Success) return null
+    private suspend fun call(contact: String): String? =
+        when (val match = phone.resolveContact(contact)) {
+            is PhoneController.ContactMatch.One -> {
+                when (val placed = phone.placeCall(match.contact.number)) {
+                    // Names who was actually matched, so "call moyo" reaching MoyOma
+                    // is visible before the phone starts ringing rather than after.
+                    is AutomationResult.Success -> "Calling ${match.contact.name}."
+                    is AutomationResult.Failure -> placed.reason
+                    is AutomationResult.MissingPermission -> null
+                }
+            }
 
-        val first = lookup.message.lineSequence().firstOrNull() ?: return null
-        val name = first.substringBeforeLast(':').trim()
-        val number = first.substringAfterLast(':').trim()
-        if (number.isBlank()) return null
+            // Two different people, similarly named. This is the one place where being
+            // fast must not mean being wrong — a call cannot be taken back.
+            is PhoneController.ContactMatch.Several ->
+                "There's more than one match for \"$contact\": " +
+                    match.contacts.joinToString("; ") { it.name } + ". Which one?"
 
-        // More than one match is genuinely ambiguous — ask rather than dial the wrong
-        // person. This is the one place where being fast must not mean being wrong.
-        val matches = lookup.message.lines().filter { it.isNotBlank() }
-        if (matches.size > 1) {
-            return "There's more than one match for \"$contact\": " +
-                matches.joinToString("; ") { it.substringBeforeLast(':').trim() } +
-                ". Which one?"
+            PhoneController.ContactMatch.None -> null
+            PhoneController.ContactMatch.NoPermission -> null
         }
-
-        return when (val placed = phone.placeCall(number)) {
-            is AutomationResult.Success -> "Calling $name."
-            is AutomationResult.Failure -> placed.reason
-            is AutomationResult.MissingPermission -> null
-        }
-    }
 
     // -------------------------------------------------------------- volume
 

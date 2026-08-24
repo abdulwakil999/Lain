@@ -1,6 +1,8 @@
 package com.lain.assistant.agent
 
 import android.content.Context
+import com.lain.assistant.automation.Attachment
+import com.lain.assistant.automation.AttachmentReader
 import com.lain.assistant.automation.LainAccessibilityService
 import com.lain.assistant.automation.LocalActions
 import com.lain.assistant.automation.VoiceInputController
@@ -58,6 +60,8 @@ import com.lain.assistant.tts.TtsEngineProvider
 data class ChatState(
     val messages: List<ChatMessage> = emptyList(),
     val input: String = "",
+    /** Files the user has attached but not sent yet. */
+    val attachments: List<Attachment> = emptyList(),
     val isSending: Boolean = false,
     val isListening: Boolean = false,
     val isMuted: Boolean = false,
@@ -124,11 +128,16 @@ class ChatEngine(
         private const val MAX_SPEECH_WAIT_MS = 60_000L
 
         /** How many past tool results are replayed as context, and how much of each. */
+        /** Ceiling on pictures sent in one turn; each is a large slice of the window. */
+        private const val MAX_ATTACHED_IMAGES = 3
         private const val RECENT_ACTIONS = 3
         private const val ACTION_RECAP_CHARS = 140
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    /** Reads picked and captured files into something the model can actually use. */
+    private val attachments = AttachmentReader(appContext)
+
     private val _state = MutableStateFlow(ChatState())
     val state: StateFlow<ChatState> = _state.asStateFlow()
 
@@ -222,6 +231,26 @@ class ChatEngine(
      * is usually that it needs a word changed.
      */
     fun copyToInput(text: String) = _state.update { it.copy(input = text) }
+
+    // ---------------------------------------------------------- attachments
+
+    /**
+     * Reads a picked or captured file and holds it until the next message is sent.
+     *
+     * Reading happens now rather than at send time so the user finds out
+     * immediately if Lain can't make anything of the file — a chip that says
+     * "can't read a .docx" beats sending it and getting nothing back.
+     */
+    fun attach(uri: android.net.Uri) {
+        scope.launch {
+            val attachment = runCatching { attachments.read(uri) }.getOrNull() ?: return@launch
+            _state.update { it.copy(attachments = it.attachments + attachment) }
+        }
+    }
+
+    fun removeAttachment(uri: android.net.Uri) {
+        _state.update { it.copy(attachments = it.attachments.filterNot { a -> a.uri == uri }) }
+    }
 
     /**
      * Sends a message again as a fresh turn.
@@ -326,7 +355,11 @@ class ChatEngine(
 
     fun send(text: String? = null, fromVoice: Boolean = false) {
         val message = (text ?: _state.value.input).trim()
-        if (message.isBlank() || _state.value.isSending) return
+        val attached = _state.value.attachments
+        // An attachment on its own is a complete request — "look at this" is implied
+        // by the act of sending it, and demanding a caption for a photo is friction
+        // for nothing.
+        if ((message.isBlank() && attached.isEmpty()) || _state.value.isSending) return
 
         deliveryMode = if (fromVoice) DeliveryMode.VOICE else DeliveryMode.TEXT
 
@@ -337,7 +370,15 @@ class ChatEngine(
             return
         }
 
-        working.begin(message)
+        val outbound = if (attached.isEmpty()) message else buildString {
+            append(message.ifBlank { "Look at this." })
+            // Non-image files are described in the text, because that is the only
+            // channel every model has. Images ride along properly where the model can
+            // see, and are described here where it can't.
+            attached.forEach { append("\n\n").append(it.describeForModel()) }
+        }
+
+        working.begin(outbound)
         val trace = Trace.start(message)
 
         // Minted here and used for both the transcript entry and the stored row.
@@ -345,8 +386,16 @@ class ChatEngine(
 
         _state.update {
             it.copy(
-                messages = it.messages + ChatMessage(id = messageId, sender = Sender.USER, text = message),
+                messages = it.messages + ChatMessage(
+                    id = messageId,
+                    sender = Sender.USER,
+                    // The transcript shows what the user typed plus what they sent,
+                    // not the expanded payload the model receives.
+                    text = message.ifBlank { attached.joinToString(", ") { a -> a.displayName } }
+                        .let { t -> if (message.isNotBlank() && attached.isNotEmpty()) "$t\n(${attached.size} attached)" else t }
+                ),
                 input = "",
+                attachments = emptyList(),
                 isSending = true,
                 error = null,
                 activeModelNotice = null,
@@ -372,9 +421,9 @@ class ChatEngine(
             try {
                 val cid = ensureConversation()
                 conversations.append(
-                    MessageEntity(id = messageId, conversationId = cid, role = "user", content = message)
+                    MessageEntity(id = messageId, conversationId = cid, role = "user", content = outbound)
                 )
-                runAgentLoop(cid, message, route, trace)
+                runAgentLoop(cid, outbound, route, trace, attached)
             } catch (_: CancellationException) {
                 _state.update {
                     it.copy(
@@ -506,7 +555,13 @@ class ChatEngine(
 
     // ------------------------------------------------------------- the loop
 
-    private suspend fun runAgentLoop(cid: String, userMessage: String, route: Route, trace: Trace.Turn) {
+    private suspend fun runAgentLoop(
+        cid: String,
+        userMessage: String,
+        route: Route,
+        trace: Trace.Turn,
+        attached: List<Attachment> = emptyList()
+    ) {
         val provider = prefs.selectedProvider.first()
         val modelId = prefs.selectedModelId.first()
         val apiKey = keyStore.getApiKey(provider)
@@ -537,6 +592,31 @@ class ChatEngine(
 
         val history = buildModelHistory(cid, caps)
 
+        // Attached pictures go in as a proper image turn where the model can see, and
+        // are described in text where it can't. Silently dropping them on a text-only
+        // model is how an assistant ends up answering a question about a photo it
+        // never received.
+        val pictures = attached.mapNotNull { it.imageBase64 }
+        if (pictures.isNotEmpty()) {
+            if (caps.supportsVision) {
+                history.add(
+                    LlmMessage(
+                        role = LlmMessage.Role.USER,
+                        text = "(the file the user just attached)",
+                        images = pictures.takeLast(MAX_ATTACHED_IMAGES)
+                    )
+                )
+            } else {
+                history.add(
+                    LlmMessage(
+                        role = LlmMessage.Role.USER,
+                        text = "(The user attached ${pictures.size} image(s), but the selected model can't see " +
+                            "images. Say so plainly and suggest switching to a vision model in Settings.)"
+                    )
+                )
+            }
+        }
+
         // Plain conversation doesn't need the toolbox, the planning, or the step
         // budget. Stream one tool-free answer; the model can bail out to the full
         // loop itself if it turns out it needed something.
@@ -556,6 +636,12 @@ class ChatEngine(
         var finalText: String? = null
         var lastSignature: String? = null
         var repeatCount = 0
+        // Whether any tool actually ran this turn. Reflection *after* doing something
+        // is a summary; the same words with nothing done is a stall.
+        var toolsRan = false
+        var nudgedForDeliberation = false
+        // Kept, not discarded: the user asked to be able to open it up and look.
+        var monologue: String? = null
         // Explicit type: the null check above smart-casts the val, but `var` inference
         // still picks up the nullable declared type.
         var usedModel: String = modelId
@@ -577,13 +663,32 @@ class ChatEngine(
             // rather than after it has finished. Intermediate tool-selection rounds
             // stream too; they simply produce no prose to show.
             val outcome = streamWithFallback(
-                client, provider, usedModel, apiKey, systemPrompt, history, tools, tuning, trace
+                client, provider, usedModel, apiKey, systemPrompt, history, tools, tuning, trace,
+                speakable = tools.isEmpty() || toolsRan
             )
             usedModel = outcome.modelUsed
             if (outcome.fellBack) fellBack = true
 
             when (val result = outcome.result) {
-                is StreamOutcome.Text -> finalText = result.text
+                is StreamOutcome.Text -> {
+                    // A model that narrates its plan instead of acting has not
+                    // answered — showing that paragraph as the reply is how Lain ends
+                    // up talking to herself in front of the user. Pushed once, and
+                    // only once: if it does it again the text is surfaced honestly
+                    // rather than retried forever.
+                    if (!nudgedForDeliberation &&
+                        route !is Route.Chat &&
+                        Deliberation.isThinkingOutLoud(result.text, actedThisTurn = toolsRan)
+                    ) {
+                        nudgedForDeliberation = true
+                        speaker?.stop()
+                        history.add(LlmMessage(role = LlmMessage.Role.ASSISTANT, text = result.text))
+                        history.add(LlmMessage(role = LlmMessage.Role.USER, text = Deliberation.NUDGE))
+                        monologue = result.text
+                    } else {
+                        finalText = result.text
+                    }
+                }
 
                 is StreamOutcome.Failed -> {
                     _state.update { it.copy(isSending = false, statusLine = null, error = result.message) }
@@ -591,6 +696,7 @@ class ChatEngine(
                 }
 
                 is StreamOutcome.Tools -> {
+                    toolsRan = true
                     history.add(LlmMessage(role = LlmMessage.Role.ASSISTANT, text = "", toolCalls = result.calls))
                     persistAssistantToolCalls(cid, result.calls)
 
@@ -650,7 +756,11 @@ class ChatEngine(
 
         // finalText came from a stream that already spoke it in voice mode; the
         // give-up message did not, so it still needs reading aloud.
-        finishTurn(cid, replyText, usedModel, fellBack, alreadySpoken = finalText != null && spokeWhileStreaming())
+        finishTurn(
+            cid, replyText, usedModel, fellBack,
+            alreadySpoken = finalText != null && spokeWhileStreaming(),
+            monologue = monologue
+        )
 
         // Housekeeping runs after the reply so the user never waits on it.
         scope.launch { maintainContext(cid, client, provider, usedModel, apiKey, userMessage, replyText) }
@@ -705,10 +815,21 @@ class ChatEngine(
         history: List<LlmMessage>,
         tools: List<com.lain.assistant.network.ToolDefinition>,
         tuning: RequestTuning,
-        trace: Trace.Turn
+        trace: Trace.Turn,
+        /**
+         * Whether this round's text is safe to read aloud as it streams.
+         *
+         * False on a round that still has tools to pick from, because that is where a
+         * model emits its planning as prose — and streaming speech would read that
+         * planning out before anyone could see it wasn't the answer. Hands-free users
+         * would have got the monologue and nothing else. Later rounds, once tools have
+         * run, are the model writing the reply, so streaming speech resumes there and
+         * the latency win is kept where it matters.
+         */
+        speakable: Boolean = true
     ): StreamOutcome {
         trace.countLlmRequest()
-        val speakAloud = !_state.value.isMuted && deliveryMode == DeliveryMode.VOICE
+        val speakAloud = speakable && !_state.value.isMuted && deliveryMode == DeliveryMode.VOICE
         var started = false
         var outcome: StreamOutcome = StreamOutcome.Failed("The model returned nothing.")
 
@@ -745,6 +866,9 @@ class ChatEngine(
 
                     is StreamEvent.Tools -> {
                         trace.mark("tools_requested")
+                        // Anything already queued was preamble to a tool call, not an
+                        // answer. Drop it rather than let it finish playing.
+                        if (speakAloud) speaker?.stop()
                         outcome = StreamOutcome.Tools(event.calls)
                     }
 
@@ -778,7 +902,9 @@ class ChatEngine(
         replyText: String,
         usedModel: String,
         fellBack: Boolean,
-        alreadySpoken: Boolean = false
+        alreadySpoken: Boolean = false,
+        /** The model's working, shown folded away. Stored with the turn, never spoken. */
+        monologue: String? = null
     ) {
         val messageId = java.util.UUID.randomUUID().toString()
         conversations.append(
@@ -786,7 +912,12 @@ class ChatEngine(
         )
         _state.update {
             it.copy(
-                messages = it.messages + ChatMessage(id = messageId, sender = Sender.LAIN, text = replyText),
+                messages = it.messages + ChatMessage(
+                    id = messageId,
+                    sender = Sender.LAIN,
+                    text = replyText,
+                    monologue = monologue?.takeIf { m -> m.isNotBlank() }
+                ),
                 isSending = false,
                 statusLine = null,
                 streamingText = null,
@@ -978,9 +1109,10 @@ class ChatEngine(
         history: List<LlmMessage>,
         tools: List<com.lain.assistant.network.ToolDefinition>,
         tuning: RequestTuning,
-        trace: Trace.Turn
+        trace: Trace.Turn,
+        speakable: Boolean = true
     ): StreamOutcomeWithModel {
-        val first = streamAnswer(client, modelId, apiKey, systemPrompt, history, tools, tuning, trace)
+        val first = streamAnswer(client, modelId, apiKey, systemPrompt, history, tools, tuning, trace, speakable)
         if (first !is StreamOutcome.Failed) return StreamOutcomeWithModel(first, modelId, false)
 
         return when (classify(first.message)) {
@@ -1005,7 +1137,7 @@ class ChatEngine(
                         modelId, false
                     )
                 setStatus("That model's gone — using ${alternative.label}…")
-                val second = streamAnswer(client, alternative.id, apiKey, systemPrompt, history, tools, tuning, trace)
+                val second = streamAnswer(client, alternative.id, apiKey, systemPrompt, history, tools, tuning, trace, speakable)
                 if (second is StreamOutcome.Failed) {
                     StreamOutcomeWithModel(
                         StreamOutcome.Failed(
@@ -1027,7 +1159,7 @@ class ChatEngine(
                 val alternative = (if (prefs.isModelFallbackEnabled.first()) pickAlternative(provider, modelId) else null)
                     ?: return StreamOutcomeWithModel(first, modelId, false)
                 setStatus("Switching to ${alternative.label}…")
-                val second = streamAnswer(client, alternative.id, apiKey, systemPrompt, history, tools, tuning, trace)
+                val second = streamAnswer(client, alternative.id, apiKey, systemPrompt, history, tools, tuning, trace, speakable)
                 StreamOutcomeWithModel(second, alternative.id, second !is StreamOutcome.Failed)
             }
 
@@ -1106,12 +1238,25 @@ class ChatEngine(
         // re-sending these as tool messages would orphan them from the tool_calls turn
         // they belong to and the provider would reject the request. Kept brief: their
         // value is "you already opened WhatsApp", not the screen dump from four steps ago.
+        //
+        // Inserted *before* the user's latest turn, and this ordering is the whole
+        // point. Appending it at the end left the recap as the final thing in the
+        // context window, so after "text Moyo" then "call Ade" the last line the model
+        // read was "(already done: sent to Moyo)". Models weight the tail heavily, and
+        // it would answer about the message it had already sent instead of placing the
+        // call — which is exactly the request mix-up this caused. The request must be
+        // the last thing in the window; everything else is background.
         val actions = raw.filter { it.role == "tool" && it.content.isNotBlank() }.takeLast(RECENT_ACTIONS)
         if (actions.isNotEmpty()) {
-            out += LlmMessage(
+            val recap = LlmMessage(
                 role = LlmMessage.Role.USER,
-                text = actions.joinToString("\n") { "(already done: ${it.content.take(ACTION_RECAP_CHARS)})" }
+                // Marked as earlier context rather than as outstanding work, so a
+                // finished task from two requests ago cannot read as a pending one.
+                text = "(earlier in this conversation, already finished: " +
+                    actions.joinToString("; ") { it.content.take(ACTION_RECAP_CHARS) } + ")"
             )
+            val lastUser = out.indexOfLast { it.role == LlmMessage.Role.USER }
+            if (lastUser >= 0) out.add(lastUser, recap) else out += recap
         }
 
         // A provider will reject a history that opens on an assistant turn.

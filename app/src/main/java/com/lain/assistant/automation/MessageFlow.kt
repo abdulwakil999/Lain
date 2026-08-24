@@ -33,12 +33,27 @@ class MessageFlow(context: Context) {
             return ToolResult.fail(FailureKind.INVALID_INPUT, "No message text was given.")
         }
 
-        val number = resolveNumber(recipient)
-            ?: return ToolResult.fail(
+        val number = when (val resolved = resolveRecipient(recipient)) {
+            is Recipient.Number -> resolved.number
+            is Recipient.Ambiguous -> return ToolResult.fail(
+                FailureKind.INVALID_INPUT,
+                // Two different people, similarly named. Picking one and messaging
+                // them is not recoverable, so the model is told to ask.
+                "\"$recipient\" matches more than one contact:\n" +
+                    resolved.options.joinToString("\n") { "- ${it.name} (${it.number})" } +
+                    "\nAsk the user which one they meant. Do not guess.",
+                data = mapOf("candidates" to resolved.options.joinToString(", ") { it.name })
+            )
+            Recipient.NoPermission -> return ToolResult.fail(
+                FailureKind.PERMISSION,
+                "Looking up \"$recipient\" needs contacts permission, which hasn't been granted."
+            )
+            Recipient.None -> return ToolResult.fail(
                 FailureKind.INVALID_INPUT,
                 "No contact matching \"$recipient\", and it isn't a phone number either. " +
                     "Ask the user for the number, or call lookup_contact with a different spelling."
             )
+        }
 
         return when (channel) {
             Channel.SMS -> sendSms(number, message)
@@ -49,19 +64,33 @@ class MessageFlow(context: Context) {
         }
     }
 
-    private fun resolveNumber(recipient: String): String? {
+    sealed class Recipient {
+        data class Number(val number: String) : Recipient()
+        data class Ambiguous(val options: List<PhoneController.Contact>) : Recipient()
+        object None : Recipient()
+        object NoPermission : Recipient()
+    }
+
+    /**
+     * Turns what the user said into a number to message.
+     *
+     * Digits are taken at face value. A name goes through fuzzy contact matching,
+     * and an ambiguous name is surfaced rather than resolved — this used to take
+     * whichever row the provider happened to return first, which is how "text Moyo"
+     * could reach a different Moyo entirely.
+     */
+    fun resolveRecipient(recipient: String): Recipient {
         val trimmed = recipient.trim()
         val digitsOnly = trimmed.replace(Regex("[\\s()\\-.]"), "")
-        if (digitsOnly.matches(Regex("\\+?\\d{5,15}"))) return digitsOnly
+        if (digitsOnly.matches(Regex("\\+?\\d{5,15}"))) return Recipient.Number(digitsOnly)
 
-        val lookup = phone.lookupContact(trimmed)
-        if (lookup !is AutomationResult.Success) return null
-        // lookupContact returns "Name: number" lines; take the first match's number.
-        return lookup.message.lineSequence().firstOrNull()
-            ?.substringAfterLast(':')
-            ?.trim()
-            ?.replace(Regex("[\\s()\\-.]"), "")
-            ?.takeIf { it.isNotBlank() }
+        return when (val match = phone.resolveContact(trimmed)) {
+            is PhoneController.ContactMatch.One ->
+                Recipient.Number(match.contact.number.replace(Regex("[\\s()\\-.]"), ""))
+            is PhoneController.ContactMatch.Several -> Recipient.Ambiguous(match.contacts)
+            PhoneController.ContactMatch.NoPermission -> Recipient.NoPermission
+            PhoneController.ContactMatch.None -> Recipient.None
+        }
     }
 
     private fun sendSms(number: String, message: String): ToolResult =

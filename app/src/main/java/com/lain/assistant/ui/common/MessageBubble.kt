@@ -2,11 +2,15 @@ package com.lain.assistant.ui.common
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -118,6 +122,9 @@ fun MessageBubble(
                         vertical = if (compact) 8.dp else 10.dp
                     )
                     .semantics {
+                        // The spoken description is the reply only. The working is a
+                        // separate, opt-in element — a screen reader must not read a
+                        // paragraph of deliberation before the answer.
                         contentDescription =
                             "${if (isUser) "You" else "Lain"}: ${message.text}"
                         customActions = buildList {
@@ -128,14 +135,49 @@ fun MessageBubble(
                         }
                     }
             ) {
-                // Selectable, so part of a long reply can be picked out with the normal
-                // Android handles rather than only copied whole.
-                SelectionContainer {
-                    Text(
-                        text = message.text,
-                        color = if (isUser) LainInk else LainCream,
-                        style = textStyle
-                    )
+                Column {
+                    // Selectable, so part of a long reply can be picked out with the
+                    // normal Android handles rather than only copied whole.
+                    SelectionContainer {
+                        Text(
+                            text = message.text,
+                            color = if (isUser) LainInk else LainCream,
+                            style = textStyle
+                        )
+                    }
+
+                    // The model's working, folded away.
+                    //
+                    // Closed by default and it stays closed: this is the thinking, not
+                    // the answer, and it was being shown as though it were the reply.
+                    // Kept rather than dropped because it is genuinely useful when a
+                    // free model goes wrong — it is the only evidence of *why*.
+                    message.monologue?.takeIf { it.isNotBlank() }?.let { working ->
+                        var open by remember(message.id) { mutableStateOf(false) }
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = if (open) "▾ hide her working" else "▸ her working",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (isUser) LainMuted else LainCream.copy(alpha = 0.75f),
+                            modifier = Modifier
+                                .clickable { open = !open }
+                                .padding(vertical = 2.dp)
+                                .semantics {
+                                    contentDescription =
+                                        if (open) "Hide Lain's working" else "Show Lain's working"
+                                }
+                        )
+                        if (open) {
+                            Spacer(Modifier.height(4.dp))
+                            SelectionContainer {
+                                Text(
+                                    text = working,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = if (isUser) LainMuted else LainCream.copy(alpha = 0.7f)
+                                )
+                            }
+                        }
+                    }
                 }
             }
 

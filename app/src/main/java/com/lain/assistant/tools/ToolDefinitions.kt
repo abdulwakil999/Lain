@@ -326,7 +326,7 @@ object ToolDefinitions {
             description = "Set an alarm, a reminder, or a recurring task at a clock time. Handles \"every day\", \"every weekday\", \"tomorrow\" and delays like \"in 20 minutes\" — pass the user's own wording in `when` and Lain resolves it. Use this rather than opening the Clock app: tasks set this way can be listed and cancelled afterwards.",
             parameters = schema {
                 property("when", "string", "The timing in the user's words, e.g. \"7:30 am every weekday\", \"2:30\", \"in 20 minutes\"")
-                property("action", "string", "remind (notification), alarm (rings with snooze), call (rings with a Call button), sms (sends a text), open_app")
+                property("action", "string", "remind (notification), alarm (rings with snooze), call (rings with a Call button), sms (sends a text), whatsapp (opens the chat with the message typed), open_app")
                 property("label", "string", "What it's for, e.g. \"take the tablets\"")
                 property("target", "string", "Contact name or number for call/sms; app name for open_app")
                 property("message", "string", "The text body, for sms only")
@@ -376,6 +376,15 @@ object ToolDefinitions {
                 required("what")
             },
             briefDescription = "Show the system wifi/data/bluetooth switch over Lain."
+        ),
+        ToolDefinition(
+            name = "set_preferred_sim",
+            description = "Remember which SIM to use on a dual-SIM phone, e.g. \"the MTN one\" or \"SIM 2\". Texts then send from it without asking; for calls it is a hint the dialler usually follows.",
+            parameters = schema {
+                property("which", "string", "Carrier name or slot, e.g. \"MTN\", \"SIM 1\"")
+                required("which")
+            },
+            briefDescription = "Remember which SIM to use."
         ),
         ToolDefinition(
             name = "write_note",

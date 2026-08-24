@@ -1,6 +1,7 @@
 package com.lain.assistant.automation
 
 import android.content.Context
+import android.os.Build
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -8,6 +9,7 @@ import android.provider.ContactsContract
 import android.telephony.SmsManager
 import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
+import com.lain.assistant.agent.FuzzyMatch
 import kotlinx.coroutines.delay
 
 /** Native telephony actions — these have real platform hooks, no accessibility trickery needed. */
@@ -18,10 +20,15 @@ class PhoneController(private val context: Context) {
         const val CALL_WAIT_MS = 12_000L
         const val CALL_POLL_MS = 400L
 
+        /** Ceiling on the full-scan fallback, so a 5,000-contact phone can't stall a turn. */
+        const val MAX_SCAN = 2_000
+
         val DIALER_HINTS = listOf(
             "dialer", "telecom", "incallui", "phone", "truecaller", "contacts"
         )
     }
+
+    private val sims = SimPreference(context)
 
     private fun granted(permission: String) =
         ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
@@ -55,6 +62,15 @@ class PhoneController(private val context: Context) {
         return try {
             val intent = Intent(Intent.ACTION_CALL, Uri.parse("tel:${Uri.encode(phoneNumber)}")).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                // A hint, not a command. The system dialler honours the phone-account
+                // extra and skips its SIM chooser; some OEM and third-party diallers
+                // ignore it and ask anyway. Passing it costs nothing and removes the
+                // prompt on the phones that respect it — Lain does not claim more.
+                sims.preferredBlocking()?.let { sim ->
+                    sims.phoneAccountFor(sim)?.let { handle ->
+                        putExtra(android.telecom.TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, handle)
+                    }
+                }
             }
             context.startActivity(intent)
 
@@ -135,12 +151,34 @@ class PhoneController(private val context: Context) {
         TelephonyManager.CALL_STATE_IDLE
     }
 
+    /**
+     * An SmsManager bound to the user's preferred SIM, or null when there is no
+     * preference to apply — a single-SIM phone, or one where the saved SIM has since
+     * been removed.
+     */
+    private fun subscriptionSms(): SmsManager? {
+        val sim = sims.preferredBlocking() ?: return null
+        return runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                context.getSystemService(SmsManager::class.java)
+                    .createForSubscriptionId(sim.subscriptionId)
+            } else {
+                @Suppress("DEPRECATION")
+                SmsManager.getSmsManagerForSubscriptionId(sim.subscriptionId)
+            }
+        }.getOrNull()
+    }
+
     fun sendSms(phoneNumber: String, message: String): AutomationResult {
         if (!granted(android.Manifest.permission.SEND_SMS)) {
             return AutomationResult.MissingPermission(android.Manifest.permission.SEND_SMS)
         }
         return try {
-            val smsManager = context.getSystemService(SmsManager::class.java)
+            // Unlike calls, the SIM is fully controllable here: a subscription-scoped
+            // SmsManager sends from the chosen SIM with no prompt at all. On a dual-SIM
+            // phone that is the difference between a text that just goes and one that
+            // stops to ask which line to bill.
+            val smsManager = subscriptionSms() ?: context.getSystemService(SmsManager::class.java)
             val parts = smsManager.divideMessage(message)
             smsManager.sendMultipartTextMessage(phoneNumber, null, parts, null, null)
             AutomationResult.Success("Texted $phoneNumber")
@@ -149,36 +187,108 @@ class PhoneController(private val context: Context) {
         }
     }
 
-    /** Resolves a spoken name to a saved number so calls/texts don't need the user to recite digits. */
+    /** One saved contact. */
+    data class Contact(val name: String, val number: String)
+
+    /**
+     * Resolves a spoken name to a saved number so calls/texts don't need the user
+     * to recite digits.
+     *
+     * Contacts provider matching is a prefix search that respects neither case
+     * consistently across OEMs nor the way people say names — "moyo" would miss
+     * "MOYO" on some devices and "MoyOma" on all of them. So this pulls the
+     * candidates and scores them in [FuzzyMatch], where case, accents and
+     * punctuation stop being differences.
+     */
     fun lookupContact(name: String): AutomationResult {
         if (!granted(android.Manifest.permission.READ_CONTACTS)) {
             return AutomationResult.MissingPermission(android.Manifest.permission.READ_CONTACTS)
         }
-        return try {
-            val uri = Uri.withAppendedPath(
-                ContactsContract.CommonDataKinds.Phone.CONTENT_FILTER_URI,
-                Uri.encode(name.trim())
+        return when (val result = resolveContact(name)) {
+            is ContactMatch.One -> AutomationResult.Success("${result.contact.name}: ${result.contact.number}")
+            is ContactMatch.Several -> AutomationResult.Success(
+                result.contacts.joinToString("\n") { "${it.name}: ${it.number}" }
             )
-            val projection = arrayOf(
-                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
-                ContactsContract.CommonDataKinds.Phone.NUMBER
-            )
-            context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
-                val matches = mutableListOf<String>()
-                while (cursor.moveToNext() && matches.size < 5) {
-                    val displayName = cursor.getString(0) ?: continue
-                    val number = cursor.getString(1) ?: continue
-                    matches += "$displayName: $number"
-                }
-                if (matches.isEmpty()) {
-                    AutomationResult.Failure("No contact matching \"$name\"")
-                } else {
-                    AutomationResult.Success(matches.joinToString("\n"))
-                }
-            } ?: AutomationResult.Failure("Couldn't read contacts")
-        } catch (t: Throwable) {
-            AutomationResult.Failure(t.message ?: "Contact lookup failed")
+            ContactMatch.NoPermission ->
+                AutomationResult.MissingPermission(android.Manifest.permission.READ_CONTACTS)
+            ContactMatch.None -> AutomationResult.Failure("No contact matching \"$name\"")
         }
+    }
+
+    sealed class ContactMatch {
+        data class One(val contact: Contact) : ContactMatch()
+
+        /** Genuinely ambiguous — two different people, similarly named. Ask, don't dial. */
+        data class Several(val contacts: List<Contact>) : ContactMatch()
+
+        object None : ContactMatch()
+        object NoPermission : ContactMatch()
+    }
+
+    /**
+     * Finds who the user meant.
+     *
+     * Returns [ContactMatch.Several] rather than guessing when two different people
+     * score alike. Opening the wrong app costs a back-press; ringing the wrong
+     * person cannot be taken back, so a coin-flip is not an acceptable answer here.
+     */
+    fun resolveContact(spokenName: String): ContactMatch {
+        if (!granted(android.Manifest.permission.READ_CONTACTS)) return ContactMatch.NoPermission
+        val query = spokenName.trim()
+        if (query.isEmpty()) return ContactMatch.None
+
+        val candidates = loadCandidates(query)
+        if (candidates.isEmpty()) return ContactMatch.None
+
+        return when (val result = FuzzyMatch.best(query, candidates) { it.name }) {
+            is FuzzyMatch.Result.Found -> ContactMatch.One(result.hit.value)
+            is FuzzyMatch.Result.Ambiguous -> {
+                // Several numbers for one person is not an ambiguity about *who*.
+                val people = result.hits.map { it.value }
+                    .distinctBy { FuzzyMatch.normalise(it.name) }
+                if (people.size <= 1) ContactMatch.One(result.hits.first().value)
+                else ContactMatch.Several(people)
+            }
+            FuzzyMatch.Result.None -> ContactMatch.None
+        }
+    }
+
+    /**
+     * Candidate contacts for a query.
+     *
+     * Asks the provider's filter first — it is indexed and fast — then falls back to
+     * a full scan when that returns nothing, because the provider's own matching is
+     * prefix-based and misses exactly the cases this is here to fix ("moyo" for
+     * "MoyOma"). The scan is bounded and only ever runs when the fast path failed.
+     */
+    private fun loadCandidates(query: String): List<Contact> {
+        val projection = arrayOf(
+            ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+            ContactsContract.CommonDataKinds.Phone.NUMBER
+        )
+
+        fun read(uri: Uri, limit: Int): List<Contact> = runCatching {
+            context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+                buildList {
+                    while (cursor.moveToNext() && size < limit) {
+                        val displayName = cursor.getString(0) ?: continue
+                        val number = cursor.getString(1) ?: continue
+                        add(Contact(displayName, number))
+                    }
+                }
+            }.orEmpty()
+        }.getOrDefault(emptyList())
+
+        val filtered = read(
+            Uri.withAppendedPath(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_FILTER_URI,
+                Uri.encode(query)
+            ),
+            limit = 40
+        )
+        if (filtered.isNotEmpty()) return filtered
+
+        return read(ContactsContract.CommonDataKinds.Phone.CONTENT_URI, limit = MAX_SCAN)
     }
 
     /**

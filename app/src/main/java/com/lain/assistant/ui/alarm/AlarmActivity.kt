@@ -10,6 +10,11 @@ import android.media.Ringtone
 import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import androidx.core.app.NotificationCompat
+import com.lain.assistant.R
 import android.os.Bundle
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -38,6 +43,9 @@ import androidx.compose.ui.unit.dp
 import com.lain.assistant.LainApplication
 import com.lain.assistant.automation.AutomationResult
 import com.lain.assistant.automation.PhoneController
+import com.lain.assistant.automation.AppLauncher
+import com.lain.assistant.automation.MessageFlow
+import kotlinx.coroutines.withContext
 import com.lain.assistant.automation.Scheduler
 import com.lain.assistant.data.ScheduledTask
 import com.lain.assistant.data.TaskAction
@@ -71,12 +79,40 @@ class AlarmActivity : ComponentActivity() {
         private const val EXTRA_ACTION = "action"
         private const val EXTRA_TARGET = "target"
         private const val EXTRA_ID = "id"
+        private const val EXTRA_PAYLOAD = "payload"
 
         /** Snooze length. Nine minutes is the convention every clock has used since the 1950s. */
         const val SNOOZE_MINUTES = 9
 
+        /** Channel for the full-screen intent. Its own, so it can be IMPORTANCE_HIGH. */
+        const val CHANNEL_ALARMS = "lain_alarms"
+
+        /**
+         * Brings the task's surface up, whatever state the phone is in.
+         *
+         * A plain `startActivity` from a broadcast receiver is refused on Android 10+
+         * unless the app happens to hold "display over other apps" — which is why
+         * alarms worked on a phone where the bubble had been enabled and scheduled
+         * app launches silently did nothing everywhere else. Same call, same code,
+         * different phone: the classic shape of a bug that looks intermittent.
+         *
+         * A full-screen intent is the sanctioned route. Android launches the activity
+         * outright when the screen is off or locked, and shows a heads-up notification
+         * the user can tap when they are mid-something — which is the correct
+         * behaviour anyway, since hijacking the screen out of someone's hands is not.
+         * The direct start is still attempted first, because when it is permitted it
+         * is instant.
+         */
         fun raise(context: Context, task: ScheduledTask) {
-            val intent = Intent(context, AlarmActivity::class.java).apply {
+            val intent = intentFor(context, task)
+            val started = runCatching { context.startActivity(intent); true }.getOrDefault(false)
+            if (started) return
+
+            runCatching { postFullScreen(context, task, intent) }
+        }
+
+        private fun intentFor(context: Context, task: ScheduledTask) =
+            Intent(context, AlarmActivity::class.java).apply {
                 addFlags(
                     Intent.FLAG_ACTIVITY_NEW_TASK or
                         Intent.FLAG_ACTIVITY_CLEAR_TOP or
@@ -86,8 +122,41 @@ class AlarmActivity : ComponentActivity() {
                 putExtra(EXTRA_LABEL, task.label)
                 putExtra(EXTRA_ACTION, task.action.name)
                 putExtra(EXTRA_TARGET, task.target)
+                putExtra(EXTRA_PAYLOAD, task.payload)
+                data = android.net.Uri.parse("lain://task/${task.id}/${System.currentTimeMillis()}")
             }
-            context.startActivity(intent)
+
+        private fun postFullScreen(context: Context, task: ScheduledTask, intent: Intent) {
+            val manager = context.getSystemService(NotificationManager::class.java) ?: return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                manager.createNotificationChannel(
+                    NotificationChannel(CHANNEL_ALARMS, "Alarms and scheduled tasks", NotificationManager.IMPORTANCE_HIGH)
+                        .apply { setBypassDnd(true) }
+                )
+            }
+            val pending = PendingIntent.getActivity(
+                context, task.id.hashCode(), intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val title = when (task.action) {
+                TaskAction.CALL -> "Time to call ${task.target}"
+                TaskAction.WHATSAPP -> "Message ${task.target} on WhatsApp"
+                TaskAction.OPEN_APP -> "Open ${task.target}"
+                else -> task.label.ifBlank { "Alarm" }
+            }
+            manager.notify(
+                task.id.hashCode(),
+                NotificationCompat.Builder(context, CHANNEL_ALARMS)
+                    .setSmallIcon(R.drawable.ic_notification)
+                    .setContentTitle("Lain")
+                    .setContentText(title)
+                    .setPriority(NotificationCompat.PRIORITY_MAX)
+                    .setCategory(NotificationCompat.CATEGORY_ALARM)
+                    .setAutoCancel(true)
+                    .setContentIntent(pending)
+                    .setFullScreenIntent(pending, true)
+                    .build()
+            )
         }
     }
 
@@ -104,9 +173,22 @@ class AlarmActivity : ComponentActivity() {
         val action = runCatching { TaskAction.valueOf(intent.getStringExtra(EXTRA_ACTION) ?: "") }
             .getOrDefault(TaskAction.ALARM)
 
-        startRinging()
-        startLoopWatchdog()
-        blockBackDismissal()
+        val payload = intent.getStringExtra(EXTRA_PAYLOAD).orEmpty()
+
+        // Only the two that are meant to wake somebody make a noise. An app opening
+        // at a scheduled time should not sound like an emergency.
+        if (action == TaskAction.ALARM || action == TaskAction.CALL) {
+            startRinging()
+            startLoopWatchdog()
+            blockBackDismissal()
+        }
+
+        // These two have nothing to decide — the user already decided when they
+        // scheduled it. Do the thing and get out of the way.
+        if (action == TaskAction.OPEN_APP || action == TaskAction.WHATSAPP) {
+            runNonInteractive(action, target, payload)
+            return
+        }
 
         setContent {
             LainTheme {
@@ -212,6 +294,45 @@ class AlarmActivity : ComponentActivity() {
                 )
             )
         }
+    }
+
+    /**
+     * Carries out a scheduled task that needs a foreground app but no decision.
+     *
+     * This activity exists purely to be the thing Android is willing to launch;
+     * having got the foreground, it hands off and finishes rather than showing a
+     * screen nobody asked for.
+     */
+    private fun runNonInteractive(action: TaskAction, target: String, payload: String) {
+        val app = applicationContext
+        when (action) {
+            TaskAction.OPEN_APP -> {
+                val result = AppLauncher(app).openApp(target)
+                if (result !is AutomationResult.Success) {
+                    android.widget.Toast.makeText(app, "Lain couldn't open $target.", android.widget.Toast.LENGTH_LONG).show()
+                }
+            }
+
+            TaskAction.WHATSAPP -> {
+                LainApplication.appScope.launch(Dispatchers.IO) {
+                    // Goes through MessageFlow so the contact name is resolved and the
+                    // send is verified, rather than assuming a deep link means "sent".
+                    val result = MessageFlow(app).send(target, payload, MessageFlow.Channel.WHATSAPP)
+                    if (!result.success) {
+                        withContext(Dispatchers.Main) {
+                            android.widget.Toast.makeText(
+                                app,
+                                "WhatsApp to $target: ${result.error ?: result.result}",
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                }
+            }
+
+            else -> Unit
+        }
+        finish()
     }
 
     /**

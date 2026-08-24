@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
+import com.lain.assistant.agent.FuzzyMatch
 
 class AppLauncher(private val context: Context) {
 
@@ -30,26 +31,43 @@ class AppLauncher(private val context: Context) {
 
     fun resolvePackage(spokenName: String): String? = match(spokenName)?.first
 
-    /** One pass over the list, exact match preferred over substring. */
-    private fun match(spokenName: String): Pair<String, String>? {
-        val query = spokenName.trim().lowercase()
-        if (query.isEmpty()) return null
-        val all = installedApps()
-        return all.firstOrNull { (_, label) -> label.lowercase() == query }
-            ?: all.firstOrNull { (_, label) -> label.lowercase().contains(query) }
-    }
+    /**
+     * Resolves a spoken app name.
+     *
+     * Was an exact-then-`contains` pair, which failed on the way people actually
+     * name apps: "open call of duty mobile" is a *longer* string than the label
+     * "Call of Duty", so `contains` never fired and the reply was "no app matches"
+     * for an app sitting on the home screen. [FuzzyMatch] scores both directions,
+     * ignores case and punctuation, and tolerates the filler words store listings
+     * are full of.
+     */
+    private fun match(spokenName: String): Pair<String, String>? =
+        when (val result = FuzzyMatch.best(spokenName, installedApps()) { it.second }) {
+            is FuzzyMatch.Result.Found -> result.hit.value
+            // A tie still opens the strongest candidate: opening the wrong app is a
+            // back-press, unlike calling the wrong person. openAppDetailed is there
+            // for callers that want to surface the choice.
+            is FuzzyMatch.Result.Ambiguous -> result.hits.first().value
+            FuzzyMatch.Result.None -> null
+        }
 
     fun openApp(spokenName: String): AutomationResult {
-        val packageName = resolvePackage(spokenName)
-            ?: return AutomationResult.Failure("No installed app matches \"$spokenName\"")
+        val hit = match(spokenName)
+            ?: return AutomationResult.Failure(
+                "No installed app matches \"$spokenName\". Call list_apps to see what is installed."
+            )
+        val (packageName, label) = hit
         val intent = pm.getLaunchIntentForPackage(packageName)
-            ?: return AutomationResult.Failure("\"$spokenName\" has no launchable activity")
+            ?: return AutomationResult.Failure("\"$label\" has no launchable activity")
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return try {
             context.startActivity(intent)
-            AutomationResult.Success("Opened $spokenName")
+            // Names the app that actually opened, not what was asked for — "Opened
+            // Call of Duty" after "open call of duty mobile" tells the user the match
+            // was understood.
+            AutomationResult.Success("Opened $label")
         } catch (t: Throwable) {
-            AutomationResult.Failure(t.message ?: "Could not open $spokenName")
+            AutomationResult.Failure(t.message ?: "Could not open $label")
         }
     }
 

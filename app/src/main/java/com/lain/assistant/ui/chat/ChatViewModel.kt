@@ -44,6 +44,11 @@ class ChatViewModel(container: AppContainer) : ViewModel() {
 
     /** Removes a message from the transcript, from storage and from the model's context. */
     fun deleteMessage(messageId: String) = engine.deleteMessage(messageId)
+
+    /** Reads a picked or captured file and holds it for the next message. */
+    fun attach(uri: android.net.Uri) = engine.attach(uri)
+
+    fun removeAttachment(uri: android.net.Uri) = engine.removeAttachment(uri)
 }
 
 /** Kept as an alias so screens can keep referring to the shape they already use. */
