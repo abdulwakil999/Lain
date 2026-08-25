@@ -41,7 +41,7 @@ unsigned — useful for checking size without holding the key.
 | | |
 |---|---|
 | Package | `com.lain.assistant` |
-| Version | 1.2.0 (versionCode 21) |
+| Version | 1.2.1 (versionCode 22) |
 | Size | 4.9 MB |
 | Min / target | Android 8.0 (26) / Android 15 (35) |
 | Signature | v2 |
@@ -75,7 +75,7 @@ different key and will not install over an existing copy.
 
 ## Release checklist
 
-- [ ] `versionCode` incremented — Android refuses a downgrade
+- [ ] `versionCode` and `versionName` both incremented — every build, no exceptions
 - [ ] `./gradlew clean testDebugUnitTest lintDebug` clean
 - [ ] Release APK signed with `lain-release.jks`, SHA-256 matches
 - [ ] Installs *over* the previous version without an uninstall
