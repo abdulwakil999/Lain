@@ -68,6 +68,21 @@ sealed class LocalIntent {
     /** Silent / vibrate / normal. */
     data class Ringer(val mode: String) : LocalIntent()
 
+    /**
+     * "turn on wifi", "switch bluetooth off" — actually switched, via the user's own
+     * Quick Settings tile, then verified against the system.
+     */
+    data class SystemToggle(val what: String, val on: Boolean) : LocalIntent()
+
+    /** "open chrome and search animeheaven", "search youtube for X" — one flow, no model. */
+    data class SearchIn(val app: String, val query: String) : LocalIntent()
+
+    /** "close whatsapp", "close this app". */
+    data class CloseApp(val appName: String) : LocalIntent()
+
+    /** "clear recent apps", "close background apps". */
+    object ClearRecents : LocalIntent()
+
     /** "what's 15% of 240", "convert 5km to miles" — answered exactly, offline. */
     data class Calculate(val result: Calculator.Result) : LocalIntent()
 }
@@ -173,7 +188,14 @@ object FastRouter {
             // "set an alarm for 2:30" is a clock time and would otherwise fall
             // through to the model.
             ?: listSchedule(t) ?: cancelSchedule(t) ?: schedule(t) ?: timer(t)
-            ?: navigate(t) ?: readScreen(t) ?: settingsOrToggle(t) ?: call(t)
+            // Search before the plain app launcher: "open chrome and search X" names an
+            // app but is not an app launch, and going through the model for it cost
+            // five round trips and stalled halfway.
+            ?: searchIn(t)
+            ?: clearRecents(t) ?: closeApp(t)
+            ?: navigate(t) ?: readScreen(t)
+            // The real toggle first; the settings-page fallback only when it misses.
+            ?: systemToggle(t) ?: settingsOrToggle(t) ?: call(t)
             // Music is checked before the generic app launcher so "play spotify" is
             // understood as playback rather than as opening an app called "spotify".
             ?: transport(t) ?: playMusic(t)
@@ -327,6 +349,71 @@ object FastRouter {
                 LocalIntent.Ringer("normal")
             else -> null
         }
+    }
+
+    // ------------------------------------------------------------- searching
+
+    private fun searchIn(t: String): LocalIntent? {
+        // "open chrome and search animeheaven" / "open chrome and search for X"
+        Regex("^(?:open|launch|start)\\s+(.{2,30}?)\\s+(?:and\\s+)?(?:search|look up|find)(?:\\s+for)?\\s+(.{2,80})$")
+            .find(t)?.let { m ->
+                return LocalIntent.SearchIn(app = cleanAppName(m.groupValues[1]), query = m.groupValues[2].trim())
+            }
+        // "search youtube for cats" / "search for cats on youtube"
+        Regex("^(?:search|look up|find)\\s+(?:on\\s+)?(.{2,30}?)\\s+for\\s+(.{2,80})$").find(t)?.let { m ->
+            return LocalIntent.SearchIn(app = cleanAppName(m.groupValues[1]), query = m.groupValues[2].trim())
+        }
+        Regex("^(?:search|look up|find)\\s+(?:for\\s+)?(.{2,80}?)\\s+on\\s+(.{2,30})$").find(t)?.let { m ->
+            return LocalIntent.SearchIn(app = cleanAppName(m.groupValues[2]), query = m.groupValues[1].trim())
+        }
+        return null
+    }
+
+    private fun cleanAppName(raw: String): String =
+        raw.trim().removePrefix("the ").removePrefix("my ").removeSuffix(" app").trim()
+
+    // -------------------------------------------------------------- closing
+
+    private fun closeApp(t: String): LocalIntent? {
+        Regex("^(?:close|quit|exit|kill|stop)\\s+(?:the\\s+)?(.{2,30}?)(?:\\s+app)?$").find(t)?.let { m ->
+            val target = m.groupValues[1].trim()
+            // "stop music" and friends belong to the transport controls.
+            if (target in setOf("music", "playback", "song", "playing", "it", "that")) return null
+            if (target in setOf("this", "this app", "app")) return LocalIntent.CloseApp("")
+            return LocalIntent.CloseApp(target)
+        }
+        return null
+    }
+
+    private fun clearRecents(t: String): LocalIntent? = when {
+        Regex("\\b(clear|close|kill)\\b.*\\b(recent|recents|background|all apps|everything)\\b")
+            .containsMatchIn(t) -> LocalIntent.ClearRecents
+        else -> null
+    }
+
+    // -------------------------------------------------------------- toggles
+
+    /**
+     * A real switch, not a trip to a settings page.
+     *
+     * Requires an explicit on/off. "wifi" alone is a question about Wi-Fi, and
+     * flipping it because the word appeared would be the wrong kind of helpful.
+     */
+    private fun systemToggle(t: String): LocalIntent? {
+        val on = when {
+            Regex("\\b(turn on|switch on|enable|activate|put on)\\b").containsMatchIn(t) -> true
+            Regex("\\b(turn off|switch off|disable|deactivate|kill|put off)\\b").containsMatchIn(t) -> false
+            Regex("\\b(on)\\b$").containsMatchIn(t) -> true
+            Regex("\\b(off)\\b$").containsMatchIn(t) -> false
+            else -> return null
+        }
+        val what = listOf(
+            "wifi", "wi-fi", "wi fi", "wireless", "bluetooth", "hotspot", "tethering",
+            "mobile data", "cellular", "data", "location", "gps",
+            "airplane mode", "aeroplane mode", "flight mode", "auto-rotate", "auto rotate", "rotation"
+        ).sortedByDescending { it.length }.firstOrNull { t.contains(it) } ?: return null
+
+        return LocalIntent.SystemToggle(what = what, on = on)
     }
 
     private fun navigate(t: String): LocalIntent? = when (t) {

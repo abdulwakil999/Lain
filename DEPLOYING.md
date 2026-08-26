@@ -41,7 +41,7 @@ unsigned — useful for checking size without holding the key.
 | | |
 |---|---|
 | Package | `com.lain.assistant` |
-| Version | 1.2.1 (versionCode 22) |
+| Version | 1.3.0 (versionCode 23) |
 | Size | 4.9 MB |
 | Min / target | Android 8.0 (26) / Android 15 (35) |
 | Signature | v2 |
@@ -101,8 +101,10 @@ and Play App Signing takes over the upload key.
 Worth knowing before anyone reports these as bugs. Android forbids all of them
 for normal apps, and Lain says so instead of pretending:
 
-- Toggling Wi-Fi, Bluetooth, mobile data or aeroplane mode. She opens the real
-  system panel over herself instead.
+- Toggling Wi-Fi, Bluetooth, mobile data or aeroplane mode *programmatically*.
+  With the Accessibility Service connected she presses the Quick Settings tile
+  instead — the user's own service, the user's own tile — and reads the state back
+  to confirm. Without the service, she opens the system panel and says why.
 - Changing system dark mode (needs `WRITE_SECURE_SETTINGS`, adb only).
 - Holding a phone call inside her own UI, or choosing a SIM for you.
 - Force-quitting a foreground app.

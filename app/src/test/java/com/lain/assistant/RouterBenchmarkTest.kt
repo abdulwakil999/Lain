@@ -55,7 +55,9 @@ class RouterBenchmarkTest {
             "turn on the torch" to LocalIntent.Torch::class,
             "go home" to LocalIntent.Navigate::class,
             "what's on screen" to LocalIntent.ReadScreen::class,
-            "turn on wifi" to LocalIntent.ToggleRequest::class
+            // Was ToggleRequest — which only opened the settings page. Lain presses
+            // the Quick Settings tile herself now and reads the state back.
+            "turn on wifi" to LocalIntent.SystemToggle::class
         )
         expectations.forEach { (input, expected) ->
             val route = FastRouter.route(input)

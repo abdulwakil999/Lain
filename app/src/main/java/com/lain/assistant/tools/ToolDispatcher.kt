@@ -13,7 +13,9 @@ import com.lain.assistant.automation.MessageFlow
 import com.lain.assistant.automation.NotesRepository
 import com.lain.assistant.automation.PhoneController
 import com.lain.assistant.automation.QuickToggles
+import com.lain.assistant.automation.SearchFlow
 import com.lain.assistant.automation.SimPreference
+import com.lain.assistant.automation.SystemToggles
 import com.lain.assistant.automation.RemindersRepository
 import com.lain.assistant.automation.CancelOutcome
 import com.lain.assistant.automation.Scheduler
@@ -63,6 +65,8 @@ class ToolDispatcher(context: Context) {
     private val scheduler = Scheduler(appContext)
     private val toggles = QuickToggles(appContext)
     private val sims = SimPreference(appContext)
+    private val systemToggles = SystemToggles(appContext)
+    private val searchFlow = SearchFlow(appContext)
     private val messaging = MessageFlow(appContext)
     private val web = WebResearch()
     private val memory = MemoryStore(appContext)
@@ -121,10 +125,7 @@ class ToolDispatcher(context: Context) {
             }
         }
 
-        "close_app" -> withService("close_app") { service ->
-            service.closeCurrentApp()
-            ToolResult.ok("Closed ${args.str("app_name")}.")
-        }
+        "close_app" -> closeApp(args.str("app_name"))
 
         "open_url" -> phone.openUrl(args.str("url")).asResult(FailureKind.APP_UNAVAILABLE)
 
@@ -355,6 +356,30 @@ class ToolDispatcher(context: Context) {
         "set_ringer_mode" -> toggles.setRingerMode(args.str("mode"))
         "open_quick_toggle" -> toggles.openPanel(args.str("what"))
 
+        // --------------------------------------------- one-call composites
+        "search_in_app" -> searchFlow.search(args.str("app_name"), args.str("query"))
+
+        "set_system_toggle" -> {
+            val which = SystemToggles.Toggle.from(args.str("what"))
+            if (which == null) {
+                ToolResult.fail(
+                    FailureKind.INVALID_INPUT,
+                    "Don't know a toggle called \"${args.str("what")}\". Try wifi, bluetooth, mobile data, " +
+                        "hotspot, location, aeroplane mode, torch or auto-rotate."
+                )
+            } else {
+                systemToggles.set(which, on = args.bool("on"))
+            }
+        }
+
+        "clear_recent_apps" -> withService("clear_recent_apps") { service ->
+            if (service.clearRecents()) ToolResult.ok("Cleared the recents list.")
+            else ToolResult.fail(
+                FailureKind.TOOL_FAILURE,
+                "Opened recents but couldn't find a clear-all control — this phone may not have one."
+            )
+        }
+
         "set_preferred_sim" -> setPreferredSim(args.str("which"))
 
         "write_note" -> notes.addNote(args.str("text")).let { ToolResult.ok("Saved note: \"${it.text}\"") }
@@ -457,6 +482,50 @@ class ToolDispatcher(context: Context) {
                 )
             }
         }
+    }
+
+    /**
+     * Closes an app, by whichever route Android actually permits.
+     *
+     * The two cases are genuinely different and were being conflated. A foreground app
+     * can only be dismissed by driving Recents and swiping its card — Android removed
+     * force-quit from ordinary apps years ago. A *background* app can be reaped with
+     * killBackgroundProcesses, which needs no Accessibility Service at all and works
+     * even when it is off.
+     */
+    private suspend fun closeApp(appName: String): ToolResult {
+        val name = appName.trim()
+        val service = LainAccessibilityService.instance
+
+        // Is it actually what's on screen? If so, Recents is the only route.
+        val foreground = service?.foregroundApp()
+        val target = name.takeIf { it.isNotBlank() }
+        val isForeground = target == null || foreground?.second?.contains(target, ignoreCase = true) == true ||
+            apps.resolvePackage(target) == foreground?.first
+
+        if (isForeground) {
+            if (service == null) {
+                return ToolResult.fail(
+                    FailureKind.PERMISSION,
+                    "Closing what's on screen needs the Accessibility Service — Android only lets the app be " +
+                        "dismissed by swiping its card in Recents, which is a gesture. It isn't connected."
+                )
+            }
+            service.closeCurrentApp()
+            AccessibilityMonitor.reconcile(appContext)
+            val now = LainAccessibilityService.instance?.foregroundApp()
+            return if (now?.first != foreground?.first) {
+                ToolResult.ok("Closed ${foreground?.second ?: target ?: "it"}.")
+            } else {
+                ToolResult.fail(
+                    FailureKind.TOOL_FAILURE,
+                    "Swiped in Recents but ${foreground?.second ?: "the app"} is still in the foreground."
+                )
+            }
+        }
+
+        if (target == null) return ToolResult.fail(FailureKind.INVALID_INPUT, "Which app?")
+        return apps.killBackgroundProcess(target).asResult(FailureKind.TOOL_FAILURE)
     }
 
     // ------------------------------------------------------------ scheduling

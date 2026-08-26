@@ -173,18 +173,21 @@ class LainAccessibilityService : AccessibilityService() {
      *
      * @return true if the screen settled, false if we gave up at [maxWait].
      */
-    suspend fun awaitSettle(maxWait: Long = 2500L, quietPeriod: Long = 220L): Boolean {
+    suspend fun awaitSettle(maxWait: Long = 2500L, quietPeriod: Long = 180L): Boolean {
         val deadline = SystemClock.uptimeMillis() + maxWait
         // Anything before this call is history; only changes caused by the action count.
         lastEventAt = SystemClock.uptimeMillis()
         var polls = 0
         while (SystemClock.uptimeMillis() < deadline) {
-            delay(60)
+            // 35ms rather than 60. A settle is paid after every tap, type and launch —
+            // often a dozen times in one task — so the poll interval and the minimum
+            // poll count are both pure per-step latency. Two polls is still enough to
+            // stop an action that hasn't begun rendering being mistaken for one that
+            // already finished, and the floor drops from 180ms to 70ms.
+            delay(35)
             polls++
             val quietFor = SystemClock.uptimeMillis() - lastEventAt
-            // Require at least a couple of polls so an action that hasn't started
-            // rendering yet isn't mistaken for one that already finished.
-            if (quietFor >= quietPeriod && polls >= 3) return true
+            if (quietFor >= quietPeriod && polls >= 2) return true
         }
         return false
     }
@@ -291,7 +294,22 @@ class LainAccessibilityService : AccessibilityService() {
             val interactive = collected.filter { it.kind != "text" }.take(COMPACT_NODES)
             val prose = collected.filter { it.kind == "text" }
             if (interactive.isEmpty() && prose.isEmpty()) {
-                out.append("(nothing readable on screen yet)\n")
+                // Empty is not the same as stuck, and saying only "nothing readable"
+                // made it look like one. Chrome's omnibox is the case that exposed it:
+                // once focused, its dropdown exposes no nodes the compact filter keeps,
+                // so the screen reads blank — while a text field is sitting there
+                // focused and ready. type_text targets the focused node directly and
+                // needs none of this, so the reply now says so instead of leaving the
+                // model to conclude it is blocked and ask the user what to do.
+                out.append("(no readable controls on this screen)\n")
+                if (hasEditableField()) {
+                    out.append(
+                        "A text field IS focused and ready. Call type_text now — it types into the " +
+                            "focused field directly and does not need anything listed here.\n"
+                    )
+                } else {
+                    out.append("Nothing to type into either. Wait briefly and read again.\n")
+                }
             }
             interactive.forEach { out.append(it.line()).append('\n') }
             prose.take(COMPACT_PROSE).forEach { out.append(it.line()).append('\n') }
@@ -434,6 +452,52 @@ class LainAccessibilityService : AccessibilityService() {
         return focused ?: findFirstEditable(root, 0)
     }
 
+    /**
+     * Taps a search control that carries no visible label.
+     *
+     * Most apps put search behind a magnifying-glass icon whose only identification is
+     * a content description or a view id — neither of which tapByText finds, because
+     * there is no text on screen to match. Without this, driving search in anything
+     * other than a browser fails at the first step.
+     */
+    suspend fun tapSearchAffordance(): Boolean {
+        val root = targetRoot() ?: return false
+        val candidates = mutableListOf<AccessibilityNodeInfo>()
+        collectSearchCandidates(root, candidates, 0)
+        for (node in candidates) {
+            if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                awaitSettle(maxWait = 1200L, quietPeriod = 150L)
+                return true
+            }
+            // Some icons are decorative children of the real clickable container.
+            var parent = node.parent
+            var hops = 0
+            while (parent != null && hops < 3) {
+                if (parent.isClickable && parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    awaitSettle(maxWait = 1200L, quietPeriod = 150L)
+                    return true
+                }
+                parent = parent.parent
+                hops++
+            }
+        }
+        return false
+    }
+
+    private fun collectSearchCandidates(
+        node: AccessibilityNodeInfo,
+        into: MutableList<AccessibilityNodeInfo>,
+        depth: Int
+    ) {
+        if (depth > MAX_DEPTH || into.size >= 8) return
+        val description = node.contentDescription?.toString()?.lowercase().orEmpty()
+        val viewId = runCatching { node.viewIdResourceName.orEmpty() }.getOrDefault("").lowercase()
+        if (description.contains("search") || viewId.contains("search")) into += node
+        for (i in 0 until node.childCount) {
+            node.getChild(i)?.let { collectSearchCandidates(it, into, depth + 1) }
+        }
+    }
+
     /** True when the current screen has somewhere to type — lets a composite action verify before it acts. */
     fun hasEditableField(): Boolean = editableTarget() != null
 
@@ -464,6 +528,31 @@ class LainAccessibilityService : AccessibilityService() {
 
     fun goHome() = performGlobalAction(GLOBAL_ACTION_HOME)
     fun goBack() = performGlobalAction(GLOBAL_ACTION_BACK)
+
+    /**
+     * Opens the Quick Settings panel — the tiles, not just the notification shade.
+     *
+     * This is the only route left to Wi-Fi, Bluetooth and the rest: Android removed
+     * programmatic control from ordinary apps, but the user's own Accessibility
+     * Service may press the user's own tiles, which is what a screen reader does.
+     *
+     * GLOBAL_ACTION_QUICK_SETTINGS goes straight there. Below Android 11 it does not
+     * exist, and pulling the shade twice is the long-standing equivalent — the first
+     * opens notifications, the second expands to the tiles.
+     */
+    suspend fun openQuickSettings(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS)) {
+                awaitSettle(maxWait = 1200L, quietPeriod = 150L)
+                return true
+            }
+        }
+        val opened = performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
+        awaitSettle(maxWait = 900L, quietPeriod = 120L)
+        performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
+        awaitSettle(maxWait = 900L, quietPeriod = 120L)
+        return opened
+    }
     fun openRecents() = performGlobalAction(GLOBAL_ACTION_RECENTS)
     fun openNotifications() = performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
 
@@ -498,6 +587,29 @@ class LainAccessibilityService : AccessibilityService() {
         swipe(screenWidth / 2f, screenHeight / 2f, screenWidth / 2f, screenHeight * 0.1f, durationMs = 250)
         awaitSettle(maxWait = 900L)
         goHome()
+    }
+
+    /**
+     * Clears the recents list — the closest thing to "close everything".
+     *
+     * Android gives a normal app no way to enumerate, let alone stop, what other
+     * people's apps are doing; `getRunningAppProcesses` has returned only our own
+     * process since Android 5. What it does allow is the user's Accessibility Service
+     * pressing the button the user would press. So this presses it.
+     *
+     * @return true only if a clear control was actually found and tapped.
+     */
+    suspend fun clearRecents(): Boolean {
+        openRecents()
+        awaitSettle(maxWait = 1500L)
+        // Every OEM names it differently, and some put it behind an icon.
+        val cleared = listOf(
+            "Clear all", "Close all", "Clear All", "CLEAR ALL", "Clean up",
+            "Clear", "Remove all"
+        ).any { tapByText(it) }
+        awaitSettle(maxWait = 1200L)
+        goHome()
+        return cleared
     }
 
     // ----------------------------------------------------------------- vision

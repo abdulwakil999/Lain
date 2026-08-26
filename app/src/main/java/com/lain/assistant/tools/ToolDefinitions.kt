@@ -23,7 +23,7 @@ object ToolDefinitions {
         ),
         ToolDefinition(
             name = "close_app",
-            description = "Close/dismiss the app currently in the foreground.",
+            description = "Close an app. Dismisses it from Recents if it's on screen, or stops its background processes if it isn't. Leave app_name blank for whatever is in the foreground.",
             parameters = schema {
                 property("app_name", "string", "Display name of the app to close")
                 required("app_name")
@@ -378,6 +378,32 @@ object ToolDefinitions {
             briefDescription = "Show the system wifi/data/bluetooth switch over Lain."
         ),
         ToolDefinition(
+            name = "search_in_app",
+            description = "Open an app and search inside it, in ONE call — this is the right tool for \"open chrome and search X\", \"search youtube for Y\", \"look up Z on spotify\". Do NOT do this by hand with open_app, tap_text and type_text; this handles the whole sequence and verifies it. Leave app_name blank for a plain web search.",
+            parameters = schema {
+                property("app_name", "string", "App to search in, e.g. \"Chrome\", \"YouTube\", \"Spotify\". Blank for a web search.")
+                property("query", "string", "What to search for")
+                required("query")
+            },
+            briefDescription = "Open an app and search inside it, in one call."
+        ),
+        ToolDefinition(
+            name = "set_system_toggle",
+            description = "Turn wifi, bluetooth, mobile data, hotspot, location, aeroplane mode, torch or auto-rotate on or off. Lain presses the Quick Settings tile and then reads the state back to confirm it actually changed.",
+            parameters = schema {
+                property("what", "string", "wifi, bluetooth, mobile data, hotspot, location, aeroplane mode, torch or auto-rotate")
+                property("on", "boolean", "true to turn on, false to turn off")
+                required("what", "on")
+            },
+            briefDescription = "Turn wifi/bluetooth/data/location etc on or off."
+        ),
+        ToolDefinition(
+            name = "clear_recent_apps",
+            description = "Clear the recent apps list, closing what's in the background.",
+            parameters = schema { },
+            briefDescription = "Clear recent apps."
+        ),
+        ToolDefinition(
             name = "set_preferred_sim",
             description = "Remember which SIM to use on a dual-SIM phone, e.g. \"the MTN one\" or \"SIM 2\". Texts then send from it without asking; for calls it is a hint the dialler usually follows.",
             parameters = schema {
@@ -473,7 +499,8 @@ object ToolDefinitions {
      */
     private val byImportance = listOf(
         // Things that finish a whole job in one call.
-        "message_contact", "open_app", "web_search", "make_call", "schedule_task",
+        "message_contact", "search_in_app", "open_app", "web_search", "make_call", "schedule_task",
+        "set_system_toggle", "close_app",
         // Driving a screen.
         "tap_text", "type_text", "read_screen", "press_key", "swipe_screen",
         // Knowing things.

@@ -87,8 +87,10 @@ object ToolRegistry {
     val meta: Map<String, ToolMeta> = listOf(
         ToolMeta("open_app", "Launch an installed app by display name.",
             commonFailures = listOf("app not installed", "no launchable activity")),
-        ToolMeta("close_app", "Dismiss the foreground app via Recents.",
-            needsAccessibility = true, reversible = true,
+        // No longer accessibility-only: a background app is reaped through
+        // ActivityManager, which needs no service at all.
+        ToolMeta("close_app", "Close an app, from the foreground or the background.",
+            permissions = listOf("KILL_BACKGROUND_PROCESSES"), reversible = true,
             commonFailures = listOf("OEM recents layout differs")),
         ToolMeta("open_url", "Open a web page in the browser."),
         ToolMeta("open_settings_page", "Open a specific Android Settings screen."),
@@ -128,6 +130,13 @@ object ToolRegistry {
         ToolMeta("open_quick_toggle", "Show the system wifi/data/bluetooth switch over Lain."),
         ToolMeta("set_preferred_sim", "Remember which SIM to use for calls and texts.",
             permissions = listOf("READ_PHONE_STATE")),
+        ToolMeta("search_in_app", "Open an app and search inside it, in one call.",
+            commonFailures = listOf("search box not found", "app not installed")),
+        ToolMeta("set_system_toggle", "Turn wifi/bluetooth/data/location on or off.",
+            needsAccessibility = true, reversible = true,
+            commonFailures = listOf("tile not on the first page", "OEM renamed the tile")),
+        ToolMeta("clear_recent_apps", "Clear the recent apps list.", needsAccessibility = true,
+            reversible = false),
         ToolMeta("write_note", "Save a note."),
         ToolMeta("list_notes", "List saved notes."),
         ToolMeta("take_photo", "Capture a photo and look at it.",

@@ -39,6 +39,8 @@ class LocalActions(private val context: Context) {
     private val media = MediaController(context)
     private val scheduler = Scheduler(context)
     private val toggles = QuickToggles(context)
+    private val systemToggles = SystemToggles(context)
+    private val searchFlow = SearchFlow(context)
 
     /** @return the spoken/displayed reply, or null if this couldn't be handled locally after all. */
     suspend fun execute(intent: LocalIntent): String? = withContext(Dispatchers.Default) {
@@ -62,6 +64,10 @@ class LocalActions(private val context: Context) {
                 is LocalIntent.CancelSchedule -> cancelSchedule(intent.which)
                 is LocalIntent.Dnd -> toggles.setDoNotDisturb(intent.mode).result
                 is LocalIntent.Ringer -> toggles.setRingerMode(intent.mode).result
+                is LocalIntent.SystemToggle -> systemToggle(intent.what, intent.on)
+                is LocalIntent.SearchIn -> searchFlow.search(intent.app, intent.query).result
+                is LocalIntent.CloseApp -> closeApp(intent.appName)
+                is LocalIntent.ClearRecents -> clearRecents()
                 // Arithmetic was already done by the router; this just phrases it.
                 is LocalIntent.Calculate -> "${intent.result.expression} = ${intent.result.pretty()}"
             }
@@ -149,6 +155,54 @@ class LocalActions(private val context: Context) {
             // it phrases the ask better than a raw failure would.
             else -> null
         }
+    }
+
+    // ------------------------------------------------------- system toggles
+
+    /**
+     * Switches a radio and says what actually happened.
+     *
+     * Returns null — falling through to the model — only when the phrase names
+     * nothing recognisable. A refusal or a failed tap is reported here, because the
+     * model cannot do any better and a round trip to hear the same answer is a round
+     * trip wasted.
+     */
+    private suspend fun systemToggle(what: String, on: Boolean): String? {
+        val toggle = SystemToggles.Toggle.from(what) ?: return null
+        return systemToggles.set(toggle, on).let { it.error ?: it.result }
+    }
+
+    private suspend fun closeApp(appName: String): String? {
+        val service = LainAccessibilityService.instance
+        val name = appName.trim()
+
+        // Named app that isn't on screen: stop its background work, no service needed.
+        if (name.isNotBlank()) {
+            val foreground = service?.foregroundApp()
+            val isForeground = foreground?.second?.contains(name, ignoreCase = true) == true ||
+                apps.resolvePackage(name) == foreground?.first
+            if (!isForeground) {
+                return when (val stopped = apps.killBackgroundProcess(name)) {
+                    is AutomationResult.Success -> "Stopped $name in the background."
+                    is AutomationResult.Failure -> stopped.reason
+                    is AutomationResult.MissingPermission -> null
+                }
+            }
+        }
+
+        // On screen: Recents is the only route Android permits.
+        if (service == null) return null
+        val before = service.foregroundApp()
+        service.closeCurrentApp()
+        val after = LainAccessibilityService.instance?.foregroundApp()
+        return if (after?.first != before?.first) "Closed ${before?.second ?: name}."
+        else "Swiped in Recents, but ${before?.second ?: name} is still up."
+    }
+
+    private suspend fun clearRecents(): String? {
+        val service = LainAccessibilityService.instance ?: return null
+        return if (service.clearRecents()) "Cleared the recents list."
+        else "Opened recents but couldn't find a clear-all control on this phone."
     }
 
     // ---------------------------------------------------------- scheduling
