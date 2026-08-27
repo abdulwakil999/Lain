@@ -8,6 +8,7 @@ import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import com.lain.assistant.agent.LainName
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
@@ -123,7 +124,13 @@ class VoiceInputController(private val context: Context) {
                     }
 
                     override fun onResults(results: Bundle) {
-                        val text = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+                        // Corrected here, at the single point every spoken message enters
+                        // the app. Recognisers have never heard of the name and return
+                        // "hello lane" — which then reaches the model as a request
+                        // addressed to a road.
+                        val text = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                            ?.firstOrNull()
+                            ?.let(LainName::normaliseHeard)
                         settle(
                             if (!text.isNullOrBlank()) Result.success(text)
                             else Result.failure(IllegalStateException("Didn't catch that"))
@@ -134,6 +141,7 @@ class VoiceInputController(private val context: Context) {
                         partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                             ?.firstOrNull()
                             ?.takeIf { it.isNotBlank() }
+                            ?.let(LainName::normaliseHeard)
                             ?.let(onPartial)
                     }
 

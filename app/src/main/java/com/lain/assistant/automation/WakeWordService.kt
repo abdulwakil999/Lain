@@ -17,6 +17,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import com.lain.assistant.agent.LainName
 import com.lain.assistant.MiniActivity
 import com.lain.assistant.R
 import kotlinx.coroutines.CoroutineScope
@@ -57,7 +58,8 @@ class WakeWordService : Service() {
         private const val BASE_RETRY_MS = 400L
         private const val MAX_RETRY_MS = 15_000L
 
-        private val WAKE_PHRASES = listOf("hello lain", "hello lane", "hey lain", "hi lain", "hello lynn", "hello line")
+        /** Greetings that count as the wake phrase, before homophone correction. */
+        private val GREETINGS = listOf("hello", "hey", "hi", "hallo", "yo", "ok", "okay")
 
         var isRunning: Boolean = false
             private set
@@ -70,9 +72,17 @@ class WakeWordService : Service() {
             context.stopService(Intent(context, WakeWordService::class.java))
         }
 
+        /**
+         * Whether the wake phrase was said.
+         *
+         * Runs the transcript through the same homophone correction the rest of the
+         * app uses rather than keeping a private list of spellings. The two lists had
+         * already drifted: the wake matcher tolerated "hello lane" so listening
+         * started, while the message that reached the model still said "lane".
+         */
         fun matchesWakePhrase(heard: String): Boolean {
-            val normalized = heard.trim().lowercase()
-            return WAKE_PHRASES.any { normalized.contains(it) }
+            val corrected = LainName.normaliseHeard(heard).lowercase()
+            return GREETINGS.any { corrected.contains("$it ${LainName.CANONICAL.lowercase()}") }
         }
     }
 

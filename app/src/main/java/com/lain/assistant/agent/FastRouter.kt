@@ -102,6 +102,15 @@ sealed class LocalIntent {
     /** "close yourself", "exit Lain". */
     object CloseSelf : LocalIntent()
 
+    /**
+     * Greetings, thanks, and the handful of exchanges that have one right answer.
+     *
+     * Not an attempt at conversation — anything with content still goes to the
+     * model. This is the opening and closing of one, which is a fixed set, arrives
+     * constantly, and was costing a network round trip each time.
+     */
+    data class SmallTalk(val kind: SmallTalkKind) : LocalIntent()
+
     /** "what's 15% of 240", "convert 5km to miles" — answered exactly, offline. */
     data class Calculate(val result: Calculator.Result) : LocalIntent()
 }
@@ -109,7 +118,9 @@ sealed class LocalIntent {
 enum class TransportAction { PLAY, PAUSE, TOGGLE, NEXT, PREVIOUS, STOP }
 
 /** Things Lain already knows without asking anybody. */
-enum class IdentityQuestion { USER_NAME, USER_AGE, LAIN_NAME, APP_NAME, CAPABILITIES }
+enum class IdentityQuestion { USER_NAME, USER_AGE, LAIN_NAME, APP_NAME, CAPABILITIES, NICEO }
+
+enum class SmallTalkKind { GREETING, THANKS, HOW_ARE_YOU, GOODBYE, AFFIRMATION }
 
 /** Where a message should go. */
 sealed class Route {
@@ -189,6 +200,62 @@ object FastRouter {
         }
     }
 
+    /**
+     * Command verbs in the languages the app is actually used in.
+     *
+     * The router is otherwise English-only, so "abre WhatsApp" paid for a network
+     * round trip that "open WhatsApp" did not — the same command, one of them slow,
+     * for no reason the user could see. Rather than duplicating every matcher per
+     * language, the leading verb is translated to its English equivalent and the
+     * existing matchers run unchanged.
+     *
+     * Only the verbs, and only the frequent ones. Anything more elaborate belongs to
+     * the model, which handles these languages properly; this is about not paying a
+     * round trip for "open WhatsApp" in Yoruba.
+     */
+    private val COMMAND_TRANSLATIONS: Map<String, String> = mapOf(
+        // Spanish
+        "abre" to "open", "abrir" to "open", "llama" to "call", "llamar" to "call",
+        "envía" to "text", "envia" to "text", "manda" to "text",
+        "reproduce" to "play", "pon" to "play", "cierra" to "close", "busca" to "search",
+        // French
+        "ouvre" to "open", "ouvrir" to "open", "appelle" to "call", "appeler" to "call",
+        "envoie" to "text", "joue" to "play", "ferme" to "close", "cherche" to "search",
+        // Portuguese
+        "abra" to "open", "ligue" to "call", "toque" to "play", "feche" to "close",
+        "procure" to "search",
+        // German
+        "öffne" to "open", "offne" to "open", "ruf" to "call", "spiele" to "play",
+        "schließe" to "close", "suche" to "search",
+        // Yoruba
+        "ṣí" to "open", "si" to "open", "pè" to "call", "pe" to "call",
+        "fi" to "text", "ránṣẹ́" to "text", "ta" to "play", "wá" to "search",
+        // Hausa
+        "buɗe" to "open", "bude" to "open", "kira" to "call", "aika" to "text",
+        "kunna" to "play", "rufe" to "close", "nema" to "search",
+        // Igbo
+        "mepee" to "open", "kpọọ" to "call", "kpoo" to "call", "zipu" to "text",
+        "kpọ" to "play", "mechie" to "close", "chọọ" to "search",
+        // Swahili
+        "fungua" to "open", "piga" to "call", "tuma" to "text", "cheza" to "play",
+        "funga" to "close", "tafuta" to "search"
+    )
+
+    /**
+     * Swaps a leading foreign command verb for its English equivalent.
+     *
+     * Only the first word, and only when the rest of the message survives — the
+     * target of the command ("WhatsApp", a contact name) is left exactly as spoken,
+     * because translating it would be how "call Ade" becomes a call to nobody.
+     */
+    private fun translateCommandVerb(message: String): String {
+        val firstSpace = message.indexOf(' ')
+        if (firstSpace <= 0) return message
+        val verb = message.substring(0, firstSpace)
+        val english = COMMAND_TRANSLATIONS[verb] ?: return message
+        return english + message.substring(firstSpace)
+    }
+
     private fun normalise(message: String): String = message
         .trim()
         .lowercase()
@@ -197,12 +264,13 @@ object FastRouter {
         .replace(politeSuffix, "")
         .trim()
         .trimEnd('.', '!', '?')
+        .let(::translateCommandVerb)
 
     // ------------------------------------------------------------------ intents
 
     private fun localIntent(t: String): LocalIntent? =
         // Identity first and cheapest: these are constants and a database row.
-        identity(t) ?: lockScreen(t) ?: power(t) ?: closeSelf(t)
+        smallTalk(t) ?: identity(t) ?: lockScreen(t) ?: power(t) ?: closeSelf(t)
             ?: clock(t) ?: battery(t) ?: torch(t)
             // Do Not Disturb before the generic volume matcher: "silence my phone"
             // means the ringer, not the media stream.
@@ -375,6 +443,44 @@ object FastRouter {
         }
     }
 
+    // ------------------------------------------------------------ small talk
+
+    /**
+     * Matched on the whole message only.
+     *
+     * "Hi" is a greeting; "hi, can you open WhatsApp" is a request that happens to
+     * start with one. Exact matching keeps the second going to the model, where it
+     * belongs — the cost of being wrong here is answering "hello" to somebody who
+     * asked for something.
+     */
+    private fun smallTalk(t: String): LocalIntent? {
+        val bare = t.trim().trimEnd('!', '.', ',')
+        return when (bare) {
+            "hi", "hey", "hello", "yo", "hiya", "hey there", "hi there", "hello there",
+            "morning", "good morning", "good afternoon", "good evening", "sup", "wassup",
+            "what's up", "whats up", "hi lain", "hey lain", "hello lain" ->
+                LocalIntent.SmallTalk(SmallTalkKind.GREETING)
+
+            "thanks", "thank you", "thanks a lot", "cheers", "ta", "thx", "much appreciated",
+            "appreciate it", "thank you so much", "nice one" ->
+                LocalIntent.SmallTalk(SmallTalkKind.THANKS)
+
+            "how are you", "how are you doing", "how's it going", "hows it going",
+            "you good", "you alright", "how you doing" ->
+                LocalIntent.SmallTalk(SmallTalkKind.HOW_ARE_YOU)
+
+            "bye", "goodbye", "see you", "see ya", "later", "goodnight", "good night",
+            "night", "cya" ->
+                LocalIntent.SmallTalk(SmallTalkKind.GOODBYE)
+
+            "ok", "okay", "cool", "nice", "great", "alright", "got it", "understood",
+            "sure", "fine", "sounds good", "perfect" ->
+                LocalIntent.SmallTalk(SmallTalkKind.AFFIRMATION)
+
+            else -> null
+        }
+    }
+
     // -------------------------------------------------------------- identity
 
     private fun identity(t: String): LocalIntent? = when {
@@ -392,6 +498,11 @@ object FastRouter {
         Regex("^(what('?s| is) )?(the name of )?(this|your) app( called)?\\??$").matches(t) ||
             t == "what app is this" || t == "what's this app" || t == "whats this app" || t == "whats this app" ->
             LocalIntent.Identity(IdentityQuestion.APP_NAME)
+
+        // The one thing about her own name she was getting wrong: asked what "Niceo"
+        // meant, a model with no way of knowing would invent something.
+        t.contains("niceo") && Regex("\\b(what|why|mean|means|meaning|stand|short)\\b").containsMatchIn(t) ->
+            LocalIntent.Identity(IdentityQuestion.NICEO)
 
         t == "what can you do" || t == "what are you able to do" || t == "help" ||
             t == "what can i ask you" || t == "what do you do" ->

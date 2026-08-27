@@ -5,6 +5,7 @@ import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.os.BatteryManager
 import com.lain.assistant.agent.IdentityQuestion
+import com.lain.assistant.agent.SmallTalkKind
 import kotlinx.coroutines.flow.first
 import com.lain.assistant.agent.LocalIntent
 import com.lain.assistant.agent.TransportAction
@@ -71,6 +72,7 @@ class LocalActions(private val context: Context) {
                 is LocalIntent.SearchIn -> searchFlow.search(intent.app, intent.query).result
                 is LocalIntent.CloseApp -> closeApp(intent.appName)
                 is LocalIntent.ClearRecents -> clearRecents()
+                is LocalIntent.SmallTalk -> smallTalk(intent.kind)
                 is LocalIntent.Identity -> identity(intent.question)
                 is LocalIntent.LockScreen -> lockScreen()
                 is LocalIntent.Power -> powerMenu(intent.restart)
@@ -164,6 +166,68 @@ class LocalActions(private val context: Context) {
         }
     }
 
+    // ------------------------------------------------------------ small talk
+
+    /**
+     * A handful of fixed exchanges, answered on the device.
+     *
+     * Varied deliberately. A greeting that returns the same six characters every
+     * time is what makes an assistant feel like a vending machine, and this is the
+     * one place a canned answer is honest — there is nothing to work out, only
+     * something to say back.
+     */
+    private suspend fun smallTalk(kind: SmallTalkKind): String {
+        val name = prefs.userProfile.first()?.nickname?.takeIf { it.isNotBlank() }
+        return when (kind) {
+            // The name appears in roughly a third of greetings — often enough to
+            // register as recognition, rare enough not to read as a script.
+            // A word or two of Spanish, occasionally — the way someone who grew up
+            // around two languages drops into one. Never a whole reply, so it never
+            // becomes something the user has to translate to use.
+            SmallTalkKind.GREETING -> listOf(
+                "What's up niceo?",
+                "Dime.",
+                "Here.",
+                "Go on.",
+                name?.let { "$it." } ?: "Yeah?",
+                "Listening.",
+                "¿Qué pasa?",
+                "What do you need?"
+            ).random()
+
+            SmallTalkKind.THANKS -> listOf(
+                "Any time.",
+                "De nada.",
+                "Sure.",
+                "That's the job.",
+                "No trouble."
+            ).random()
+
+            SmallTalkKind.HOW_ARE_YOU -> listOf(
+                "Running. You?",
+                "Same as always. What do you need?",
+                "Fine. Nothing hurts yet.",
+                "Idle, mostly. Fix that."
+            ).random()
+
+            SmallTalkKind.GOODBYE -> listOf(
+                "Later.",
+                "Hasta luego.",
+                "I'll be here.",
+                name?.let { "Night, $it." } ?: "Night.",
+                "Go on then."
+            ).random()
+
+            SmallTalkKind.AFFIRMATION -> listOf(
+                "Mm.",
+                "Vale.",
+                "Right.",
+                "Anything else?",
+                "Noted."
+            ).random()
+        }
+    }
+
     // -------------------------------------------------------------- identity
 
     /**
@@ -195,6 +259,13 @@ class LocalActions(private val context: Context) {
                 "Lain. Short for Leave-it-to-Artificial-intelligence-Niceo."
 
             IdentityQuestion.APP_NAME -> "Lain. This one."
+
+            // A fact only the developer knows, so a model asked this would have
+            // invented an answer — confidently, and differently each time.
+            IdentityQuestion.NICEO ->
+                "Leave-it-to-Artificial-intelligence-Niceo. Niceo is what my developer calls " +
+                    "you — he built me for lazy people, and the abuse is the reminder not to be one. " +
+                    "You could have looked that up yourself, by the way."
 
             // Deliberately a short list of what she can do *without help* — the point
             // of the question is orientation, not a manual.

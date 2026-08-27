@@ -209,7 +209,7 @@ fun ChatScreen(viewModel: ChatViewModel, container: AppContainer, autoListenToke
             // Alarms and memories were only reachable by asking her, which is a poor
             // way to audit anything — especially memory, which accumulates quietly and
             // shapes every later answer.
-            SmallPill(text = "Knows", onClick = { showKnows = true })
+            SmallPill(text = "Memoria", onClick = { showKnows = true })
             Spacer(Modifier.width(8.dp))
             SmallPill(text = "Settings", onClick = { showSettings = true })
         }

@@ -106,7 +106,13 @@ class RouterBenchmarkTest {
 
     @Test
     fun `conversation still skips the tool surface`() {
-        listOf("good morning", "how are you", "thanks", "tell me a joke").forEach {
+        // Greetings, thanks and "how are you" are answered on the device now — they
+        // were costing a network round trip to say hello back. Anything with actual
+        // content still goes to the model.
+        listOf("good morning", "how are you", "thanks").forEach {
+            assertTrue(it, FastRouter.route(it) is Route.Local)
+        }
+        listOf("tell me a joke", "sing me something").forEach {
             assertEquals(it, Route.Chat, FastRouter.route(it))
         }
     }

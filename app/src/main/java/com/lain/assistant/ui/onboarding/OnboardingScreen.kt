@@ -37,6 +37,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.lain.assistant.ui.theme.LainSalmon
+import androidx.compose.foundation.background
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import com.lain.assistant.legal.LegalText
+import com.lain.assistant.ui.theme.LainNavy
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.shape.RoundedCornerShape
 import com.lain.assistant.ui.common.PixelButton
 import com.lain.assistant.ui.common.PixelChoiceChip
 import com.lain.assistant.ui.common.PixelTextField
@@ -105,6 +113,10 @@ fun OnboardingScreen(viewModel: OnboardingViewModel, onFinished: () -> Unit) {
                     .verticalScroll(rememberScrollState())
             ) {
                 when (state.step) {
+                    OnboardingStep.LEGAL -> LegalStep(
+                        accepted = state.legalAccepted,
+                        onAcceptedChange = viewModel::setLegalAccepted
+                    )
                     OnboardingStep.NAME -> PixelTextField(state.name, viewModel::setName, "Your name")
                     OnboardingStep.AGE -> PixelTextField(state.age, viewModel::setAge, "Your age", keyboardType = KeyboardType.Number)
                     OnboardingStep.GENDER -> GenderChoice(state.gender, viewModel::setGender)
@@ -118,7 +130,11 @@ fun OnboardingScreen(viewModel: OnboardingViewModel, onFinished: () -> Unit) {
 
             Spacer(Modifier.height(20.dp))
             PixelButton(
-                text = if (state.step == OnboardingStep.PERMISSIONS) "Let's go" else "Continue",
+                text = when (state.step) {
+                    OnboardingStep.PERMISSIONS -> "Let's go"
+                    OnboardingStep.LEGAL -> "Agree and continue"
+                    else -> "Continue"
+                },
                 onClick = viewModel::next,
                 enabled = state.canAdvance
             )
@@ -191,6 +207,7 @@ internal object OnboardingLayout {
 }
 
 private fun questionFor(step: OnboardingStep): String = when (step) {
+    OnboardingStep.LEGAL -> "Before anything else"
     OnboardingStep.NAME -> "What's your name?"
     OnboardingStep.AGE -> "How old are you?"
     OnboardingStep.GENDER -> "Are you male or female?"
@@ -406,3 +423,94 @@ private fun OnboardingStepRow(
         PixelButton(text = button, onClick = onClick)
     }
 }
+
+/**
+ * The policy and terms, shown before a single question is asked.
+ *
+ * Both are in the app rather than behind a link: much of what Lain does works
+ * offline, and a policy nobody can read on a train is a policy nobody reads. The
+ * text is scrollable in place — no separate screen to get lost in, and no way to
+ * reach the button without the documents having been in front of you.
+ */
+@Composable
+private fun LegalStep(accepted: Boolean, onAcceptedChange: (Boolean) -> Unit) {
+    var showing by remember { mutableStateOf(LegalDoc.PRIVACY) }
+
+    androidx.compose.foundation.layout.Column {
+        Text(
+            "Lain runs on your phone and can operate it. Here's exactly what that means for " +
+                "your data, and what you're agreeing to.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = LainCream
+        )
+        Spacer(Modifier.height(12.dp))
+
+        androidx.compose.foundation.layout.Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            PixelChoiceChip(
+                "Privacy",
+                showing == LegalDoc.PRIVACY,
+                { showing = LegalDoc.PRIVACY },
+                modifier = Modifier.weight(1f)
+            )
+            PixelChoiceChip(
+                "Terms",
+                showing == LegalDoc.TERMS,
+                { showing = LegalDoc.TERMS },
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        Spacer(Modifier.height(10.dp))
+        androidx.compose.foundation.layout.Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(220.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(LainNavy)
+                .padding(12.dp)
+        ) {
+            androidx.compose.foundation.layout.Column(
+                modifier = Modifier.verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    if (showing == LegalDoc.PRIVACY) LegalText.PRIVACY else LegalText.TERMS,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = LainCream
+                )
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        // A tap target rather than a checkbox glyph: the whole row is the control,
+        // which is what makes it reachable with a screen reader or a switch.
+        androidx.compose.foundation.layout.Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .clickable { onAcceptedChange(!accepted) }
+                .padding(vertical = 8.dp, horizontal = 4.dp)
+                .semantics {
+                    contentDescription =
+                        if (accepted) "Agreement accepted. Tap to withdraw."
+                        else "Tap to agree to the privacy policy and terms."
+                },
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+        ) {
+            Text(
+                if (accepted) "[x]" else "[ ]",
+                style = MaterialTheme.typography.labelLarge,
+                color = LainSalmon
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                "I've read the privacy policy and the terms.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = LainCream
+            )
+        }
+    }
+}
+
+private enum class LegalDoc { PRIVACY, TERMS }

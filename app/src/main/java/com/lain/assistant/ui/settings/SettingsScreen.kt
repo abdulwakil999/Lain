@@ -335,6 +335,35 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             )
 
             Spacer(Modifier.height(24.dp))
+            SectionLabel("Privacy and terms")
+            // Reachable after setup, not only at it. A policy you agreed to once and
+            // can never find again is not much of a policy.
+            var showingLegal by remember { mutableStateOf<String?>(null) }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                PixelButton(
+                    text = "Privacy policy",
+                    onClick = {
+                        showingLegal = if (showingLegal == "privacy") null else "privacy"
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+                PixelButton(
+                    text = "Terms",
+                    onClick = { showingLegal = if (showingLegal == "terms") null else "terms" },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            showingLegal?.let { which ->
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    if (which == "privacy") com.lain.assistant.legal.LegalText.PRIVACY
+                    else com.lain.assistant.legal.LegalText.TERMS,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = LainMuted
+                )
+            }
+
+            Spacer(Modifier.height(24.dp))
             SectionLabel("Alarms and Do Not Disturb")
             // Two grants Lain can't give herself. Both are offered, neither is
             // requested silently, and the current state is read from the system

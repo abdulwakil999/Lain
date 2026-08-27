@@ -40,7 +40,8 @@ class KokoroTtsEngine(
     override suspend fun speak(text: String) = withContext(Dispatchers.IO) {
         val body = buildJsonObject {
             put("model", "kokoro")
-            put("input", text)
+            // Respelled for the synthesiser only; the transcript keeps "Lain".
+            put("input", com.lain.assistant.agent.LainName.forSpeech(text))
             put("voice", voiceId)
             put("response_format", "mp3")
         }

@@ -13,10 +13,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-enum class OnboardingStep { NAME, AGE, GENDER, NICKNAME, PROVIDER, MODEL, API_KEY, PERMISSIONS }
+enum class OnboardingStep { LEGAL, NAME, AGE, GENDER, NICKNAME, PROVIDER, MODEL, API_KEY, PERMISSIONS }
 
 data class OnboardingUiState(
-    val step: OnboardingStep = OnboardingStep.NAME,
+    val step: OnboardingStep = OnboardingStep.LEGAL,
+    /** Both documents have to be accepted before anything is asked for or stored. */
+    val legalAccepted: Boolean = false,
     val name: String = "",
     val age: String = "",
     val gender: Gender? = null,
@@ -43,6 +45,10 @@ data class OnboardingUiState(
 
     val canAdvance: Boolean
         get() = when (step) {
+            // Gated deliberately: the very next question asks for their name, and
+            // asking for anything before the policy is shown makes the policy a
+            // formality after the fact.
+            OnboardingStep.LEGAL -> legalAccepted
             OnboardingStep.NAME -> name.isNotBlank()
             OnboardingStep.AGE -> age.toIntOrNull()?.let { it in 1..120 } == true
             OnboardingStep.GENDER -> gender != null
@@ -97,6 +103,9 @@ class OnboardingViewModel(private val container: AppContainer) : ViewModel() {
             )
         }
     }
+
+    fun setLegalAccepted(accepted: Boolean) =
+        _state.update { it.copy(legalAccepted = accepted) }
 
     fun next() {
         val current = _state.value

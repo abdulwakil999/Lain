@@ -29,7 +29,13 @@ running a build signed with the old key.
 ./gradlew clean testDebugUnitTest lintDebug assembleRelease
 ```
 
-Output: `app/build/outputs/apk/release/app-release.apk`
+Outputs:
+- `app/build/outputs/apk/release/app-release.apk` — sideload
+- `app/build/outputs/bundle/release/app-release.aab` — Play Store
+
+Both are signed with the same key. Play re-signs the bundle with its own key once
+App Signing is enabled, so the SHA-256 below applies to the APK you distribute
+yourself, not to what Play serves.
 
 The build reads signing details from `keystore.properties` at the repo root, or
 from `LAIN_KEYSTORE`, `LAIN_KEYSTORE_PASSWORD`, `LAIN_KEY_ALIAS`,
@@ -41,7 +47,7 @@ unsigned — useful for checking size without holding the key.
 | | |
 |---|---|
 | Package | `com.lain.assistant` |
-| Version | 1.4.0 (versionCode 24) |
+| Version | 1.5.0 (versionCode 25) |
 | Size | 4.9 MB |
 | Min / target | Android 8.0 (26) / Android 15 (35) |
 | Signature | v2 |
@@ -93,8 +99,14 @@ Two things need a policy declaration:
   genuinely is: screen reading and hands-free control for blind users is a core
   feature, not a workaround for automation.
 
-Play also requires an App Bundle rather than an APK (`./gradlew bundleRelease`),
-and Play App Signing takes over the upload key.
+Play requires the App Bundle, which `assembleRelease bundleRelease` already
+produces. Play App Signing takes over from the upload key once enabled — keep
+`lain-release.jks` anyway, since it stays the upload key.
+
+The privacy policy and terms are built into the app and shown before setup asks
+for anything. Play also wants a publicly reachable privacy policy URL; host the
+same text from `LegalText.PRIVACY` and point the listing at it, so the two cannot
+drift apart.
 
 ## What Lain cannot do, by design
 

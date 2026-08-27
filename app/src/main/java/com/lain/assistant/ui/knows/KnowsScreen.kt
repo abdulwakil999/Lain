@@ -68,17 +68,20 @@ fun KnowsScreen(viewModel: KnowsViewModel, onBack: () -> Unit) {
                     .semantics { contentDescription = "Back to chat" }
             )
             Spacer(Modifier.width(14.dp))
-            Text("What I'm holding", style = MaterialTheme.typography.titleMedium, color = LainCream)
+            Text("Memoria", style = MaterialTheme.typography.titleMedium, color = LainCream)
         }
 
         Spacer(Modifier.height(16.dp))
 
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             item {
-                SectionHeader("Scheduled", state.tasks.size)
+                // Spanish headings, English everywhere it matters. Both words read
+                // clearly to someone who speaks neither — "agenda" and "memoria" are
+                // near-cognates — so the flavour costs nobody comprehension.
+                SectionHeader("Agenda", "scheduled", state.tasks.size)
             }
             if (state.tasks.isEmpty()) {
-                item { Empty("Nothing scheduled.") }
+                item { Empty("Nada. Nothing scheduled.") }
             }
             items(state.tasks, key = { it.id }) { task ->
                 Entry(
@@ -91,10 +94,10 @@ fun KnowsScreen(viewModel: KnowsViewModel, onBack: () -> Unit) {
 
             item {
                 Spacer(Modifier.height(20.dp))
-                SectionHeader("Remembered", state.memories.size)
+                SectionHeader("Memoria", "remembered", state.memories.size)
             }
             if (state.memories.isEmpty()) {
-                item { Empty("Nothing remembered yet. Tell her something worth keeping.") }
+                item { Empty("Nada todavía. Tell her something worth keeping.") }
             }
             items(state.memories, key = { it.id }) { memory ->
                 Entry(
@@ -111,7 +114,7 @@ fun KnowsScreen(viewModel: KnowsViewModel, onBack: () -> Unit) {
                     var confirming by remember { mutableStateOf(false) }
                     PixelButton(
                         // Two taps, because there is no undo and this is everything at once.
-                        text = if (confirming) "Tap again to forget everything" else "Forget everything",
+                        text = if (confirming) "Tap again — borra todo" else "Forget everything",
                         onClick = {
                             if (confirming) {
                                 viewModel.forgetAll()
@@ -129,9 +132,11 @@ fun KnowsScreen(viewModel: KnowsViewModel, onBack: () -> Unit) {
 }
 
 @Composable
-private fun SectionHeader(text: String, count: Int) {
+private fun SectionHeader(text: String, gloss: String, count: Int) {
+    // The gloss is part of the label rather than a tooltip, so a screen reader
+    // announces it too — a heading nobody can translate is a heading nobody can use.
     Text(
-        "$text · $count",
+        "$text · $gloss · $count",
         style = MaterialTheme.typography.labelLarge,
         color = LainSalmon,
         modifier = Modifier.padding(bottom = 4.dp)
