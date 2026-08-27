@@ -75,6 +75,7 @@ fun ChatScreen(viewModel: ChatViewModel, container: AppContainer, autoListenToke
     val context = LocalContext.current
     val listState = rememberLazyListState()
     var showSettings by remember { mutableStateOf(false) }
+    var showKnows by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         viewModel.attachTts(context)
@@ -100,6 +101,16 @@ fun ChatScreen(viewModel: ChatViewModel, container: AppContainer, autoListenToke
 
     RequestCorePermissionsOnce()
 
+    if (showKnows) {
+        val factory = remember { LainViewModelFactory(container) }
+        val knowsViewModel: com.lain.assistant.ui.knows.KnowsViewModel = viewModel(factory = factory)
+        com.lain.assistant.ui.knows.KnowsScreen(
+            viewModel = knowsViewModel,
+            onBack = { showKnows = false }
+        )
+        return
+    }
+
     if (showSettings) {
         val factory = remember { LainViewModelFactory(container) }
         val settingsViewModel: SettingsViewModel = viewModel(factory = factory)
@@ -108,6 +119,17 @@ fun ChatScreen(viewModel: ChatViewModel, container: AppContainer, autoListenToke
     }
 
     val window = rememberLainWindow()
+
+    // "Close yourself" — only an Activity can finish itself, so the engine records the
+    // ask and this acts on it.
+    val activity = LocalContext.current as? android.app.Activity
+    LaunchedEffect(state.closeRequested) {
+        if (state.closeRequested) {
+            viewModel.onCloseHandled()
+            kotlinx.coroutines.delay(400)
+            activity?.finish()
+        }
+    }
 
     // A plain Box, not BoxWithConstraints. Nothing in here reads the constraints —
     // the art size comes from rememberLainWindow — and BoxWithConstraints forces a
@@ -183,6 +205,11 @@ fun ChatScreen(viewModel: ChatViewModel, container: AppContainer, autoListenToke
                 onClick = viewModel::toggleMute,
                 dimmed = state.isMuted
             )
+            Spacer(Modifier.width(8.dp))
+            // Alarms and memories were only reachable by asking her, which is a poor
+            // way to audit anything — especially memory, which accumulates quietly and
+            // shapes every later answer.
+            SmallPill(text = "Knows", onClick = { showKnows = true })
             Spacer(Modifier.width(8.dp))
             SmallPill(text = "Settings", onClick = { showSettings = true })
         }

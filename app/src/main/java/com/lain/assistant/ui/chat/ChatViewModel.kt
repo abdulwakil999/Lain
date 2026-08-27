@@ -49,6 +49,8 @@ class ChatViewModel(container: AppContainer) : ViewModel() {
     fun attach(uri: android.net.Uri) = engine.attach(uri)
 
     fun removeAttachment(uri: android.net.Uri) = engine.removeAttachment(uri)
+
+    fun onCloseHandled() = engine.onCloseHandled()
 }
 
 /** Kept as an alias so screens can keep referring to the shape they already use. */

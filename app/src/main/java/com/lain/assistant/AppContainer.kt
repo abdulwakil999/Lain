@@ -29,6 +29,10 @@ class AppContainer(context: Context) {
     val voiceInputController = VoiceInputController(appContext)
     val openRouterModelsClient = OpenRouterModelsClient()
     val connectionTester = ConnectionTester(appContext)
+    val scheduler = com.lain.assistant.automation.Scheduler(appContext)
+
+    /** Alias, so screens read as "what she remembers" rather than "the store". */
+    val memory: MemoryStore get() = memoryStore
 
     /**
      * Application-scoped so a running task survives screen lock and backgrounding,

@@ -4,6 +4,8 @@ import android.content.Context
 import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.os.BatteryManager
+import com.lain.assistant.agent.IdentityQuestion
+import kotlinx.coroutines.flow.first
 import com.lain.assistant.agent.LocalIntent
 import com.lain.assistant.agent.TransportAction
 import com.lain.assistant.agent.WhenParser
@@ -32,6 +34,7 @@ import java.util.Locale
  */
 class LocalActions(private val context: Context) {
 
+    private val prefs = com.lain.assistant.data.UserPreferencesRepository(context)
     private val apps = AppLauncher(context)
     private val phone = PhoneController(context)
     private val device = DeviceController(context)
@@ -68,6 +71,10 @@ class LocalActions(private val context: Context) {
                 is LocalIntent.SearchIn -> searchFlow.search(intent.app, intent.query).result
                 is LocalIntent.CloseApp -> closeApp(intent.appName)
                 is LocalIntent.ClearRecents -> clearRecents()
+                is LocalIntent.Identity -> identity(intent.question)
+                is LocalIntent.LockScreen -> lockScreen()
+                is LocalIntent.Power -> powerMenu(intent.restart)
+                is LocalIntent.CloseSelf -> "Closing."
                 // Arithmetic was already done by the router; this just phrases it.
                 is LocalIntent.Calculate -> "${intent.result.expression} = ${intent.result.pretty()}"
             }
@@ -154,6 +161,74 @@ class LocalActions(private val context: Context) {
             // Exact-alarm permission is a real gate; the model can't fix it either, but
             // it phrases the ask better than a raw failure would.
             else -> null
+        }
+    }
+
+    // -------------------------------------------------------------- identity
+
+    /**
+     * Answers what Lain already knows.
+     *
+     * The profile is a row in the app's own database and her name is a constant.
+     * These went through a language model, which meant a network round trip to be
+     * told something already on the device — and on a free model, a numbered plan
+     * about how to say a two-word name.
+     */
+    private suspend fun identity(question: IdentityQuestion): String? {
+        val profile = prefs.userProfile.first()
+        return when (question) {
+            IdentityQuestion.USER_NAME -> {
+                val nickname = profile?.nickname?.takeIf { it.isNotBlank() }
+                val real = profile?.name?.takeIf { it.isNotBlank() }
+                when {
+                    nickname != null && real != null && !nickname.equals(real, ignoreCase = true) ->
+                        "$real. You go by $nickname."
+                    nickname ?: real != null -> (nickname ?: real)!!
+                    else -> null
+                }
+            }
+
+            IdentityQuestion.USER_AGE ->
+                profile?.age?.takeIf { it > 0 }?.let { "$it." }
+
+            IdentityQuestion.LAIN_NAME ->
+                "Lain. Short for Leave-it-to-Artificial-intelligence-Niceo."
+
+            IdentityQuestion.APP_NAME -> "Lain. This one."
+
+            // Deliberately a short list of what she can do *without help* — the point
+            // of the question is orientation, not a manual.
+            IdentityQuestion.CAPABILITIES ->
+                "Calls, texts, WhatsApp. Alarms, reminders, recurring tasks. Opening apps and " +
+                    "searching in them. Wi-Fi, Bluetooth, data, torch, Do Not Disturb. Reading and " +
+                    "tapping your screen. Music. Anything else, just ask and I'll say if I can't."
+        }
+    }
+
+    // ----------------------------------------------------------- power state
+
+    private fun lockScreen(): String? {
+        val service = LainAccessibilityService.instance ?: return null
+        return if (service.lockScreen()) "Locked."
+        else "Locking the screen needs Android 9 or newer — this phone won't let an app do it."
+    }
+
+    /**
+     * Puts the system power menu up rather than restarting anything.
+     *
+     * No API exists for an app to restart or power off a phone, and that is correct:
+     * it would end whatever the user was doing, mid-sentence, with no way back. So
+     * this raises the real menu and the press stays theirs. Said plainly, because
+     * "restarting now" followed by nothing happening would be worse.
+     */
+    private fun powerMenu(restart: Boolean): String? {
+        val service = LainAccessibilityService.instance ?: return null
+        val word = if (restart) "Restart" else "Power off"
+        return if (service.showPowerMenu()) {
+            "Power menu's up — tap $word. Android doesn't let any app do that one on its own, " +
+                "and I'd rather not be the reason your phone goes down mid-sentence anyway."
+        } else {
+            "Couldn't raise the power menu. Hold the power button."
         }
     }
 

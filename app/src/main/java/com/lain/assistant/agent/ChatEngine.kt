@@ -62,6 +62,8 @@ data class ChatState(
     val input: String = "",
     /** Files the user has attached but not sent yet. */
     val attachments: List<Attachment> = emptyList(),
+    /** Set when the user asked Lain to close; the screen acts on it and clears it. */
+    val closeRequested: Boolean = false,
     val isSending: Boolean = false,
     val isListening: Boolean = false,
     val isMuted: Boolean = false,
@@ -256,6 +258,9 @@ class ChatEngine(
      * is usually that it needs a word changed.
      */
     fun copyToInput(text: String) = _state.update { it.copy(input = text) }
+
+    /** Cleared by the screen once it has actually closed, so it can't fire twice. */
+    fun onCloseHandled() = _state.update { it.copy(closeRequested = false) }
 
     // ---------------------------------------------------------- attachments
 
@@ -549,6 +554,9 @@ class ChatEngine(
     private suspend fun runLocal(intent: LocalIntent, message: String, trace: Trace.Turn) {
         try {
             val reply = trace.time("local_action") { localActions.execute(intent) }
+            // "Close yourself" is the one local intent that needs the UI, since only an
+            // Activity can finish itself. The engine records the ask; the screen acts.
+            if (intent is LocalIntent.CloseSelf) _state.update { it.copy(closeRequested = true) }
             if (reply == null) {
                 // Not a failure: just not answerable locally after all.
                 trace.mark("local_fallthrough")
@@ -646,9 +654,14 @@ class ChatEngine(
         // budget. Stream one tool-free answer; the model can bail out to the full
         // loop itself if it turns out it needed something.
         if (route is Route.Chat) {
+            directAnswerWorking = null
             val quick = tryDirectAnswer(client, modelId, apiKey, systemPrompt, history, trace)
             if (quick != null) {
-                finishTurn(cid, quick, usedModel = modelId, fellBack = false, alreadySpoken = spokeWhileStreaming())
+                finishTurn(
+                    cid, quick, usedModel = modelId, fellBack = false,
+                    alreadySpoken = spokeWhileStreaming() && directAnswerWorking == null,
+                    monologue = directAnswerWorking
+                )
                 scope.launch { maintainContext(cid, client, provider, modelId, apiKey, userMessage, quick) }
                 resumeListeningIfHandsFree()
                 return
@@ -721,7 +734,17 @@ class ChatEngine(
                             finalText = STALLED_MESSAGE
                         }
                     } else {
-                        finalText = result.text
+                        // Split even when it doesn't read as a stall: a model can lead
+                        // with its reasoning and still finish with a real answer, and
+                        // showing both is showing the wrong one first.
+                        val split = Deliberation.split(result.text)
+                        if (split.answer != null) {
+                            finalText = split.answer
+                            split.working?.let { monologue = appendWorking(monologue, it) }
+                        } else {
+                            monologue = appendWorking(monologue, result.text)
+                            finalText = STALLED_MESSAGE
+                        }
                     }
                 }
 
@@ -835,6 +858,9 @@ class ChatEngine(
      *
      * @return the reply, or null if the model asked for the full agent loop instead.
      */
+    /** Working set aside by the last direct answer, folded into the message. */
+    private var directAnswerWorking: String? = null
+
     private suspend fun tryDirectAnswer(
         client: LlmClient,
         modelId: String,
@@ -849,7 +875,16 @@ class ChatEngine(
         // says so, and the caller falls through to the full loop — so a
         // misclassification costs one cheap request, never a wrong answer.
         val outcome = streamAnswer(client, modelId, apiKey, prompt, history, emptyList(), tuning, trace)
-        return (outcome as? StreamOutcome.Text)?.text?.takeUnless { it.contains(IntentClassifier.NEEDS_TOOLS) }
+        val text = (outcome as? StreamOutcome.Text)?.text?.takeUnless { it.contains(IntentClassifier.NEEDS_TOOLS) }
+            ?: return null
+
+        // Plain conversation is where prose IS the answer, which is why this path
+        // skipped the deliberation check — and why "Here's a thinking process:"
+        // followed by a numbered plan for saying a two-word name reached the user
+        // verbatim. A declared thinking preamble is not conversation on any path.
+        val split = Deliberation.split(text)
+        directAnswerWorking = split.working
+        return split.answer
     }
 
     /** How a streaming request ended. */

@@ -83,11 +83,33 @@ sealed class LocalIntent {
     /** "clear recent apps", "close background apps". */
     object ClearRecents : LocalIntent()
 
+    /**
+     * "what's my name", "how old am I", "what's your name", "what app is this".
+     *
+     * The profile is already in the app's own database and the identity is a
+     * constant. Sending either to a language model is a network round trip to be
+     * told something Lain already knows — and on a free model it produced a numbered
+     * plan about how to say a two-word name.
+     */
+    data class Identity(val question: IdentityQuestion) : LocalIntent()
+
+    /** "turn off my screen", "lock the phone". */
+    object LockScreen : LocalIntent()
+
+    /** "restart", "shut down" — raises the system power menu, never acts alone. */
+    data class Power(val restart: Boolean) : LocalIntent()
+
+    /** "close yourself", "exit Lain". */
+    object CloseSelf : LocalIntent()
+
     /** "what's 15% of 240", "convert 5km to miles" — answered exactly, offline. */
     data class Calculate(val result: Calculator.Result) : LocalIntent()
 }
 
 enum class TransportAction { PLAY, PAUSE, TOGGLE, NEXT, PREVIOUS, STOP }
+
+/** Things Lain already knows without asking anybody. */
+enum class IdentityQuestion { USER_NAME, USER_AGE, LAIN_NAME, APP_NAME, CAPABILITIES }
 
 /** Where a message should go. */
 sealed class Route {
@@ -179,7 +201,9 @@ object FastRouter {
     // ------------------------------------------------------------------ intents
 
     private fun localIntent(t: String): LocalIntent? =
-        clock(t) ?: battery(t) ?: torch(t)
+        // Identity first and cheapest: these are constants and a database row.
+        identity(t) ?: lockScreen(t) ?: power(t) ?: closeSelf(t)
+            ?: clock(t) ?: battery(t) ?: torch(t)
             // Do Not Disturb before the generic volume matcher: "silence my phone"
             // means the ringer, not the media stream.
             ?: dnd(t) ?: ringer(t)
@@ -205,11 +229,11 @@ object FastRouter {
             ?: openApp(t)
 
     private fun clock(t: String): LocalIntent? = when {
-        t.matches(Regex("(what('s| is) the )?time( is it)?")) ||
+        t.matches(Regex("(what('?s| is) the )?time( is it)?")) ||
             t.matches(Regex("what time is it( (right )?now)?")) ||
             t == "time" || t == "current time" -> LocalIntent.Clock(wantsDate = false)
 
-        t.matches(Regex("(what('s| is) )?(the )?(today's )?date( is it)?( today)?")) ||
+        t.matches(Regex("(what('?s| is) )?(the )?(today's )?date( is it)?( today)?")) ||
             t.matches(Regex("what day is it( today)?")) ||
             t == "what's today" || t == "today's date" -> LocalIntent.Clock(wantsDate = true)
 
@@ -349,6 +373,62 @@ object FastRouter {
                 LocalIntent.Ringer("normal")
             else -> null
         }
+    }
+
+    // -------------------------------------------------------------- identity
+
+    private fun identity(t: String): LocalIntent? = when {
+        Regex("^(what('?s| is) )?my name( again)?\\??$").matches(t) ||
+            t == "who am i" || t == "do you know my name" || t == "say my name" ->
+            LocalIntent.Identity(IdentityQuestion.USER_NAME)
+
+        Regex("^(how old am i|what('?s| is) my age)\\??$").matches(t) ->
+            LocalIntent.Identity(IdentityQuestion.USER_AGE)
+
+        Regex("^(what('?s| is) )?your name\\??$").matches(t) || t == "who are you" ||
+            t == "what are you called" || t == "what should i call you" ->
+            LocalIntent.Identity(IdentityQuestion.LAIN_NAME)
+
+        Regex("^(what('?s| is) )?(the name of )?(this|your) app( called)?\\??$").matches(t) ||
+            t == "what app is this" || t == "what's this app" || t == "whats this app" || t == "whats this app" ->
+            LocalIntent.Identity(IdentityQuestion.APP_NAME)
+
+        t == "what can you do" || t == "what are you able to do" || t == "help" ||
+            t == "what can i ask you" || t == "what do you do" ->
+            LocalIntent.Identity(IdentityQuestion.CAPABILITIES)
+
+        else -> null
+    }
+
+    // ----------------------------------------------------------- power state
+
+    private fun lockScreen(t: String): LocalIntent? = when {
+        Regex("\\b(lock|turn off|switch off|shut off|blank)\\b.*\\b(screen|phone|display)\\b")
+            .containsMatchIn(t) && !t.contains("data") && !t.contains("wifi") ->
+            LocalIntent.LockScreen
+        t == "lock it" || t == "lock" || t == "screen off" || t == "sleep" -> LocalIntent.LockScreen
+        else -> null
+    }
+
+    /**
+     * Restart and power off.
+     *
+     * Matched narrowly and always confirmed downstream. "Restart" said to an
+     * assistant could mean the app, the phone, or a song — and getting it wrong
+     * means the phone goes down mid-sentence.
+     */
+    private fun power(t: String): LocalIntent? = when {
+        Regex("^(restart|reboot)( my| the)?( phone| device)?\\.?$").matches(t) ->
+            LocalIntent.Power(restart = true)
+        Regex("^(shut ?down|power off|turn off)( my| the)?( phone| device)\\.?$").matches(t) ->
+            LocalIntent.Power(restart = false)
+        else -> null
+    }
+
+    private fun closeSelf(t: String): LocalIntent? = when (t) {
+        "close yourself", "close lain", "exit", "exit lain", "quit lain",
+        "close the app", "shut yourself down", "go away" -> LocalIntent.CloseSelf
+        else -> null
     }
 
     // ------------------------------------------------------------- searching

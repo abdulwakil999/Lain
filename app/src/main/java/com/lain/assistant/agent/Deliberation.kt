@@ -19,6 +19,64 @@ package com.lain.assistant.agent
  */
 object Deliberation {
 
+    /**
+     * Headers that announce reasoning outright.
+     *
+     * Unambiguous by construction: nothing that opens "Here's a thinking process:" is
+     * an answer. This is the family that reached the user verbatim — a numbered plan
+     * about how to say a two-word name — and it did so on the conversational path,
+     * which the deliberation check below had been skipping on the reasoning that
+     * prose *is* the answer in plain chat. It usually is. Not after one of these.
+     */
+    private val PREAMBLE_HEADERS = listOf(
+        "here's a thinking process", "here is a thinking process",
+        "here's my thinking", "here is my thinking", "here's my thought process",
+        "thinking process:", "thought process:", "my reasoning:", "reasoning:",
+        "analysis:", "let me think through", "let's think through",
+        "step-by-step reasoning", "chain of thought", "internal monologue",
+        "here's how i'll approach", "here is how i will approach",
+        "let me work through this", "breaking this down:"
+    )
+
+    /** An answer and the working that came with it. */
+    data class Split(val answer: String?, val working: String?)
+
+    /**
+     * Separates a reply that led with its reasoning.
+     *
+     * Models that do this almost always finish with the actual answer, so throwing
+     * the whole reply away would lose it. The last short, plain paragraph is the
+     * answer; everything above it is working. When no such paragraph exists — the
+     * model narrated and stopped, or was cut off — the answer is null and the caller
+     * pushes it to try again rather than showing a plan as though it were a result.
+     */
+    fun split(text: String): Split {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return Split(null, null)
+
+        val opening = trimmed.take(80).lowercase()
+        val leadsWithReasoning = PREAMBLE_HEADERS.any { opening.contains(it) }
+        if (!leadsWithReasoning) return Split(trimmed, null)
+
+        // Paragraphs, last first: the answer is at the bottom if it is anywhere.
+        val paragraphs = trimmed.split(Regex("\\n\\s*\\n")).map { it.trim() }.filter { it.isNotEmpty() }
+        val answer = paragraphs.asReversed().firstOrNull { candidate ->
+            candidate.length in 1..400 &&
+                // Still part of the plan: numbered steps, bullets, or a labelled section.
+                !candidate.matches(Regex("(?s)^\\s*(\\d+[.)]|[-*•]|#+)\\s.*")) &&
+                !PREAMBLE_HEADERS.any { candidate.lowercase().startsWith(it) } &&
+                // A sentence about what it is going to do is not what it did.
+                !Regex("\\b(i'll|i will|i should|let me|i need to)\\b", RegexOption.IGNORE_CASE)
+                    .containsMatchIn(candidate)
+        }
+
+        return if (answer == null) {
+            Split(null, trimmed)
+        } else {
+            Split(answer, trimmed.removeSuffix(answer).trim().ifBlank { null })
+        }
+    }
+
     /** Openers that only ever introduce planning, never an answer. */
     private val OPENERS = listOf(
         "okay, so the user", "ok, so the user", "so the user wants",
@@ -59,6 +117,9 @@ object Deliberation {
         // A question back to the user is a legitimate reply — asking which Moyo, or
         // for a missing detail, is exactly what should happen.
         if (t.endsWith("?")) return false
+
+        // A declared thinking preamble is decisive on its own.
+        if (PREAMBLE_HEADERS.any { t.take(80).contains(it) }) return true
 
         val opens = OPENERS.any { t.startsWith(it) }
         val intends = INTENTIONS.count { t.contains(it) }

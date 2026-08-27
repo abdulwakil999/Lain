@@ -14,6 +14,8 @@ class LainViewModelFactory(private val container: AppContainer) : ViewModelProvi
         OnboardingViewModel::class.java -> OnboardingViewModel(container) as T
         ChatViewModel::class.java -> ChatViewModel(container) as T
         SettingsViewModel::class.java -> SettingsViewModel(container) as T
+        com.lain.assistant.ui.knows.KnowsViewModel::class.java ->
+            com.lain.assistant.ui.knows.KnowsViewModel(container) as T
         else -> throw IllegalArgumentException("Unknown ViewModel: $modelClass")
     }
 }

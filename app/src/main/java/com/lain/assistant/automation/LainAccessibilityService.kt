@@ -529,6 +529,20 @@ class LainAccessibilityService : AccessibilityService() {
     fun goHome() = performGlobalAction(GLOBAL_ACTION_HOME)
     fun goBack() = performGlobalAction(GLOBAL_ACTION_BACK)
 
+    /** Locks the screen. Android 9+; below that no app may do it. */
+    fun lockScreen(): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
+            performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
+
+    /**
+     * Raises the system power menu.
+     *
+     * As far as any normal app can go towards "restart" or "shut down": there is no
+     * API for either, and there shouldn't be. This puts the real menu up so the
+     * choice stays a deliberate press by the person holding the phone.
+     */
+    fun showPowerMenu(): Boolean = performGlobalAction(GLOBAL_ACTION_POWER_DIALOG)
+
     /**
      * Opens the Quick Settings panel — the tiles, not just the notification shade.
      *
