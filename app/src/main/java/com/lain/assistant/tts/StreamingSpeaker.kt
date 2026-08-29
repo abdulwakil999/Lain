@@ -53,6 +53,9 @@ class StreamingSpeaker(
         /** Past this, break at the softest boundary available rather than keep buffering. */
         private const val SOFT_BREAK_AFTER = 160
 
+        /** Opens and closes a code block. Never spoken. */
+        private const val FENCE = "```"
+
         private val SENTENCE_END = charArrayOf('.', '!', '?', '\n')
         private val SOFT_END = charArrayOf(',', ';', ':', '—')
     }
@@ -62,11 +65,47 @@ class StreamingSpeaker(
     private var worker: Job? = null
     private var spoken = 0
 
+    /**
+     * Whether the text arriving now is inside a ``` fence.
+     *
+     * Held across chunks because a code block is spread over many of them, and the
+     * decision to stay quiet has to survive the boundary. [CodeBlocks] can't help
+     * here — it needs the whole reply, and this class only ever has the next few
+     * words of one.
+     */
+    private var insideCode = false
+
+    /**
+     * The part of a chunk that should actually be said.
+     *
+     * Fenced code is replaced by a short spoken note rather than read out. A
+     * synthesiser given a function says every brace, underscore and angle bracket,
+     * and in voice mode there is no way to skip ahead — one snippet is a minute of
+     * audio the user cannot escape.
+     */
+    private fun speakable(chunk: String): String {
+        if (!insideCode && !chunk.contains(FENCE)) return chunk
+        val out = StringBuilder()
+        var cursor = 0
+        while (cursor < chunk.length) {
+            val fence = chunk.indexOf(FENCE, cursor)
+            if (fence < 0) {
+                if (!insideCode) out.append(chunk, cursor, chunk.length)
+                break
+            }
+            if (insideCode) out.append(" Code's on screen. ") else out.append(chunk, cursor, fence)
+            insideCode = !insideCode
+            cursor = fence + FENCE.length
+        }
+        return out.toString()
+    }
+
     /** Opens a new utterance stream. Any previous one is abandoned. */
     fun begin() {
         stop()
         pending.setLength(0)
         spoken = 0
+        insideCode = false
         val channel = Channel<String>(Channel.UNLIMITED)
         queue = channel
         worker = scope.launch {
@@ -89,7 +128,7 @@ class StreamingSpeaker(
         pending.append(delta)
         while (true) {
             val cut = findBoundary(pending, first = spoken == 0) ?: break
-            val chunk = pending.substring(0, cut).trim()
+            val chunk = speakable(pending.substring(0, cut)).trim()
             pending.delete(0, cut)
             if (chunk.isNotEmpty()) {
                 spoken++
@@ -101,7 +140,7 @@ class StreamingSpeaker(
     /** No more text is coming: flush the tail and let the queue drain. */
     fun finish() {
         val channel = queue ?: return
-        val tail = pending.toString().trim()
+        val tail = speakable(pending.toString()).trim()
         pending.setLength(0)
         if (tail.isNotEmpty()) channel.trySend(tail)
         channel.close()
@@ -117,6 +156,7 @@ class StreamingSpeaker(
         worker?.cancel()
         worker = null
         engine.stop()
+        insideCode = false
         pending.setLength(0)
         onSpeakingChanged(false)
     }

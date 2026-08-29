@@ -150,7 +150,7 @@ class ConfirmationTest {
  */
 class PromptBudgetTest {
 
-    private val profile = UserProfile(name = "Ada", age = 30, gender = Gender.FEMALE, nickname = "niceo")
+    private val profile = UserProfile(name = "Ada", age = 30, gender = Gender.FEMALE, nickname = "necio")
 
     private fun build(free: Boolean, mode: DeliveryMode = DeliveryMode.TEXT): String {
         val caps = ModelCapabilityRegistry.forModel(
@@ -183,6 +183,30 @@ class PromptBudgetTest {
         val spoken = build(free = false, mode = DeliveryMode.VOICE)
         assertTrue(spoken.contains("SPOKEN ALOUD"))
         assertFalse("text-mode length guidance leaked into voice", spoken.contains("MATCH THE QUESTION"))
+    }
+
+    @Test
+    fun `the study brief costs nothing on an ordinary turn`() {
+        val caps = ModelCapabilityRegistry.forModel("anthropic/claude-sonnet-5", Provider.OPENROUTER)
+        val ordinary = PromptBuilder.build(
+            profile = profile, memories = emptyList(), conversationSummary = null,
+            capabilities = caps, mode = DeliveryMode.TEXT, accessibilityReady = true
+        )
+        val study = PromptBuilder.build(
+            profile = profile, memories = emptyList(), conversationSummary = null,
+            capabilities = caps, mode = DeliveryMode.TEXT, accessibilityReady = true,
+            includeTools = false, includeStudy = true
+        )
+
+        // The point of a separate section is that the turns it does not apply to
+        // never pay for it — every torch and alarm would otherwise carry an essay
+        // about writing essays.
+        assertFalse("study guidance leaked into the default prompt", ordinary.contains("CODE AND SCHOOLWORK"))
+        assertTrue(study.contains("CODE AND SCHOOLWORK"))
+        println("study prompt: ${study.length} chars")
+        assertTrue("the study prompt has grown to ${study.length} chars", study.length < 4200)
+        // No tools on this path, so their description is dead weight.
+        assertFalse(study.contains("YOUR TOOLS"))
     }
 
     @Test

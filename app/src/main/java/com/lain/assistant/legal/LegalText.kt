@@ -15,7 +15,46 @@ package com.lain.assistant.legal
  */
 object LegalText {
 
-    const val VERSION = 1
+    /**
+     * Bumped whenever the meaning of either document changes, never for a typo.
+     *
+     * The policy promises that a changed policy is shown again before you carry on
+     * using the app, and this number is how that promise is kept: the version you
+     * accepted is stored, and a higher one here puts the documents back in front of
+     * you. A promise in a privacy policy that nothing in the code implements is
+     * exactly the kind of claim this file exists not to make.
+     *
+     * 2 — location is now requested and can be read; code and schoolwork; permissions
+     *     are asked for once; "Knows" is now "Memoria".
+     */
+    const val VERSION = 2
+
+    /**
+     * What changed since the last version, shown above the documents on the re-consent
+     * screen.
+     *
+     * Present because "the policy has been updated, please re-accept" with three
+     * thousand words underneath is how nobody reads a policy twice. The list is short
+     * enough to actually be read, and every line names something that genuinely
+     * changed rather than restating what the app already did.
+     */
+    val WHATS_CHANGED = """
+        WHAT CHANGED
+
+        Location. Lain now asks for coarse location, once, and uses it for one thing:
+        answering "where am I". The previous policy said location was never requested.
+        That is no longer true, so this is being put back in front of you. Refusing it
+        costs you that one answer and nothing else.
+
+        Permissions are asked for once. Anything you decline is not asked for again on
+        the next launch. Where a feature needs something you refused, she says so.
+
+        Code and schoolwork. Lain will now write code and help with assignments. Those
+        questions go to your AI provider like any other, so treat anything you paste
+        into them the same way.
+
+        "Knows" is now called "Memoria". Same screen, same data, same delete buttons.
+    """.trimIndent()
 
     val PRIVACY = """
         PRIVACY POLICY
@@ -53,6 +92,12 @@ object LegalText {
           - When you ask her to look at your screen and the model can see images: a
             screenshot.
           - When you attach a file: the file, or the text in it.
+          - When you ask her to write code or help with schoolwork: the question, and
+            any code or coursework you paste into it.
+          - When you ask where you are during a task she is carrying out for you: the
+            description she worked out, in words ("Yaba, Lagos"), never raw
+            coordinates. Asking her "where am I" on its own is answered on the device
+            and sent nowhere.
 
         That provider is not us. Their handling of your data is governed by their
         privacy policy and the terms of the account your API key belongs to. Read
@@ -63,7 +108,8 @@ object LegalText {
         only the search terms.
 
         Nothing else is transmitted. Not your contacts list, not your files, not your
-        location, not what you do on your phone when you have not asked her anything.
+        coordinates, and nothing at all about what you do on your phone when you have
+        not asked her something.
 
         3. THE ACCESSIBILITY SERVICE
         This is the permission that deserves the most explanation, because it is the
@@ -90,15 +136,24 @@ object LegalText {
         Camera — only when you take a photo to show her.
         Notifications — to show alarms and reminders. Notification access, if you
         grant it, lets her read your notification shade when you ask what you missed.
-        Location is never requested. Lain can switch the location toggle on or off if
-        you ask, but she cannot read where you are.
+        Location — coarse only, and only to answer "where am I". She reads the fix
+        Android already has rather than switching the GPS on, turns it into a place
+        name using the phone's own geocoder, and stores nothing. If you decline it,
+        that one question stops working and everything else carries on. She can also
+        switch the location toggle on or off when you ask, which needs no permission
+        at all.
+
+        Each of these is asked for once. Decline one and Lain does not ask again on the
+        next launch; where something you refused is needed, she tells you what is
+        missing instead of demanding it again. You can grant or revoke any of them
+        later in Android Settings.
 
         5. CHILDREN
         Lain is not designed for children and should not be given to them. She can
         place calls, send messages and operate the phone.
 
         6. YOUR CONTROL
-        Everything Lain remembers is listed in the app under "Knows", and anything
+        Everything Lain remembers is listed in the app under "Memoria", and anything
         there can be deleted individually or all at once. Conversations can be deleted
         message by message. Uninstalling removes everything.
 
@@ -106,7 +161,9 @@ object LegalText {
         them, through your account with them.
 
         7. CHANGES
-        A changed policy is shown again before you continue using the app.
+        A changed policy is shown again before you continue using the app. The version
+        you accepted is recorded on the device; when this document changes in a way
+        that matters, it reappears with a summary of what changed at the top.
 
         8. CONTACT
         Lain is made by an independent developer. Questions go to the address on the
@@ -148,18 +205,30 @@ object LegalText {
         Do not rely on her for anything where being wrong matters: medical, legal or
         financial decisions, or anything with a deadline you cannot afford to miss.
 
-        5. NOT FOR EMERGENCIES
+        Code she writes has not been run. Read it before you run it, and never paste
+        anything that deletes, sends or spends without understanding it first. She can
+        invent a function that does not exist in a library, and on a free model she
+        does it more often.
+
+        5. SCHOOLWORK
+        She will explain a method, work a problem through and outline an essay. What
+        you then submit is yours, and so is the consequence. Most schools and
+        universities have rules about AI, they differ, and they are yours to know and
+        follow. Lain is a tutor, not a ghostwriter, and neither she nor the developer
+        is responsible for how you use what she produces.
+
+        6. NOT FOR EMERGENCIES
         Do not use Lain to call emergency services. Dial them yourself, directly. A
         call placed through an assistant can fail for reasons neither of you can see —
         a permission, a locked screen, a third-party dialler — and an emergency is
         not the moment to discover it.
 
-        6. THE ACCESSIBILITY SERVICE
+        7. THE ACCESSIBILITY SERVICE
         Switching it on grants Lain the ability to read and control your screen. Grant
         it only if you understand that. It is optional; she works without it, with
         less reach.
 
-        7. NO WARRANTY
+        8. NO WARRANTY
         Lain is provided as is, with no warranty of any kind. She may stop working
         when Android changes, when a provider retires a model, or when a phone
         manufacturer decides to kill background apps. To the fullest extent the law
@@ -170,15 +239,24 @@ object LegalText {
         Some jurisdictions do not allow limits like these, in which case they apply
         only as far as the law permits.
 
-        8. AGE
+        9. AGE
         You must be old enough to enter a contract where you live, and old enough to
         hold the AI account whose key you are using.
 
-        9. THIRD PARTIES
+        10. THIRD PARTIES
         Your AI provider's terms apply to your use of their model, in addition to
         these. Where they conflict about their service, theirs win.
 
-        10. ENDING IT
+        11. HOW SHE TALKS
+
+        Lain's name is short for Leave-it-to-Artificial-intelligence-Necio, and necio
+        is Spanish for fool. She is written to be blunt, and when you ask her for
+        something you could plainly have done yourself she will occasionally say so —
+        sometimes in Spanish. It is a joke about the name, aimed at nobody but the
+        person who chose to use her, and it never comes instead of doing the thing. If
+        that is not what you want from an assistant, this is not the app.
+
+        12. ENDING IT
         Uninstall whenever you like. That ends these terms and deletes your data from
         the phone.
 

@@ -19,6 +19,7 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.random.Random
 
 /**
  * Executes the intents [com.lain.assistant.agent.FastRouter] resolved locally,
@@ -93,11 +94,14 @@ class LocalActions(private val context: Context) {
 
     private fun clock(wantsDate: Boolean): String {
         val now = Date()
-        return if (wantsDate) {
-            SimpleDateFormat("EEEE, d MMMM yyyy", Locale.getDefault()).format(now)
-        } else {
-            "It's " + SimpleDateFormat("h:mm a", Locale.getDefault()).format(now).lowercase(Locale.getDefault())
-        }
+        return sass(
+            if (wantsDate) {
+                SimpleDateFormat("EEEE, d MMMM yyyy", Locale.getDefault()).format(now)
+            } else {
+                "It's " + SimpleDateFormat("h:mm a", Locale.getDefault()).format(now)
+                    .lowercase(Locale.getDefault())
+            }
+        )
     }
 
     // ------------------------------------------------------------- battery
@@ -107,11 +111,13 @@ class LocalActions(private val context: Context) {
         val level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         if (level < 0) return null
         val charging = bm.isCharging
-        return when {
-            charging -> "$level%, charging."
-            level <= 15 -> "$level% — worth plugging in."
-            else -> "$level%."
-        }
+        return sass(
+            when {
+                charging -> "$level%, charging."
+                level <= 15 -> "$level% — worth plugging in."
+                else -> "$level%."
+            }
+        )
     }
 
     // ---------------------------------------------------------------- apps
@@ -121,7 +127,7 @@ class LocalActions(private val context: Context) {
             // Prefer the app's real display name over what was said, so "open insta"
             // confirms "Instagram" and the user knows it resolved to the right thing.
             val resolved = apps.resolveLabel(name) ?: name
-            "Opening $resolved."
+            sass("Opening $resolved.")
         }
         // Not found is a real answer, and a faster one than the model would give.
         is AutomationResult.Failure -> "No app called \"$name\" is installed."
@@ -227,6 +233,30 @@ class LocalActions(private val context: Context) {
         return chosen.text
     }
 
+    /**
+     * Occasionally puts an insult in front of an answer she has already produced.
+     *
+     * Only wrapped around results that are known to have worked, and only for the
+     * requests a person could have done themselves in two taps — a torch, a volume
+     * step, opening an app. Never around a failure or a refusal: being told you are
+     * a fool by something that then didn't do the thing is just rude, and the brief
+     * was sassy, not rude.
+     *
+     * Fires on roughly [Replies.SASS_CHANCE] percent of eligible answers, and never
+     * replaces the answer, only precedes it.
+     */
+    private fun sass(reply: String): String {
+        if (Random.nextInt(100) >= Replies.SASS_CHANCE) return reply
+        val prefix = Replies.pick(Replies.sassPrefixes, lastSassLine)
+        lastSassLine = prefix.text
+        val combined = Replies.prefixed(prefix, reply)
+        SpokenSegments.remember(combined)
+        return combined.text
+    }
+
+    /** The last sass line used, so two in a row are never the same jab. */
+    private var lastSassLine: String? = null
+
     /** The last local line used, so the next pick avoids repeating it. */
     private var lastSpokenLine: String? = null
 
@@ -259,7 +289,7 @@ class LocalActions(private val context: Context) {
 
             IdentityQuestion.LAIN_NAME -> say(Replies.lainName)
             IdentityQuestion.APP_NAME -> say(Replies.appName)
-            IdentityQuestion.NICEO -> say(Replies.niceo)
+            IdentityQuestion.NECIO -> say(Replies.necio)
             IdentityQuestion.CAPABILITIES -> say(Replies.capabilities)
         }
     }
@@ -268,7 +298,7 @@ class LocalActions(private val context: Context) {
 
     private fun lockScreen(): String? {
         val service = LainAccessibilityService.instance ?: return null
-        return if (service.lockScreen()) "Locked."
+        return if (service.lockScreen()) sass("Locked.")
         else "Locking the screen needs Android 9 or newer — this phone won't let an app do it."
     }
 
@@ -303,7 +333,9 @@ class LocalActions(private val context: Context) {
      */
     private suspend fun systemToggle(what: String, on: Boolean): String? {
         val toggle = SystemToggles.Toggle.from(what) ?: return null
-        return systemToggles.set(toggle, on).let { it.error ?: it.result }
+        val outcome = systemToggles.set(toggle, on)
+        // A refusal explains a wall the user didn't build; it doesn't get mocked.
+        return outcome.error ?: outcome.result?.let { sass(it) }
     }
 
     private suspend fun closeApp(appName: String): String? {
@@ -437,7 +469,7 @@ class LocalActions(private val context: Context) {
 
     private fun settingsPage(page: String): String? {
         val result = device.openSettingsPage(page)
-        return if (result.success) "Opening $page settings." else null
+        return if (result.success) sass("Opening $page settings.") else null
     }
 
     /**
@@ -566,18 +598,20 @@ class LocalActions(private val context: Context) {
 
         if (percent != null) {
             am.setStreamVolume(AudioManager.STREAM_MUSIC, percent * max / 100, 0)
-            return when (percent) {
-                0 -> "Muted."
-                100 -> "Volume maxed."
-                else -> "Volume at $percent%."
-            }
+            return sass(
+                when (percent) {
+                    0 -> "Muted."
+                    100 -> "Volume maxed."
+                    else -> "Volume at $percent%."
+                }
+            )
         }
 
         val current = am.getStreamVolume(AudioManager.STREAM_MUSIC)
         val step = (max / 7).coerceAtLeast(1)
         val next = (current + direction * step).coerceIn(0, max)
         am.setStreamVolume(AudioManager.STREAM_MUSIC, next, 0)
-        return "Volume ${if (direction > 0) "up" else "down"} — ${next * 100 / max}%."
+        return sass("Volume ${if (direction > 0) "up" else "down"} — ${next * 100 / max}%.")
     }
 
     // --------------------------------------------------------------- torch
@@ -590,6 +624,6 @@ class LocalActions(private val context: Context) {
                 .get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
         } ?: return null
         cm.setTorchMode(id, on)
-        return if (on) "Torch on." else "Torch off."
+        return sass(if (on) "Torch on." else "Torch off.")
     }
 }

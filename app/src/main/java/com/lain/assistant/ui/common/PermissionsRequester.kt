@@ -5,6 +5,7 @@ import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -34,6 +35,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.lain.assistant.automation.AccessibilityMonitor
@@ -61,17 +63,73 @@ private val corePermissions: Array<String> = buildList {
     }
 }.toTypedArray()
 
-/** Fires the standard Android runtime-permission dialog for everything Lain's fast-path tools need, once. */
+/**
+ * Remembers which permissions have already been put in front of the user.
+ *
+ * Deliberately its own tiny SharedPreferences rather than the DataStore the rest of
+ * the app uses: this is read during composition of the first frame, and DataStore's
+ * read is a suspending flow, so the dialog would fire before the answer arrived —
+ * which is exactly the bug this exists to fix.
+ */
+private const val PERMISSION_PREFS = "lain_permission_prompts"
+private const val KEY_ASKED = "asked"
+
+private fun askedBefore(context: Context): Set<String> =
+    context.getSharedPreferences(PERMISSION_PREFS, Context.MODE_PRIVATE)
+        .getStringSet(KEY_ASKED, emptySet()) ?: emptySet()
+
+private fun rememberAsked(context: Context, permissions: Collection<String>) {
+    val prefs = context.getSharedPreferences(PERMISSION_PREFS, Context.MODE_PRIVATE)
+    val merged = (prefs.getStringSet(KEY_ASKED, emptySet()) ?: emptySet()) + permissions
+    prefs.edit().putStringSet(KEY_ASKED, merged).apply()
+}
+
+/**
+ * Asks for the runtime permissions Lain's fast paths need — once each, ever.
+ *
+ * "Once" used to mean once per composition, held in [remember], so every cold start
+ * re-opened the system dialog for anything the user had declined. Location was the
+ * one people noticed: a permission wanted for exactly one question ("where am I")
+ * was demanded on every launch. The grant set is now persisted across process death,
+ * and a permission is only raised if it has never been raised before.
+ *
+ * Recording the set rather than a single flag keeps a later version's *new*
+ * permission askable without re-nagging for the ones already refused.
+ */
 @Composable
 fun RequestCorePermissionsOnce() {
-    var asked by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    var handled by remember { mutableStateOf(false) }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
     LaunchedEffect(Unit) {
-        if (!asked) {
-            asked = true
-            launcher.launch(corePermissions)
+        if (handled) return@LaunchedEffect
+        handled = true
+        val alreadyAsked = askedBefore(context)
+        val pending = corePermissions.filter { permission ->
+            permission !in alreadyAsked &&
+                ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED
         }
+        // Nothing left to ask is the steady state after the first launch; still record
+        // the granted ones so a re-grant elsewhere doesn't reopen the question here.
+        rememberAsked(context, corePermissions.toList())
+        if (pending.isNotEmpty()) launcher.launch(pending.toTypedArray())
     }
+}
+
+/**
+ * Raises a single permission the user previously declined, from the place that needs it.
+ *
+ * The once-ever rule above means a refusal is final for the launch prompt, which is
+ * the right default and the wrong absolute: someone who says "where am I" a month
+ * later is asking for the thing location is for. Callers use this to re-offer that
+ * one permission at the moment it is actually relevant. Android still caps repeat
+ * prompts — a twice-denied permission shows no dialog at all — so a caller must
+ * treat a silent result as "still denied" and say so rather than assume a grant.
+ */
+fun clearPermissionPromptMemory(context: Context, permission: String) {
+    val prefs = context.getSharedPreferences(PERMISSION_PREFS, Context.MODE_PRIVATE)
+    val remaining = (prefs.getStringSet(KEY_ASKED, emptySet()) ?: emptySet()) - permission
+    prefs.edit().putStringSet(KEY_ASKED, remaining).apply()
 }
 
 /**

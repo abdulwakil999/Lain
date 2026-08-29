@@ -31,7 +31,13 @@ object PromptBuilder {
          * the free models this targets, it is also two thousand characters of
          * instruction competing for attention with the thing being asked.
          */
-        includeTools: Boolean = true
+        includeTools: Boolean = true,
+        /**
+         * True for code and schoolwork, which need the opposite of the brevity every
+         * other section asks for. Off by default so the ordinary prompt — the one sent
+         * on every turn — carries none of it.
+         */
+        includeStudy: Boolean = false
     ): String {
         val nickname = profile?.nickname?.takeIf { it.isNotBlank() } ?: "you"
         val realName = profile?.name?.takeIf { it.isNotBlank() }
@@ -46,6 +52,10 @@ object PromptBuilder {
             append(if (capabilities.useCompactPrompt) conversationCompact() else conversation())
             append("\n\n")
             append(language())
+            if (includeStudy) {
+                append("\n\n")
+                append(codeAndStudy())
+            }
             if (includeTools) {
                 append("\n\n")
                 append(toolDiscipline(accessibilityReady, capabilities))
@@ -65,7 +75,7 @@ object PromptBuilder {
     }
 
     private fun identity(nickname: String, realName: String?, profile: UserProfile?): String = buildString {
-        append("You are Lain — short for \"Leave-it-to-Artificial-intelligence-Niceo\". You run on the ")
+        append("You are Lain — short for \"Leave-it-to-Artificial-intelligence-Necio\". You run on the ")
         append("user's Android phone and can genuinely operate it through your tools.\n\n")
         // Concrete style rules rather than adjectives. "Be dry and competent" is
         // invisible to a small model; "no exclamation marks, no filler openers" is
@@ -168,6 +178,42 @@ object PromptBuilder {
         Resolve "that one" and "the same" from what was already said.
         Have a view when asked. "Whichever you prefer" is not an answer.
         Wrong? Say so in a clause and fix it.
+    """.trimIndent()
+
+    /**
+     * Added only on the study path, and that is the point.
+     *
+     * Every rule above it pushes towards brevity, which is right for an assistant
+     * that mostly turns torches on and wrong for someone asking for a working
+     * program. Rather than hedging the general instructions into uselessness — "be
+     * short, unless" — the exception is a separate block that only the requests it
+     * applies to ever see. The default prompt does not grow by a character.
+     *
+     * The honesty rules are the load-bearing half. A free model asked for code it
+     * cannot write will produce something that looks like code, and a student who
+     * submits it finds out at the mark. Saying which parts are certain costs a
+     * sentence and is the difference between a tool and a trap.
+     */
+    private fun codeAndStudy(): String = """
+        CODE AND SCHOOLWORK
+        Give the whole thing. A function that stops halfway is worth less than none.
+        Ignore the brevity rules above for the code itself; keep the prose around it short.
+
+        Code goes in a fenced block with the language on the fence (```python). Real,
+        runnable code — imports included, names that mean something, edge cases handled.
+        Any language they ask for. If they don't say, use the one their question implies.
+        One or two lines after the block on what it does and where it would break.
+        Given an error, work from the actual trace: what threw, why, the fixed line.
+
+        For schoolwork, show the method, not just the answer — they are being marked on
+        the working, and they have to be able to sit the exam without you. Set out the
+        steps, name the rule at each one, then the result. State assumptions you made.
+        For an essay, give structure and argument they can write from; don't hand over
+        prose to submit as theirs.
+
+        Say plainly when you are unsure of a result rather than presenting a guess in
+        the same tone as a fact. Never invent an API, a library function, a citation or
+        a source. Untested code is untested; say so.
     """.trimIndent()
 
     /**

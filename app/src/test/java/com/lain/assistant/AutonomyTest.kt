@@ -52,7 +52,7 @@ class AutonomyTest {
             "affirmations" to Replies.affirmations,
             "lain name" to Replies.lainName,
             "app name" to Replies.appName,
-            "niceo" to Replies.niceo,
+            "necio" to Replies.necio,
             "capabilities" to Replies.capabilities,
             "user name" to Replies.userName("Ade")
         ).forEach { (label, options) ->
@@ -70,14 +70,51 @@ class AutonomyTest {
     }
 
     @Test
-    fun `niceo is explained in plain English by some variants`() {
+    fun `necio is explained in plain English by some variants`() {
         // The joke is good, but someone asking what a word means should be able to
-        // find out what it means.
-        val explaining = Replies.niceo.count {
-            it.text.contains("slang", ignoreCase = true) ||
-                it.text.contains("means", ignoreCase = true)
+        // find out what it means — and the answer has to be the real one: necio is
+        // Spanish for fool.
+        val explaining = Replies.necio.count {
+            it.text.contains("Spanish", ignoreCase = true) &&
+                it.text.contains("fool", ignoreCase = true)
         }
         assertTrue("only $explaining variants actually explain it", explaining >= 3)
+    }
+
+    @Test
+    fun `sass is occasional, varied, and never replaces the answer`() {
+        assertTrue("not enough jabs to stay fresh", Replies.sassPrefixes.size >= 6)
+        assertEquals(
+            "the same jab twice",
+            Replies.sassPrefixes.size,
+            Replies.sassPrefixes.map { it.text }.toSet().size
+        )
+        // Every time would be nagging; never would not be Lain.
+        assertTrue(Replies.SASS_CHANCE in 5..50)
+        // Sass she can actually deliver in Spanish, not English spellings of it.
+        val tonto = Replies.sassPrefixes.filter { it.text.contains("onto", ignoreCase = true) }
+        assertTrue("no tonto at all", tonto.isNotEmpty())
+        tonto.forEach { line ->
+            assertTrue(
+                "\"${line.text}\" would be read as English",
+                line.segments.any { it.language == Language.Tag.SPANISH }
+            )
+        }
+    }
+
+    @Test
+    fun `a sassed answer keeps the answer and both languages`() {
+        val prefix = Replies.sassPrefixes.first { it.segments.size > 1 }
+        val combined = Replies.prefixed(prefix, "Torch on.")
+
+        assertTrue("the answer was dropped", combined.text.endsWith("Torch on."))
+        assertTrue("the jab was dropped", combined.text.startsWith(prefix.text))
+        assertEquals(prefix.segments.size + 1, combined.segments.size)
+        assertEquals(Language.Tag.SPANISH, combined.segments.first().language)
+        assertEquals(Language.Tag.ENGLISH, combined.segments.last().language)
+        // Reassembling the segments has to give back exactly what was displayed,
+        // or the voice says something the transcript doesn't show.
+        assertEquals(combined.text, combined.segments.joinToString(" ") { it.text })
     }
 
     @Test

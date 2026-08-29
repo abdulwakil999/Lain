@@ -124,7 +124,7 @@ sealed class LocalIntent {
 enum class TransportAction { PLAY, PAUSE, TOGGLE, NEXT, PREVIOUS, STOP }
 
 /** Things Lain already knows without asking anybody. */
-enum class IdentityQuestion { USER_NAME, USER_AGE, LAIN_NAME, APP_NAME, CAPABILITIES, NICEO }
+enum class IdentityQuestion { USER_NAME, USER_AGE, LAIN_NAME, APP_NAME, CAPABILITIES, NECIO }
 
 enum class SmallTalkKind { GREETING, THANKS, HOW_ARE_YOU, GOODBYE, AFFIRMATION }
 
@@ -135,6 +135,15 @@ sealed class Route {
 
     /** Ordinary conversation: one model call, no tools. */
     object Chat : Route()
+
+    /**
+     * Code, or schoolwork. One model call, no tools, room to actually write.
+     *
+     * Separate from [Chat] because the budget is the difference between an answer
+     * and a truncated one: a conversational reply is a couple of hundred tokens and
+     * a working solution is not.
+     */
+    object Study : Route()
 
     /** Needs the model, and probably tools. */
     object Model : Route()
@@ -177,6 +186,59 @@ object FastRouter {
         RegexOption.IGNORE_CASE
     )
 
+    /**
+     * Work that needs the model to think and to write at length: code, and school.
+     *
+     * These are the two requests Lain was worst at, for the same reason — both were
+     * classified as "act", which sent them into the full agent loop with the whole
+     * toolbox attached, a 700-token step ceiling and instructions to be terse. A
+     * request for a sorting function came back as four lines of prose about sorting,
+     * truncated. Neither needs a single tool: nothing here touches the phone, it is
+     * all generation, so the right path is one long, tool-free, deliberate call.
+     *
+     * Matched on vocabulary that device commands don't share. "Open Python" is still
+     * an app launch, because a local intent is checked first and wins; "write me a
+     * Python script" has no local reading at all.
+     */
+    private val studyOrCode = Regex(
+        "\\b(" +
+            // Languages and the surfaces they live on.
+            "python|java|kotlin|javascript|typescript|node\\.?js|c\\+\\+|c#|golang|rust|swift|" +
+            "php|ruby|rails|sql|nosql|html|css|bash|shell script|powershell|matlab|assembly|" +
+            "dart|flutter|scala|perl|haskell|lua|solidity|verilog|latex|" +
+            // What people ask to be done with them.
+            "code|coding|program(me)?|script|snippet|function|method|algorithm|regex|" +
+            "compile|compiler|syntax|stack trace|traceback|segfault|debug|refactor|" +
+            "recursion|big o|data structure|linked list|binary search|unit test|" +
+            "pseudocode|api endpoint|json schema|docker|git rebase|leetcode|" +
+            // School, in the words students actually use.
+            "homework|assignment|coursework|past paper|mark scheme|exam|revision|" +
+            "essay|thesis|dissertation|bibliography|cite|citation|problem set|" +
+            "multiple choice|study guide|flashcards|" +
+            // Subjects, where the ask is to work something out rather than look it up.
+            "prove that|theorem|derivative|integral|differentiate|simplify|factorise|" +
+            "factorize|solve for|stoichiometry|titration|photosynthesis|" +
+            "linear algebra|matrix|probability|standard deviation" +
+            ")\\b",
+        RegexOption.IGNORE_CASE
+    )
+
+    /**
+     * The difference between asking *about* something and asking for it to be done.
+     *
+     * "Should I learn Kotlin or Swift" names a language and is still a conversation —
+     * an opinion, answerable in three sentences. "Refactor my Kotlin" names the same
+     * language and is a job. Consulted only when a message trips both the study
+     * vocabulary and the conversational hedges, to break the tie: a verb that produces
+     * or repairs something, or a reference to the user's own work.
+     */
+    private val wantsWorkDone = Regex(
+        "\\b(write|implement|generate|build|refactor|debug|fix|correct|solve|prove|derive|" +
+            "compute|calculate|convert|translate|example|examples|snippet|sample|" +
+            "step by step|show me|walk me through|my|mine|this)\\b",
+        RegexOption.IGNORE_CASE
+    )
+
     /** Polite wrappers that don't change the instruction, stripped before matching. */
     private val politePrefix = Regex(
         "^(hey |hi |ok |okay |please |can you |could you |would you |will you |i want you to |" +
@@ -193,6 +255,20 @@ object FastRouter {
         val normalised = normalise(message)
         if (normalised.isEmpty()) return Route.Chat
 
+        // Resolved once and reused: a local reading beats both of the checks below,
+        // so "open Python" stays an app launch and "solve 12 x 4" stays arithmetic.
+        val local = localIntent(normalised)
+
+        // Ahead of the conversational check because "explain recursion in Python" is
+        // both, and only one of the two paths has room to answer it. Where a message
+        // is conversational as well, it takes study only if it asks for work rather
+        // than for an opinion.
+        if (local == null && studyOrCode.containsMatchIn(normalised) &&
+            (!conversational.containsMatchIn(normalised) || wantsWorkDone.containsMatchIn(normalised))
+        ) {
+            return Route.Study
+        }
+
         // A question about the mechanism is never a command to perform it — but it was
         // being sent to Route.Model, which is the *full agent loop*: the whole toolbox,
         // planning, and up to maxToolRounds network calls to answer "what do you think
@@ -205,7 +281,7 @@ object FastRouter {
         // loop. A misroute costs one cheap request, never a wrong answer.
         if (conversational.containsMatchIn(normalised)) return Route.Chat
 
-        localIntent(normalised)?.let { return Route.Local(it) }
+        if (local != null) return Route.Local(local)
 
         // No local match: fall back to the existing coarse split so plain conversation
         // still skips the tool surface.
@@ -551,10 +627,13 @@ object FastRouter {
             t == "what app is this" || t == "what's this app" || t == "whats this app" || t == "whats this app" ->
             LocalIntent.Identity(IdentityQuestion.APP_NAME)
 
-        // The one thing about her own name she was getting wrong: asked what "Niceo"
+        // The one thing about her own name she was getting wrong: asked what "Necio"
         // meant, a model with no way of knowing would invent something.
-        t.contains("niceo") && Regex("\\b(what|why|mean|means|meaning|stand|short)\\b").containsMatchIn(t) ->
-            LocalIntent.Identity(IdentityQuestion.NICEO)
+        // Both spellings: the name is Necio, but earlier builds said Niceo and
+        // that is still what some users will type at her.
+        (t.contains("necio") || t.contains("niceo")) &&
+            Regex("\\b(what|why|mean|means|meaning|stand|short)\\b").containsMatchIn(t) ->
+            LocalIntent.Identity(IdentityQuestion.NECIO)
 
         t == "what can you do" || t == "what are you able to do" || t == "help" ||
             t == "what can i ask you" || t == "what do you do" ->

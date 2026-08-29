@@ -42,7 +42,9 @@ including the signing key warning.
 
 - `agent/` — routing, prompt, the tool loop, working memory. `FastRouter` answers
   what Android can answer without a model at all; that path is the reason the app
-  feels quick on free models.
+  feels quick on free models. It also sorts the rest: `Route.Chat` for conversation
+  and `Route.Study` for code and schoolwork both skip the tool loop entirely, which
+  is what stopped "write me a function" from being answered by a truncated plan.
 - `automation/` — everything that touches the device. `LainAccessibilityService`
   is the screen-control layer and is deliberately thin.
 - `network/` — LLM clients. `ReasoningFilter` keeps model thinking out of replies.

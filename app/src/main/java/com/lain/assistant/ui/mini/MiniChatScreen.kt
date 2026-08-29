@@ -204,7 +204,7 @@ fun MiniChatScreen(
                 PixelTextField(
                     value = state.input,
                     onValueChange = viewModel::onInputChange,
-                    placeholder = "what's up niceo",
+                    placeholder = "what's up necio",
                     modifier = Modifier.weight(1f)
                 )
                 Spacer(Modifier.width(6.dp))

@@ -16,7 +16,7 @@ class MessageActionsTest {
         ChatMessage(id = id, sender = Sender.LAIN, text = text)
 
     private val transcript = listOf(
-        lain("0", "What's up niceo?"),
+        lain("0", "What's up necio?"),
         user("1", "what's my battery"),
         lain("2", "77%."),
         user("3", "open spotify"),

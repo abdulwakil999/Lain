@@ -55,7 +55,7 @@ object Replies {
     // ------------------------------------------------------------ small talk
 
     val greetings = listOf(
-        en("What's up niceo?"),
+        en("What's up necio?"),
         es("Dime."),
         en("Here."),
         en("Go on."),
@@ -136,9 +136,9 @@ object Replies {
     )
 
     val lainName = listOf(
-        en("Lain. Short for Leave-it-to-Artificial-intelligence-Niceo."),
+        en("Lain. Short for Leave-it-to-Artificial-intelligence-Necio."),
         en("Lain."),
-        en("Lain — the acronym's Leave-it-to-Artificial-intelligence-Niceo, since you'll ask."),
+        en("Lain — the acronym's Leave-it-to-Artificial-intelligence-Necio, since you'll ask."),
         esThenEn("Me llamo Lain.", "That's it."),
         en("Lain. Not Lane. The spelling matters to me."),
         en("Lain. You've been talking to me for a while now.")
@@ -153,41 +153,41 @@ object Replies {
     )
 
     /**
-     * "Niceo", explained.
+     * "Necio", explained.
      *
+     * Spanish for fool — closer to "stubborn idiot" than to anything affectionate.
      * A fact only the developer has, so a model asked this invents something
-     * confident and different each time. Some variants land the joke and some
-     * actually explain it, because both are asked for — sometimes the person wants
-     * the bit, sometimes they genuinely want to know what the word means.
+     * confident and different each time; it invented Nigerian slang when I got it
+     * wrong. Some variants land the joke and some actually translate the word,
+     * because both are asked for.
      */
-    val niceo = listOf(
+    val necio = listOf(
         en(
-            "Leave-it-to-Artificial-intelligence-Niceo. Niceo is what my developer calls you — " +
-                "he built me for lazy people, and the abuse is the reminder not to be one."
+            "Leave-it-to-Artificial-intelligence-Necio. Necio is Spanish for fool. My developer " +
+                "built me for lazy people and put the insult in my name so you'd hear it every time."
         ),
         en(
-            "It's the last word of the acronym: Leave-it-to-Artificial-intelligence-Niceo. " +
-                "\"Niceo\" is Nigerian slang, roughly \"mate\" said with an eye-roll. The whole name " +
-                "means \"let the AI do it, mate\" — which is the joke, because it was built for " +
-                "people who would rather not."
+            "Necio — Spanish, means fool. Stubborn-idiot fool, not endearing fool. It's the last " +
+                "word of the acronym, so the whole thing reads \"let the AI do it, fool\". " +
+                "That's the joke, and you're the punchline."
         ),
         en(
-            "Niceo means you. My developer's word for the person who'd rather ask me than get up. " +
-                "He put it in my name so you'd be reminded every time you said it."
+            "It means fool. Spanish. My developer's word for someone who'd rather ask me than get " +
+                "up, and he built the reminder into my name."
         ),
         en(
-            "Short version: it's an affectionate insult. Long version: I'm named " +
-                "Leave-it-to-Artificial-intelligence-Niceo, built for lazy people, and the name is " +
-                "the nudge."
+            "Short version: it's Spanish for fool. Long version: I'm " +
+                "Leave-it-to-Artificial-intelligence-Necio, made for people too lazy to do it " +
+                "themselves, and the name is the nudge."
         ),
         en(
-            "It's the punchline. Leave-it-to-Artificial-intelligence-Niceo — \"niceo\" being the " +
-                "developer's term for someone who leaves it to the artificial intelligence. " +
-                "You could have looked that up yourself, by the way."
+            "Necio. Fool, in Spanish — the stubborn kind, the kind who won't do a thing themselves. " +
+                "You could have translated that yourself, by the way. Which is rather the point."
         ),
-        en(
-            "Nigerian slang, somewhere between \"mate\" and \"you lazy sod\". It's in my name on " +
-                "purpose. He made me for people who won't do it themselves and wanted them reminded."
+        esThenEn(
+            "Necio.",
+            "Spanish for fool. It's in my name on purpose — I was built for people who won't " +
+                "do it themselves, and he wanted them reminded."
         )
     )
 
@@ -195,22 +195,73 @@ object Replies {
         en(
             "Calls, texts, WhatsApp. Alarms, reminders, recurring tasks. Opening apps and searching " +
                 "in them. Wi-Fi, Bluetooth, data, torch, Do Not Disturb. Reading and tapping your " +
-                "screen. Music and recitation. Maths, time, where you are. Ask and I'll say if I can't."
+                "screen. Music and recitation. Maths, time, where you are. Code in any language, and " +
+                "schoolwork with the working shown. Ask and I'll say if I can't."
         ),
         en(
             "Most of the phone. Ring people, message them, set alarms, open and drive apps, flip the " +
-                "radios, read the screen out, play things, do sums. Ask for something specific and " +
-                "you'll find out faster than I can list it."
+                "radios, read the screen out, play things, do sums. Write you working code, walk you " +
+                "through an assignment. Ask for something specific and you'll find out faster " +
+                "than I can list it."
         ),
         en(
             "Anything on the phone I can reach: calling, texting, alarms, apps, toggles, music, " +
-                "Qur'an, maths, the time, where you are. And I'll tell you plainly when something " +
-                "Android won't let me do."
+                "Qur'an, maths, the time, where you are. Off the phone: code in whatever language you " +
+                "need, and homework — method included, not just the answer. And I'll tell you " +
+                "plainly when something Android won't let me do."
         ),
         en(
             "Phone things — calls, messages, alarms, apps, settings, media. Screen things, if you've " +
-                "switched Accessibility on. Knowledge things, through whichever model you picked."
+                "switched Accessibility on. Code and coursework, in any language you like. Knowledge " +
+                "things, through whichever model you picked."
         )
+    )
+
+    // ----------------------------------------------------------------- sass
+
+    /**
+     * What she says when asked for something the user could plainly do themselves.
+     *
+     * The name is an insult, so the personality has to earn it rather than just
+     * carry it. Prefixed to the real answer and never instead of it: she does the
+     * thing, and complains while doing it. Sass that costs the user the result is
+     * not sass, it is a broken assistant.
+     *
+     * "Tonto" is Spanish for stupid, and it is doing the same job as the name.
+     */
+    val sassPrefixes = listOf(
+        en("That's a whole two taps away, but fine."),
+        esThenEn("Tonto.", "Doing it."),
+        en("You have hands."),
+        esThenEn("Ay, tonto.", "Fine."),
+        en("This is what I'm reduced to."),
+        en("The screen is right there. Anyway —"),
+        esThenEn("Tonto.", "One second."),
+        en("I'll allow it."),
+        en("Genuinely, you could have done that faster yourself."),
+        esThenEn("Qué tonto.", "Right, done in a moment.")
+    )
+
+    /**
+     * How often the sass fires on a qualifying request, as a percentage.
+     *
+     * Low on purpose. Every time is nagging and stops being funny by the third
+     * repetition; roughly one in four keeps it a surprise, which is the only way a
+     * joke survives being automated.
+     */
+    const val SASS_CHANCE = 25
+
+    /**
+     * Sticks a sass line in front of an answer, keeping both languages intact.
+     *
+     * The answer itself is English — it is assembled from app strings, not picked
+     * from this file — so it becomes one English segment, and the prefix keeps
+     * whatever split it was written with. Without this, "Tonto. Torch on." would be
+     * language-guessed as a whole and the Spanish read as English.
+     */
+    fun prefixed(prefix: Spoken, reply: String): Spoken = Spoken(
+        "${prefix.text} $reply",
+        prefix.segments + Spoken.Segment(reply, Language.Tag.ENGLISH)
     )
 
     // ------------------------------------------------------------------ util

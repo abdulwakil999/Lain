@@ -74,6 +74,15 @@ data class RequestTuning(
         /** Answering the user in prose. */
         val ANSWER = RequestTuning(maxTokens = 1400, deliberate = true)
 
+        /**
+         * Code and schoolwork, which is the one place a low ceiling is a wrong answer.
+         *
+         * A truncated function is not a shorter answer, it is a broken one — and the
+         * retry-on-truncation path costs a whole second request to find that out. The
+         * ceiling is set where a complete file-sized answer fits the first time.
+         */
+        val STUDY = RequestTuning(maxTokens = 3000, deliberate = true)
+
         /** Spoken replies are two sentences by design, so the ceiling can be tight. */
         val SPOKEN = RequestTuning(maxTokens = 400, deliberate = false)
 

@@ -20,6 +20,7 @@ class UserPreferencesRepository(private val context: Context) {
         val GENDER = stringPreferencesKey("gender")
         val NICKNAME = stringPreferencesKey("nickname")
         val ONBOARDED = booleanPreferencesKey("onboarded")
+        val LEGAL_VERSION = intPreferencesKey("legal_version")
         val PROVIDER = stringPreferencesKey("provider")
         val MODEL_ID = stringPreferencesKey("model_id")
         val KOKORO_ENDPOINT = stringPreferencesKey("kokoro_endpoint")
@@ -37,6 +38,20 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     val isOnboarded: Flow<Boolean> = context.dataStore.data.map { it[Keys.ONBOARDED] ?: false }
+
+    /**
+     * Which version of the privacy policy and terms the user has actually agreed to.
+     *
+     * Zero for anyone who has not, including everyone who onboarded before this was
+     * recorded — which is the correct reading of "we do not know that they agreed to
+     * the current one". The documents promise they will be shown again when they
+     * change; this is the number that keeps that promise honest.
+     */
+    val acceptedLegalVersion: Flow<Int> = context.dataStore.data.map { it[Keys.LEGAL_VERSION] ?: 0 }
+
+    suspend fun acceptLegalVersion(version: Int) {
+        context.dataStore.edit { it[Keys.LEGAL_VERSION] = version }
+    }
 
     val userProfile: Flow<UserProfile> = context.dataStore.data.map { prefs ->
         UserProfile(
@@ -175,6 +190,12 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     suspend fun markOnboarded() {
-        context.dataStore.edit { prefs -> prefs[Keys.ONBOARDED] = true }
+        context.dataStore.edit { prefs ->
+            prefs[Keys.ONBOARDED] = true
+            // Finishing setup means the documents were accepted on the way through, so
+            // the same write records which version — otherwise a brand new user would
+            // be shown the re-consent screen on their second launch.
+            prefs[Keys.LEGAL_VERSION] = com.lain.assistant.legal.LegalText.VERSION
+        }
     }
 }

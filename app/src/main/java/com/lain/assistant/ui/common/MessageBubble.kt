@@ -4,6 +4,8 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +26,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -34,8 +37,11 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.lain.assistant.agent.CodeBlocks
 import com.lain.assistant.data.ChatMessage
 import com.lain.assistant.data.Sender
 import com.lain.assistant.ui.theme.LainCream
@@ -137,14 +143,9 @@ fun MessageBubble(
             ) {
                 Column {
                     // Selectable, so part of a long reply can be picked out with the
-                    // normal Android handles rather than only copied whole.
-                    SelectionContainer {
-                        Text(
-                            text = message.text,
-                            color = if (isUser) LainInk else LainCream,
-                            style = textStyle
-                        )
-                    }
+                    // normal Android handles rather than only copied whole — and
+                    // code kept as code, in its own monospace block.
+                    MessageBody(message.text, isUser, textStyle)
 
                     // The model's working, folded away.
                     //
@@ -216,6 +217,102 @@ fun MessageBubble(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * The body of a message: prose as prose, fenced code as code.
+ *
+ * Rendering a snippet in the same proportional font as the sentence around it is the
+ * quickest way to make working code unusable — the indentation stops lining up, and
+ * a wrapped line reads as two statements. Each block gets its own scroller so a long
+ * line moves sideways instead of forcing the whole transcript to.
+ */
+@Composable
+private fun MessageBody(text: String, isUser: Boolean, textStyle: TextStyle) {
+    val blocks = remember(text) { CodeBlocks.split(text) }
+
+    // The overwhelmingly common case, kept on the cheap path: one selectable Text,
+    // no per-block scrollers, no clipboard handle.
+    if (blocks.size == 1 && !blocks.first().isCode) {
+        SelectionContainer {
+            Text(text = text, color = if (isUser) LainInk else LainCream, style = textStyle)
+        }
+        return
+    }
+
+    Column {
+        blocks.forEachIndexed { index, block ->
+            if (index > 0) Spacer(Modifier.height(8.dp))
+            if (block.isCode) CodeBlockView(block) else {
+                SelectionContainer {
+                    Text(
+                        text = block.text,
+                        color = if (isUser) LainInk else LainCream,
+                        style = textStyle
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * One fenced block, with its own copy button.
+ *
+ * Copying the whole message is already available from the long-press menu, and for
+ * code it is the wrong thing — it takes the explanation and the fences with it, so
+ * the paste has to be cleaned up by hand before it will run. This copies exactly
+ * what would go in the file.
+ */
+@Composable
+private fun CodeBlockView(block: CodeBlocks.Block) {
+    val clipboard = LocalClipboardManager.current
+    var copied by remember(block.text) { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(LainInk.copy(alpha = 0.88f))
+            .padding(horizontal = 10.dp, vertical = 8.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = block.language ?: "code",
+                style = MaterialTheme.typography.labelLarge,
+                color = LainMuted
+            )
+            Text(
+                text = if (copied) "copied" else "copy",
+                style = MaterialTheme.typography.labelLarge,
+                color = if (copied) LainMuted else LainSalmon,
+                modifier = Modifier
+                    .clickable {
+                        clipboard.setText(AnnotatedString(block.text))
+                        copied = true
+                    }
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                    .semantics {
+                        contentDescription = "Copy the ${block.language ?: "code"} block"
+                    }
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        SelectionContainer {
+            Text(
+                text = block.text,
+                // Monospace and unwrapped, because both are what make it code. The
+                // scroller is horizontal only: the message list handles vertical.
+                style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                color = LainCream,
+                softWrap = false,
+                modifier = Modifier.horizontalScroll(rememberScrollState())
+            )
         }
     }
 }

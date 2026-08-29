@@ -314,7 +314,7 @@ class ChatEngine(
 
     fun onAwaken() {
         if (_state.value.hasAwakened) return
-        val greeting = ChatMessage(sender = Sender.LAIN, text = "What's up niceo?")
+        val greeting = ChatMessage(sender = Sender.LAIN, text = "What's up necio?")
         _state.update { it.copy(hasAwakened = true, messages = it.messages + greeting) }
         speak(greeting.text)
     }
@@ -448,7 +448,9 @@ class ChatEngine(
         // Not for conversation. A foreground service means a notification, a wake lock
         // and a service start — worth it for a multi-step task that must survive the
         // screen going off, pure overhead for a one-shot reply that takes a second.
-        if (route !is Route.Chat) AgentForegroundService.start(appContext, "Thinking…")
+        // Study is one call like conversation is, so it gets the same treatment: no
+        // notification, no wake lock, for a request that will be over in a moment.
+        if (route is Route.Model) AgentForegroundService.start(appContext, "Thinking…")
 
         activeJob = scope.launch {
             try {
@@ -624,7 +626,8 @@ class ChatEngine(
             capabilities = caps,
             mode = deliveryMode,
             accessibilityReady = accessibilityReady,
-            includeTools = route !is Route.Chat
+            includeTools = route is Route.Model,
+            includeStudy = route is Route.Study
         )
 
         val history = buildModelHistory(cid, caps)
@@ -657,9 +660,9 @@ class ChatEngine(
         // Plain conversation doesn't need the toolbox, the planning, or the step
         // budget. Stream one tool-free answer; the model can bail out to the full
         // loop itself if it turns out it needed something.
-        if (route is Route.Chat) {
+        if (route is Route.Chat || route is Route.Study) {
             directAnswerWorking = null
-            val quick = tryDirectAnswer(client, modelId, apiKey, systemPrompt, history, trace)
+            val quick = tryDirectAnswer(client, modelId, apiKey, systemPrompt, history, trace, route)
             if (quick != null) {
                 finishTurn(
                     cid, quick, usedModel = modelId, fellBack = false,
@@ -871,14 +874,43 @@ class ChatEngine(
         apiKey: String,
         systemPrompt: String,
         history: List<LlmMessage>,
-        trace: Trace.Turn
+        trace: Trace.Turn,
+        route: Route
     ): String? {
         val prompt = systemPrompt + "\n\n" + PromptBuilder.directAnswerRule()
-        val tuning = if (deliveryMode == DeliveryMode.VOICE) RequestTuning.SPOKEN else RequestTuning.ANSWER
+        // Voice still wins over everything: a spoken answer is two sentences whatever
+        // was asked, and code is summarised aloud rather than read out character by
+        // character. Otherwise study work gets the ceiling it needs to finish.
+        val tuning = when {
+            deliveryMode == DeliveryMode.VOICE -> RequestTuning.SPOKEN
+            route is Route.Study -> RequestTuning.STUDY
+            else -> RequestTuning.ANSWER
+        }
         // The escape hatch: a model that decides it needs the phone or the live web
         // says so, and the caller falls through to the full loop — so a
         // misclassification costs one cheap request, never a wrong answer.
         val outcome = streamAnswer(client, modelId, apiKey, prompt, history, emptyList(), tuning, trace)
+
+        // A study answer that hit the ceiling is half a function, and handing it to the
+        // tool loop — which has a *lower* ceiling and a toolbox it doesn't need — is how
+        // "write me a parser" came back as a paragraph about parsers. One retry with
+        // real room, and if that also runs out the partial answer is returned with the
+        // truncation said out loud rather than passed off as finished.
+        if (outcome is StreamOutcome.Truncated && route is Route.Study) {
+            trace.mark("study_truncated_retry")
+            val roomier = tuning.copy(maxTokens = tuning.maxTokens * 2)
+            val second = streamAnswer(client, modelId, apiKey, prompt, history, emptyList(), roomier, trace)
+            val recovered = when (second) {
+                is StreamOutcome.Text -> second.text
+                is StreamOutcome.Truncated -> second.partial.takeIf { it.isNotBlank() }
+                    ?.plus("\n\n(Cut off there — it ran past the length limit. Ask for the rest and I'll carry on.)")
+                else -> null
+            } ?: return null
+            val recoveredSplit = Deliberation.split(recovered)
+            directAnswerWorking = recoveredSplit.working
+            return recoveredSplit.answer
+        }
+
         val text = (outcome as? StreamOutcome.Text)?.text?.takeUnless { it.contains(IntentClassifier.NEEDS_TOOLS) }
             ?: return null
 
@@ -1564,11 +1596,15 @@ class ChatEngine(
     private fun speak(text: String) {
         if (_state.value.isMuted) return
         val engine = ttsEngine ?: return
+        // Code is shown, never read. A synthesiser given a Kotlin file says every brace
+        // and underscore for a minute and a half, and there is no way to skip it — so
+        // the block becomes one line saying it is on screen, and the prose is spoken.
+        val spoken = CodeBlocks.forSpeech(text).takeIf { it.isNotBlank() } ?: return
         speakJob?.cancel()
         _state.update { it.copy(isSpeaking = true) }
         speakJob = scope.launch {
             try {
-                engine.speak(text)
+                engine.speak(spoken)
             } finally {
                 // Covers the natural end, a cancellation from silence(), and a TTS error
                 // alike — the button must never be left showing over silence.

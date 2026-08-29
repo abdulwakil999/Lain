@@ -54,6 +54,12 @@ object Deliberation {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return Split(null, null)
 
+        // Code is the answer, whatever the sentence above it says. Without this, a
+        // worked solution opening "Analysis:" would have its code filed as working and
+        // collapsed away, and the "answer" shown would be the last short paragraph —
+        // the note about edge cases, with the function it refers to hidden.
+        if (CodeBlocks.containsCode(trimmed)) return Split(trimmed, null)
+
         val opening = trimmed.take(80).lowercase()
         val leadsWithReasoning = PREAMBLE_HEADERS.any { opening.contains(it) }
         if (!leadsWithReasoning) return Split(trimmed, null)
@@ -109,6 +115,9 @@ object Deliberation {
         if (actedThisTurn) return false
         val t = text.trim().lowercase()
         if (t.isEmpty()) return false
+
+        // Something that produced working code did the job, however it narrated it.
+        if (CodeBlocks.containsCode(text)) return false
 
         // Short replies are answers, not monologue. "62%." and "Opened Spotify." are
         // the shape of a working assistant.
