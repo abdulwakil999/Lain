@@ -40,6 +40,10 @@
          10+, which is why alarms fired on some phones and not others. -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
+    <!-- "Where am I". Coarse only: Lain reports the area, never tracks, and never
+         sends a position anywhere. Requested at the point of use, not at install. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
     <!-- The alarm vibrates. Without this the pattern is silently ignored, so an
          alarm on a muted phone does nothing at all. -->
     <uses-permission android:name="android.permission.VIBRATE" />

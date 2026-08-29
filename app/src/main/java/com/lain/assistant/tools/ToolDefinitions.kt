@@ -404,6 +404,21 @@ object ToolDefinitions {
             briefDescription = "Clear recent apps."
         ),
         ToolDefinition(
+            name = "recite_quran",
+            description = "Play Qur'an recitation inside Lain. Accepts a surah name, meaning or number (1-114) — \"Al-Kahf\", \"the cave\", \"18\". Leave surah blank to stop what's playing.",
+            parameters = schema {
+                property("surah", "string", "Surah name, meaning or number. Blank to stop.")
+                property("reciter", "string", "Optional: Alafasy, Sudais, Abdul Basit, Minshawi, Husary")
+            },
+            briefDescription = "Play or stop Qur'an recitation."
+        ),
+        ToolDefinition(
+            name = "where_am_i",
+            description = "Report roughly where the phone is, from its last known position. Reads only; never tracks and never transmits.",
+            parameters = schema { },
+            briefDescription = "Say roughly where the phone is."
+        ),
+        ToolDefinition(
             name = "set_preferred_sim",
             description = "Remember which SIM to use on a dual-SIM phone, e.g. \"the MTN one\" or \"SIM 2\". Texts then send from it without asking; for calls it is a hint the dialler usually follows.",
             parameters = schema {

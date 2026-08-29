@@ -4,6 +4,8 @@ import android.content.Context
 import android.speech.tts.TextToSpeech
 import com.lain.assistant.agent.LainName
 import com.lain.assistant.agent.Language
+import com.lain.assistant.agent.Replies
+import com.lain.assistant.agent.SpokenSegments
 import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -88,13 +90,25 @@ class AndroidTtsEngine(context: Context) : TtsEngine {
                     if (cont.isActive) cont.resume(Unit)
                 }
             })
-            applyLanguage(Language.of(text))
-            // Respelled for the synthesiser only — the transcript keeps "Lain".
-            // Handed the real spelling, every English voice says "lane". Only worth
-            // doing for an English voice; another language's rules make it wrong.
-            val spoken =
-                if (currentLanguage == Language.Tag.ENGLISH) LainName.forSpeech(text) else text
-            engine.speak(spoken, TextToSpeech.QUEUE_FLUSH, null, id)
+            // A locally-produced line knows where its own languages change. Anything
+            // else gets a whole-string guess, which is right for a reply that is all
+            // one language and is all a model reply ever is.
+            val segments = SpokenSegments.claim(text)
+                ?: listOf(Replies.Spoken.Segment(text, Language.of(text)))
+
+            // Queued rather than flushed after the first, so a mixed line is one
+            // continuous utterance in two voices instead of the second cutting off
+            // the first.
+            segments.forEachIndexed { index, segment ->
+                applyLanguage(segment.language)
+                val spoken = if (currentLanguage == Language.Tag.ENGLISH) {
+                    LainName.forSpeech(segment.text)
+                } else {
+                    segment.text
+                }
+                val mode = if (index == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
+                engine.speak(spoken, mode, null, if (index == segments.lastIndex) id else "$id-$index")
+            }
             cont.invokeOnCancellation { engine.stop() }
         }
     }

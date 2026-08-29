@@ -53,6 +53,9 @@ private val corePermissions: Array<String> = buildList {
     add(Manifest.permission.READ_PHONE_STATE)
     add(Manifest.permission.SEND_SMS)
     add(Manifest.permission.READ_CONTACTS)
+    // Coarse only, and only so "where am I" can be answered. Lain reads the last
+    // known area and never transmits it.
+    add(Manifest.permission.ACCESS_COARSE_LOCATION)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         add(Manifest.permission.POST_NOTIFICATIONS)
     }

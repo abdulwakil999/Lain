@@ -5,6 +5,8 @@ import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.os.BatteryManager
 import com.lain.assistant.agent.IdentityQuestion
+import com.lain.assistant.agent.Replies
+import com.lain.assistant.agent.SpokenSegments
 import com.lain.assistant.agent.SmallTalkKind
 import kotlinx.coroutines.flow.first
 import com.lain.assistant.agent.LocalIntent
@@ -44,6 +46,8 @@ class LocalActions(private val context: Context) {
     private val scheduler = Scheduler(context)
     private val toggles = QuickToggles(context)
     private val systemToggles = SystemToggles(context)
+    private val quran = QuranPlayer(context)
+    private val location = LocationReader(context)
     private val searchFlow = SearchFlow(context)
 
     /** @return the spoken/displayed reply, or null if this couldn't be handled locally after all. */
@@ -74,6 +78,8 @@ class LocalActions(private val context: Context) {
                 is LocalIntent.ClearRecents -> clearRecents()
                 is LocalIntent.SmallTalk -> smallTalk(intent.kind)
                 is LocalIntent.Identity -> identity(intent.question)
+                is LocalIntent.Recite -> recite(intent)
+                is LocalIntent.WhereAmI -> whereAmI()
                 is LocalIntent.LockScreen -> lockScreen()
                 is LocalIntent.Power -> powerMenu(intent.restart)
                 is LocalIntent.CloseSelf -> "Closing."
@@ -166,6 +172,26 @@ class LocalActions(private val context: Context) {
         }
     }
 
+    // ------------------------------------------------------------ recitation
+
+    private suspend fun recite(intent: LocalIntent.Recite): String? {
+        if (intent.stop) {
+            return if (quran.stop()) "Stopped." else "Nothing was playing."
+        }
+        if (intent.surah.isBlank()) return null
+        val result = quran.recite(intent.surah, intent.reciter)
+        return result.error ?: result.result
+    }
+
+    // -------------------------------------------------------------- location
+
+    /**
+     * Null when the permission isn't granted, so the turn falls through to the model
+     * — which can explain what to grant. Answering "I don't have permission" from
+     * here would be terser but leaves the user without the next step.
+     */
+    private suspend fun whereAmI(): String? = location.describe()
+
     // ------------------------------------------------------------ small talk
 
     /**
@@ -178,55 +204,31 @@ class LocalActions(private val context: Context) {
      */
     private suspend fun smallTalk(kind: SmallTalkKind): String {
         val name = prefs.userProfile.first()?.nickname?.takeIf { it.isNotBlank() }
-        return when (kind) {
-            // The name appears in roughly a third of greetings — often enough to
-            // register as recognition, rare enough not to read as a script.
-            // A word or two of Spanish, occasionally — the way someone who grew up
-            // around two languages drops into one. Never a whole reply, so it never
-            // becomes something the user has to translate to use.
-            SmallTalkKind.GREETING -> listOf(
-                "What's up niceo?",
-                "Dime.",
-                "Here.",
-                "Go on.",
-                name?.let { "$it." } ?: "Yeah?",
-                "Listening.",
-                "¿Qué pasa?",
-                "What do you need?"
-            ).random()
-
-            SmallTalkKind.THANKS -> listOf(
-                "Any time.",
-                "De nada.",
-                "Sure.",
-                "That's the job.",
-                "No trouble."
-            ).random()
-
-            SmallTalkKind.HOW_ARE_YOU -> listOf(
-                "Running. You?",
-                "Same as always. What do you need?",
-                "Fine. Nothing hurts yet.",
-                "Idle, mostly. Fix that."
-            ).random()
-
-            SmallTalkKind.GOODBYE -> listOf(
-                "Later.",
-                "Hasta luego.",
-                "I'll be here.",
-                name?.let { "Night, $it." } ?: "Night.",
-                "Go on then."
-            ).random()
-
-            SmallTalkKind.AFFIRMATION -> listOf(
-                "Mm.",
-                "Vale.",
-                "Right.",
-                "Anything else?",
-                "Noted."
-            ).random()
+        val options = when (kind) {
+            SmallTalkKind.GREETING -> name?.let { Replies.greetingsWithName(it) } ?: Replies.greetings
+            SmallTalkKind.THANKS -> Replies.thanks
+            SmallTalkKind.HOW_ARE_YOU -> Replies.howAreYou
+            SmallTalkKind.GOODBYE -> name?.let { Replies.goodbyesWithName(it) } ?: Replies.goodbyes
+            SmallTalkKind.AFFIRMATION -> Replies.affirmations
         }
+        return say(options)
     }
+
+    /**
+     * Picks a line, records it, and hands the segmentation to the speaker.
+     *
+     * The segmentation is the part that matters for the Spanish: a mixed line has to
+     * be spoken as two languages, and only the line itself knows where the split is.
+     */
+    private fun say(options: List<Replies.Spoken>): String {
+        val chosen = Replies.pick(options, lastSpokenLine)
+        lastSpokenLine = chosen.text
+        SpokenSegments.remember(chosen)
+        return chosen.text
+    }
+
+    /** The last local line used, so the next pick avoids repeating it. */
+    private var lastSpokenLine: String? = null
 
     // -------------------------------------------------------------- identity
 
@@ -244,35 +246,21 @@ class LocalActions(private val context: Context) {
             IdentityQuestion.USER_NAME -> {
                 val nickname = profile?.nickname?.takeIf { it.isNotBlank() }
                 val real = profile?.name?.takeIf { it.isNotBlank() }
-                when {
+                val display = when {
                     nickname != null && real != null && !nickname.equals(real, ignoreCase = true) ->
-                        "$real. You go by $nickname."
-                    nickname ?: real != null -> (nickname ?: real)!!
-                    else -> null
+                        "$real — you go by $nickname"
+                    else -> nickname ?: real
                 }
+                if (display == null) say(Replies.unknownUserName) else say(Replies.userName(display))
             }
 
             IdentityQuestion.USER_AGE ->
-                profile?.age?.takeIf { it > 0 }?.let { "$it." }
+                profile?.age?.takeIf { it > 0 }?.let { say(Replies.userAge(it)) }
 
-            IdentityQuestion.LAIN_NAME ->
-                "Lain. Short for Leave-it-to-Artificial-intelligence-Niceo."
-
-            IdentityQuestion.APP_NAME -> "Lain. This one."
-
-            // A fact only the developer knows, so a model asked this would have
-            // invented an answer — confidently, and differently each time.
-            IdentityQuestion.NICEO ->
-                "Leave-it-to-Artificial-intelligence-Niceo. Niceo is what my developer calls " +
-                    "you — he built me for lazy people, and the abuse is the reminder not to be one. " +
-                    "You could have looked that up yourself, by the way."
-
-            // Deliberately a short list of what she can do *without help* — the point
-            // of the question is orientation, not a manual.
-            IdentityQuestion.CAPABILITIES ->
-                "Calls, texts, WhatsApp. Alarms, reminders, recurring tasks. Opening apps and " +
-                    "searching in them. Wi-Fi, Bluetooth, data, torch, Do Not Disturb. Reading and " +
-                    "tapping your screen. Music. Anything else, just ask and I'll say if I can't."
+            IdentityQuestion.LAIN_NAME -> say(Replies.lainName)
+            IdentityQuestion.APP_NAME -> say(Replies.appName)
+            IdentityQuestion.NICEO -> say(Replies.niceo)
+            IdentityQuestion.CAPABILITIES -> say(Replies.capabilities)
         }
     }
 

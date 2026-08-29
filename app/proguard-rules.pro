@@ -41,20 +41,20 @@
 
 # --------------------------------------------------------- Android entry points
 # The framework instantiates these by name from the manifest, so R8 cannot see the
-# reference. A stripped AccessibilityService is the worst possible failure here:
-# the app installs, and screen control simply never works.
--keep class com.lain.assistant.automation.LainAccessibilityService { *; }
--keep class com.lain.assistant.automation.LainNotificationListener { *; }
--keep class com.lain.assistant.automation.ScheduledTaskReceiver { *; }
--keep class com.lain.assistant.automation.ReminderReceiver { *; }
--keep class com.lain.assistant.automation.BootReceiver { *; }
--keep class com.lain.assistant.automation.LainWidgetProvider { *; }
--keep class com.lain.assistant.automation.VoiceInputTileService { *; }
--keep class com.lain.assistant.automation.WakeWordService { *; }
--keep class com.lain.assistant.automation.OverlayBubbleService { *; }
--keep class com.lain.assistant.automation.ScreenCaptureService { *; }
--keep class com.lain.assistant.agent.AgentForegroundService { *; }
--keep class com.lain.assistant.ui.alarm.AlarmActivity { *; }
+# reference. Written structurally rather than as a list of class names: the list
+# had already fallen behind — two widget providers added later were missing from
+# it — and a stripped component fails silently at runtime rather than at build
+# time, which is the worst way for this to go wrong.
+-keep class * extends android.appwidget.AppWidgetProvider { *; }
+-keep class * extends android.content.BroadcastReceiver { *; }
+-keep class * extends android.app.Service { *; }
+-keep class * extends android.app.Activity { *; }
+-keep class * extends androidx.activity.ComponentActivity { *; }
+-keep class * extends android.accessibilityservice.AccessibilityService { *; }
+-keep class * extends android.service.quicksettings.TileService { *; }
+-keep class * extends android.service.notification.NotificationListenerService { *; }
+-keep class * extends android.content.ContentProvider { *; }
+-keep class * extends android.app.Application { *; }
 
 # Keep line numbers so a crash report from a user is still readable.
 -keepattributes SourceFile,LineNumberTable

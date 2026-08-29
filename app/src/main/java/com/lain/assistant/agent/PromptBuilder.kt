@@ -23,7 +23,15 @@ object PromptBuilder {
         conversationSummary: String?,
         capabilities: ModelCapabilities,
         mode: DeliveryMode,
-        accessibilityReady: Boolean
+        accessibilityReady: Boolean,
+        /**
+         * False for a plain conversational turn, which is sent with no tools at all.
+         * Shipping two thousand characters of tool discipline on a call that has no
+         * tools is tokens the model reads before reaching the actual question — and on
+         * the free models this targets, it is also two thousand characters of
+         * instruction competing for attention with the thing being asked.
+         */
+        includeTools: Boolean = true
     ): String {
         val nickname = profile?.nickname?.takeIf { it.isNotBlank() } ?: "you"
         val realName = profile?.name?.takeIf { it.isNotBlank() }
@@ -38,8 +46,10 @@ object PromptBuilder {
             append(if (capabilities.useCompactPrompt) conversationCompact() else conversation())
             append("\n\n")
             append(language())
-            append("\n\n")
-            append(toolDiscipline(accessibilityReady, capabilities))
+            if (includeTools) {
+                append("\n\n")
+                append(toolDiscipline(accessibilityReady, capabilities))
+            }
             if (memories.isNotEmpty()) {
                 append("\n\n")
                 append(memoryBlock(memories))

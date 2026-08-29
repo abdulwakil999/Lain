@@ -111,6 +111,12 @@ sealed class LocalIntent {
      */
     data class SmallTalk(val kind: SmallTalkKind) : LocalIntent()
 
+    /** "recite Al-Kahf", "play surah 18", "stop the recitation". */
+    data class Recite(val surah: String, val reciter: String, val stop: Boolean) : LocalIntent()
+
+    /** "where am I", "what's my location". */
+    object WhereAmI : LocalIntent()
+
     /** "what's 15% of 240", "convert 5km to miles" — answered exactly, offline. */
     data class Calculate(val result: Calculator.Result) : LocalIntent()
 }
@@ -187,8 +193,17 @@ object FastRouter {
         val normalised = normalise(message)
         if (normalised.isEmpty()) return Route.Chat
 
-        // A question about the mechanism is never a command to perform it.
-        if (conversational.containsMatchIn(normalised)) return Route.Model
+        // A question about the mechanism is never a command to perform it — but it was
+        // being sent to Route.Model, which is the *full agent loop*: the whole toolbox,
+        // planning, and up to maxToolRounds network calls to answer "what do you think
+        // of this". Those phrases are the substance of a conversation, so every real
+        // conversation took the most expensive path in the app. That is the overthinking.
+        //
+        // Chat is the right destination: one streamed call, no tools. It is safe
+        // because the fast path carries an escape hatch — a model that decides it
+        // needs the phone after all says so, and the caller falls through to the full
+        // loop. A misroute costs one cheap request, never a wrong answer.
+        if (conversational.containsMatchIn(normalised)) return Route.Chat
 
         localIntent(normalised)?.let { return Route.Local(it) }
 
@@ -270,7 +285,8 @@ object FastRouter {
 
     private fun localIntent(t: String): LocalIntent? =
         // Identity first and cheapest: these are constants and a database row.
-        smallTalk(t) ?: identity(t) ?: lockScreen(t) ?: power(t) ?: closeSelf(t)
+        smallTalk(t) ?: identity(t) ?: recite(t) ?: whereAmI(t)
+            ?: lockScreen(t) ?: power(t) ?: closeSelf(t)
             ?: clock(t) ?: battery(t) ?: torch(t)
             // Do Not Disturb before the generic volume matcher: "silence my phone"
             // means the ringer, not the media stream.
@@ -441,6 +457,42 @@ object FastRouter {
                 LocalIntent.Ringer("normal")
             else -> null
         }
+    }
+
+    // ------------------------------------------------------------ recitation
+
+    private fun recite(t: String): LocalIntent? {
+        if (Regex("\\b(stop|pause|end)\\b").containsMatchIn(t) &&
+            Regex("\\b(recitation|reciting|quran|qur'an|koran|surah|surat)\\b").containsMatchIn(t)
+        ) {
+            return LocalIntent.Recite("", "", stop = true)
+        }
+
+        val m = Regex(
+            "^(?:recite|play|put on|read)\\s+(?:me\\s+)?(?:the\\s+)?" +
+                "(?:quran|qur'an|koran|surah|surat|sura|chapter)\\s*(.{0,40})$"
+        ).find(t) ?: Regex(
+            "^(?:recite|read)\\s+(?:me\\s+)?(.{2,40})$"
+        ).find(t) ?: return null
+
+        var target = m.groupValues[1].trim()
+        var reciter = ""
+        // "surah al-kahf by sudais"
+        Regex("^(.*?)\\s+(?:by|with|from)\\s+(.+)$").find(target)?.let { split ->
+            target = split.groupValues[1].trim()
+            reciter = split.groupValues[2].trim()
+        }
+        return LocalIntent.Recite(target, reciter, stop = false)
+    }
+
+    // -------------------------------------------------------------- location
+
+    private fun whereAmI(t: String): LocalIntent? = when {
+        t == "where am i" || t == "where am i right now" || t == "my location" ||
+            t == "what's my location" || t == "whats my location" ||
+            t == "what is my location" || t == "where are we" ||
+            t == "where am i now" -> LocalIntent.WhereAmI
+        else -> null
     }
 
     // ------------------------------------------------------------ small talk

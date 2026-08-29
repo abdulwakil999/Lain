@@ -13,6 +13,8 @@ import com.lain.assistant.automation.MessageFlow
 import com.lain.assistant.automation.NotesRepository
 import com.lain.assistant.automation.PhoneController
 import com.lain.assistant.automation.QuickToggles
+import com.lain.assistant.automation.LocationReader
+import com.lain.assistant.automation.QuranPlayer
 import com.lain.assistant.automation.SearchFlow
 import com.lain.assistant.automation.SimPreference
 import com.lain.assistant.automation.SystemToggles
@@ -67,6 +69,8 @@ class ToolDispatcher(context: Context) {
     private val sims = SimPreference(appContext)
     private val systemToggles = SystemToggles(appContext)
     private val searchFlow = SearchFlow(appContext)
+    private val quran = QuranPlayer(appContext)
+    private val location = LocationReader(appContext)
     private val messaging = MessageFlow(appContext)
     private val web = WebResearch()
     private val memory = MemoryStore(appContext)
@@ -369,6 +373,29 @@ class ToolDispatcher(context: Context) {
                 )
             } else {
                 systemToggles.set(which, on = args.bool("on"))
+            }
+        }
+
+        "recite_quran" -> {
+            val surah = args.str("surah")
+            if (surah.isBlank()) {
+                if (quran.stop()) ToolResult.ok("Stopped the recitation.")
+                else ToolResult.fail(FailureKind.INVALID_INPUT, "Which surah?")
+            } else {
+                quran.recite(surah, args.str("reciter"))
+            }
+        }
+
+        "where_am_i" -> {
+            val described = location.describe()
+            when {
+                described != null -> ToolResult.ok(described)
+                !location.hasPermission() -> ToolResult.fail(
+                    FailureKind.PERMISSION,
+                    "Location permission hasn't been granted. Ask the user to allow it — Lain only reads " +
+                        "the last known area and never sends it anywhere."
+                )
+                else -> ToolResult.fail(FailureKind.TOOL_FAILURE, "Couldn't read a location.")
             }
         }
 

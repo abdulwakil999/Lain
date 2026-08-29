@@ -445,7 +445,10 @@ class ChatEngine(
             return
         }
 
-        AgentForegroundService.start(appContext, "Thinking…")
+        // Not for conversation. A foreground service means a notification, a wake lock
+        // and a service start — worth it for a multi-step task that must survive the
+        // screen going off, pure overhead for a one-shot reply that takes a second.
+        if (route !is Route.Chat) AgentForegroundService.start(appContext, "Thinking…")
 
         activeJob = scope.launch {
             try {
@@ -620,7 +623,8 @@ class ChatEngine(
             conversationSummary = summary,
             capabilities = caps,
             mode = deliveryMode,
-            accessibilityReady = accessibilityReady
+            accessibilityReady = accessibilityReady,
+            includeTools = route !is Route.Chat
         )
 
         val history = buildModelHistory(cid, caps)
