@@ -54,6 +54,15 @@ class ToolDispatcher(context: Context) {
     companion object {
         /** Ceiling on any single textual result, so one dense screen can't blow the context window. */
         private const val MAX_RESULT_CHARS = 3500
+
+        /**
+         * How long to wait between attempts to find an element on screen.
+         *
+         * Three tries over about a second: enough to cover a screen transition and a
+         * list finishing its first layout, short enough that a genuinely absent
+         * element is reported while the user is still expecting an answer.
+         */
+        private val FIND_BACKOFF_MS = listOf(150L, 350L, 700L)
     }
 
     private val appContext = context.applicationContext
@@ -74,6 +83,8 @@ class ToolDispatcher(context: Context) {
     private val messaging = MessageFlow(appContext)
     private val web = WebResearch()
     private val memory = MemoryStore(appContext)
+    private val conversations = com.lain.assistant.data.ConversationStore(appContext)
+    private val brightness = com.lain.assistant.automation.ScreenBrightness(appContext)
     private val json = Json { ignoreUnknownKeys = true }
 
     /** Set by the engine so memories can record where they were learned. */
@@ -87,11 +98,17 @@ class ToolDispatcher(context: Context) {
         val args = runCatching { json.parseToJsonElement(call.argumentsJson) as JsonObject }.getOrNull()
             ?: return@withContext ToolResult.fail(FailureKind.INVALID_INPUT, "Couldn't parse the arguments for ${call.name}")
 
+        // A model that fails to recognise its own success calls the tool again with
+        // the same arguments. For anything that leaves the phone, the second call is
+        // a second message to a real person.
+        RecentSideEffects.duplicate(call.name, call.argumentsJson)?.let { return@withContext it }
+
         val result = try {
             dispatch(call.name, args)
         } catch (t: Throwable) {
             ToolResult.fail(FailureKind.TOOL_FAILURE, "${call.name} threw an exception", t.message)
         }
+        if (result.success) RecentSideEffects.record(call.name, call.argumentsJson)
 
         // Clip prose, never images or structured payloads.
         if (result.result.length <= MAX_RESULT_CHARS) result
@@ -164,7 +181,7 @@ class ToolDispatcher(context: Context) {
         // actually settle and return the compact, interactive-only view.
         "tap_text" -> withService("tap_text") { service ->
             val label = args.str("text")
-            if (service.findTapPointByText(label) == null) {
+            if (awaitElement(label, service) == null) {
                 ToolResult.fail(
                     FailureKind.INVALID_INPUT,
                     "No element labelled \"$label\" on screen. Pick a label from the listing below.",
@@ -311,7 +328,9 @@ class ToolDispatcher(context: Context) {
 
         // ------------------------------------------------------ device
         "device_status" -> device.deviceStatus()
-        "set_volume" -> device.setMediaVolume(args.num("percent").toInt())
+        "set_volume" -> device.setVolume(args.num("percent").toInt(), args.str("stream"))
+        "set_brightness" -> if (args.bool("auto")) brightness.setAutomatic()
+        else brightness.set(args.num("percent").toInt())
         "clipboard" -> when (args.str("action").lowercase()) {
             "write" -> device.writeClipboard(args.str("text"))
             else -> device.readClipboard()
@@ -465,14 +484,83 @@ class ToolDispatcher(context: Context) {
             else ToolResult.ok("Nothing stored matched \"${args.str("key")}\".")
         }
 
-        "recall" -> {
-            val hits = memory.retrieveRelevant(args.str("query"), limit = 8)
-            if (hits.isEmpty()) ToolResult.ok("Nothing relevant in memory.")
-            // Ids are included so edit_memory has something to address.
-            else ToolResult.ok(hits.joinToString("\n") { "- [${it.category.lowercase()}] ${it.fact} (id: ${it.id})" })
-        }
+        "recall" -> recall(args.str("query"))
 
         else -> ToolResult.fail(FailureKind.INVALID_INPUT, "Unknown tool: $name")
+    }
+
+    /**
+     * Looks for a labelled element, giving the screen a few chances to produce it.
+     *
+     * A tap that misses is almost never a tap at the wrong place — it is a tap a
+     * fraction of a second too early, at a screen still drawing itself after the
+     * previous action. The old code asked once, got nothing, and reported the element
+     * as absent, which sent the model off to re-plan a task that was about to work.
+     * On a free model that costs a round trip and often the whole task.
+     *
+     * Backs off between attempts rather than spinning: the delays are roughly how
+     * long a transition, a list inflate and a slow network-backed screen take, in
+     * that order. Retrying a *lookup* is always safe — it reads, it does not act —
+     * which is why the retry lives here and not around the tap itself. A tap that was
+     * dispatched and rejected is not retried, because "rejected" and "happened but
+     * looked like it didn't" are indistinguishable from here, and repeating a real
+     * tap is how something gets bought twice.
+     */
+    private suspend fun awaitElement(
+        label: String,
+        service: LainAccessibilityService
+    ): Any? {
+        FIND_BACKOFF_MS.forEachIndexed { index, wait ->
+            service.findTapPointByText(label)?.let { return it }
+            if (index < FIND_BACKOFF_MS.lastIndex) kotlinx.coroutines.delay(wait)
+        }
+        return service.findTapPointByText(label)
+    }
+
+    /**
+     * Searches everything Lain holds, not only her filed facts.
+     *
+     * Three stores answer to one question because the user does not know which of
+     * them a thing landed in — "what did I say about the flat" might be a saved
+     * memory, a note, or a sentence from a conversation last week, and being told
+     * "nothing in memory" when it is sitting in a note is the same failure as not
+     * having it at all.
+     *
+     * Each section is labelled so the model can say where something came from. A
+     * remembered fact and a thing the user said once are different kinds of
+     * evidence, and flattening them into one list invites stating an old passing
+     * remark as a standing fact.
+     */
+    private suspend fun recall(query: String): ToolResult {
+        if (query.isBlank()) return ToolResult.fail(FailureKind.INVALID_INPUT, "Nothing to search for.")
+
+        val facts = memory.retrieveRelevant(query, limit = 8)
+        val savedNotes = notes.search(query, limit = 4)
+        val said = conversations.searchMessages(query, limit = 4)
+
+        if (facts.isEmpty() && savedNotes.isEmpty() && said.isEmpty()) {
+            return ToolResult.ok("Nothing about that in memory, notes or earlier conversations.")
+        }
+
+        return ToolResult.ok(
+            buildString {
+                if (facts.isNotEmpty()) {
+                    append("REMEMBERED\n")
+                    // Ids are included so edit_memory has something to address.
+                    facts.forEach { append("- [${it.category.lowercase()}] ${it.fact} (id: ${it.id})\n") }
+                }
+                if (savedNotes.isNotEmpty()) {
+                    if (isNotEmpty()) append("\n")
+                    append("NOTES\n")
+                    savedNotes.forEach { append("- ${it.text.take(200)}\n") }
+                }
+                if (said.isNotEmpty()) {
+                    if (isNotEmpty()) append("\n")
+                    append("SAID EARLIER (a past remark, not a standing fact)\n")
+                    said.forEach { append("- ${it.role}: ${it.content.take(200)}\n") }
+                }
+            }.trim()
+        )
     }
 
     /**

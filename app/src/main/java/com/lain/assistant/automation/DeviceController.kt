@@ -59,20 +59,52 @@ class DeviceController(private val context: Context) {
         }
     }
 
+    /** The media stream, which is what "turn it down" means while something is playing. */
+    fun setMediaVolume(percent: Int): ToolResult = setVolume(percent, "media")
+
     /**
-     * Media volume only. Ringer/DND changes need DO_NOT_DISTURB access that a
-     * sideloaded app shouldn't silently assume, so they're not offered.
+     * Sets one of the phone's volumes, which are genuinely separate things.
+     *
+     * "Turn the volume down" while music is playing means the media stream; the same
+     * words after a loud ringtone mean the ringer. Setting media when the ringer was
+     * meant leaves the phone ringing at full volume in a meeting, and the failure is
+     * silent — the tool reports success, and it did succeed, at the wrong thing.
+     *
+     * @param stream media, ring, notification, alarm or call.
      */
-    fun setMediaVolume(percent: Int): ToolResult {
+    fun setVolume(percent: Int, stream: String): ToolResult {
+        val (streamType, label) = when (stream.trim().lowercase()) {
+            "media", "music", "" -> AudioManager.STREAM_MUSIC to "Media"
+            "ring", "ringer", "ringtone", "phone" -> AudioManager.STREAM_RING to "Ringer"
+            "notification", "notifications" -> AudioManager.STREAM_NOTIFICATION to "Notification"
+            "alarm", "alarms" -> AudioManager.STREAM_ALARM to "Alarm"
+            "call", "voice", "in call" -> AudioManager.STREAM_VOICE_CALL to "In-call"
+            else -> return ToolResult.fail(
+                FailureKind.INVALID_INPUT,
+                "Don't know the \"$stream\" volume. It's media, ring, notification, alarm or call."
+            )
+        }
+
         return try {
             val am = context.getSystemService(AudioManager::class.java)
                 ?: return ToolResult.fail(FailureKind.CAPABILITY_UNAVAILABLE, "No audio service")
-            val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+            val max = am.getStreamMaxVolume(streamType)
             val target = (percent.coerceIn(0, 100) * max / 100.0).toInt()
-            am.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0)
-            ToolResult.ok("Media volume set to $percent% ($target/$max).")
+            am.setStreamVolume(streamType, target, 0)
+            // Read back: Do Not Disturb silently refuses ringer and notification
+            // changes, and reporting the number we asked for would be a lie.
+            val actual = am.getStreamVolume(streamType)
+            if (actual != target) {
+                ToolResult.fail(
+                    FailureKind.TOOL_FAILURE,
+                    "$label volume wouldn't move — it's at ${actual * 100 / max}%. " +
+                        "Do Not Disturb usually holds the ringer where it is."
+                )
+            } else {
+                ToolResult.ok("$label volume set to $percent% ($target/$max).")
+            }
         } catch (t: Throwable) {
-            ToolResult.fail(FailureKind.PERMISSION, "Couldn't change volume", t.message)
+            ToolResult.fail(FailureKind.PERMISSION, "Couldn't change the $label volume", t.message)
         }
     }
 

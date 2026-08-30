@@ -44,14 +44,13 @@ class MemoryStore(private val context: Context) {
         const val MAX_INJECTED = 12
         const val MAX_FACT_CHARS = 240
 
-        /** Ignored when scoring relevance — they match everything and rank nothing. */
-        private val STOPWORDS = setOf(
-            "the","a","an","and","or","but","is","are","was","were","be","been","being","to","of","in",
-            "on","at","for","with","about","from","by","it","this","that","these","those","i","you","me",
-            "my","your","we","us","our","he","she","they","them","his","her","do","does","did","can","could",
-            "would","should","will","shall","have","has","had","what","when","where","who","why","how","not",
-            "no","yes","if","then","than","so","just","get","got","let","like","want","need","please","up","out"
-        )
+        /**
+         * How alike a memory has to look before resemblance alone earns it a slot.
+         *
+         * Set high. This is the layer with no understanding behind it, so a low bar
+         * fills the prompt with facts that merely share letters with the question.
+         */
+        private const val STRONG_RESEMBLANCE = 0.45
     }
 
     private val db by lazy { LainDatabase.get(context) }
@@ -175,9 +174,17 @@ class MemoryStore(private val context: Context) {
     suspend fun all(): List<MemoryEntity> = withContext(Dispatchers.IO) { dao.all() }
 
     /**
-     * Relevance retrieval. Scores each memory against the current message by term
-     * overlap, then boosts importance, recency and prior usefulness. Identity-level
-     * facts are always eligible because they colour every reply.
+     * Relevance retrieval, on meaning rather than on spelling.
+     *
+     * Scores each memory against the message by shared *concepts* — see [TextIndex],
+     * where "mum" and "mother" are the same token — then boosts importance, recency
+     * and prior usefulness. Identity facts are always eligible because they colour
+     * every reply.
+     *
+     * The change that matters is the filter at the bottom. It used to require a
+     * literal shared word, which meant a stored fact could be a perfect answer and
+     * still never be retrieved: nothing failed, the memory was simply silent. A
+     * concept match or a close enough string now qualifies too.
      */
     suspend fun retrieveRelevant(
         query: String,
@@ -186,32 +193,59 @@ class MemoryStore(private val context: Context) {
         val stored = dao.all()
         if (stored.isEmpty()) return@withContext emptyList()
 
-        val queryTokens = tokens(query)
+        val queryConcepts = TextIndex.concepts(query)
         val now = System.currentTimeMillis()
 
         val scored = stored.map { memory ->
-            val memoryTokens = tokens(memory.subject + " " + memory.fact)
-            val overlap = if (queryTokens.isEmpty()) 0 else queryTokens.intersect(memoryTokens).size
+            val text = memory.subject + " " + memory.fact
+            val memoryConcepts = TextIndex.concepts(text)
+            val overlap = if (queryConcepts.isEmpty()) 0 else queryConcepts.intersect(memoryConcepts).size
+            // The loosest layer, and weighted like it: enough to rescue a typo or a
+            // name spelled differently, never enough to outrank a real match.
+            val resemblance = if (queryConcepts.isEmpty()) 0.0 else TextIndex.similarity(query, text)
             val ageDays = ((now - memory.updatedAt) / 86_400_000.0).coerceAtLeast(0.0)
 
             var score = overlap * 10.0
+            score += resemblance * 6.0
             score += memory.importance * 2.0
             score += minOf(memory.useCount, 5) * 0.5
             score -= minOf(ageDays * 0.05, 4.0)
             // Who the user is stays relevant regardless of topic.
             if (memory.category == MemoryCategory.IDENTITY.name) score += 6.0
-            memory to score
+            Scored(memory, score, overlap, resemblance)
         }
 
-        // Anything with zero term overlap and no identity weight is noise for this turn.
         val picked = scored
-            .filter { (m, s) -> s > 4.0 && (m.category == MemoryCategory.IDENTITY.name || tokens(m.subject + " " + m.fact).intersect(queryTokens).isNotEmpty() || m.importance >= 5) }
-            .sortedByDescending { it.second }
+            .filter { it.qualifies() }
+            .sortedByDescending { it.score }
             .take(limit)
-            .map { it.first }
+            .map { it.memory }
 
         if (picked.isNotEmpty()) dao.markUsed(picked.map { it.id })
         picked
+    }
+
+    private class Scored(
+        val memory: MemoryEntity,
+        val score: Double,
+        val conceptOverlap: Int,
+        val resemblance: Double
+    ) {
+        /**
+         * Whether this is worth a slot in the request at all.
+         *
+         * A high score alone is not enough — importance and recency can carry an
+         * unrelated fact over the line, and an unrelated fact in the prompt is worse
+         * than a missing one, because the model will try to use it. So there has to
+         * be an actual connection to what was said: a shared concept, a close enough
+         * resemblance, or the two categories that are relevant no matter the topic.
+         */
+        fun qualifies(): Boolean = score > 4.0 && (
+            conceptOverlap > 0 ||
+                resemblance >= STRONG_RESEMBLANCE ||
+                memory.category == MemoryCategory.IDENTITY.name ||
+                memory.importance >= 5
+            )
     }
 
     private suspend fun enforceCapacity() {
@@ -220,44 +254,8 @@ class MemoryStore(private val context: Context) {
         dao.weakest(total - MAX_MEMORIES).forEach { dao.deleteById(it.id) }
     }
 
-    private fun tokens(text: String): Set<String> =
-        text.lowercase(Locale.ROOT)
-            .split(Regex("[^a-z0-9+#.]+"))
-            .filter { it.length > 2 && it !in STOPWORDS }
-            .map { stem(it) }
-            .toSet()
+    private fun tokens(text: String): Set<String> = TextIndex.tokens(text)
 
-    /**
-     * Crude suffix stripping, so "projects" matches "project" and "running"
-     * matches "run".
-     *
-     * Exact token matching quietly loses a large share of real hits: the user
-     * writes "how are my projects going" and the stored fact says "current
-     * project", and nothing matches. A full stemmer would be overkill here — this
-     * is English suffix trimming with a length guard so short words survive
-     * intact, which recovers most of that loss for a few microseconds of work and
-     * no dependency.
-     */
-    private fun stem(word: String): String {
-        if (word.length <= 4) return word
-        for (suffix in STEM_SUFFIXES) {
-            if (word.length - suffix.length >= 3 && word.endsWith(suffix)) {
-                val base = word.dropLast(suffix.length)
-                // "running" -> "runn" -> "run": undo the doubled consonant.
-                return if (base.length > 3 && base.last() == base[base.length - 2] && base.last() !in "sl") {
-                    base.dropLast(1)
-                } else {
-                    base
-                }
-            }
-        }
-        return word
-    }
-
-    /** Longest first, so "ities" is stripped before "ies". */
-    private val STEM_SUFFIXES = listOf(
-        "ities", "ation", "ings", "ies", "ing", "ers", "ed", "es", "er", "ly", "s"
-    )
 
     private fun inferCategory(key: String, value: String): MemoryCategory {
         val blob = (key + " " + value).lowercase(Locale.ROOT)

@@ -5,6 +5,7 @@ import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.os.BatteryManager
 import com.lain.assistant.agent.IdentityQuestion
+import com.lain.assistant.agent.DeveloperGate
 import com.lain.assistant.agent.Replies
 import com.lain.assistant.agent.SpokenSegments
 import com.lain.assistant.agent.SmallTalkKind
@@ -62,7 +63,8 @@ class LocalActions(private val context: Context) {
                 is LocalIntent.Timer -> timer(intent.minutes, intent.label)
                 is LocalIntent.SettingsPage -> settingsPage(intent.page)
                 is LocalIntent.Call -> call(intent.contact)
-                is LocalIntent.Volume -> volume(intent.percent, intent.direction)
+                is LocalIntent.Volume -> volume(intent.percent, intent.direction, intent.stream)
+                is LocalIntent.Brightness -> brightness(intent.percent, intent.direction, intent.auto)
                 is LocalIntent.Torch -> torch(intent.on)
                 is LocalIntent.ReadScreen -> readScreen()
                 is LocalIntent.ToggleRequest -> toggleRequest(intent.page, intent.what)
@@ -79,6 +81,8 @@ class LocalActions(private val context: Context) {
                 is LocalIntent.ClearRecents -> clearRecents()
                 is LocalIntent.SmallTalk -> smallTalk(intent.kind)
                 is LocalIntent.Identity -> identity(intent.question)
+                is LocalIntent.DeveloperClaim -> developerClaim()
+                is LocalIntent.DeveloperAnswer -> developerAnswer(intent.text)
                 is LocalIntent.Recite -> recite(intent)
                 is LocalIntent.WhereAmI -> whereAmI()
                 is LocalIntent.LockScreen -> lockScreen()
@@ -290,8 +294,36 @@ class LocalActions(private val context: Context) {
             IdentityQuestion.LAIN_NAME -> say(Replies.lainName)
             IdentityQuestion.APP_NAME -> say(Replies.appName)
             IdentityQuestion.NECIO -> say(Replies.necio)
+            IdentityQuestion.DEVELOPER -> say(Replies.developer)
             IdentityQuestion.CAPABILITIES -> say(Replies.capabilities)
         }
+    }
+
+    // ------------------------------------------------------------- developer
+
+    /**
+     * Answers a claim to be the developer with a question, never with belief.
+     *
+     * The claim itself is six words anyone can type, so it earns nothing on its own.
+     * Arming the gate here means the very next message is read as the answer — see
+     * [DeveloperGate] — which is why the router checks it before anything else.
+     */
+    private fun developerClaim(): String {
+        DeveloperGate.arm()
+        return say(Replies.developerChallenge)
+    }
+
+    /**
+     * The reply to the challenge, and the only place the answer is checked.
+     *
+     * Right: remembered, so he is not asked again on the next launch. Wrong: said
+     * plainly, in Spanish, and not remembered at all — a failed guess is not worth
+     * storing, and someone who mistypes deserves to be able to simply say it again.
+     */
+    private suspend fun developerAnswer(text: String): String {
+        val correct = DeveloperGate.answer(text)
+        if (correct) prefs.setDeveloperKnown(true)
+        return say(if (correct) Replies.developerAccepted else Replies.developerRejected)
     }
 
     // ----------------------------------------------------------- power state
@@ -591,27 +623,66 @@ class LocalActions(private val context: Context) {
 
     // -------------------------------------------------------------- volume
 
-    private fun volume(percent: Int?, direction: Int): String? {
+    private fun volume(percent: Int?, direction: Int, stream: String): String? {
         val am = context.getSystemService(AudioManager::class.java) ?: return null
-        val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        val (type, label) = when (stream) {
+            "ring" -> AudioManager.STREAM_RING to "Ringer"
+            "notification" -> AudioManager.STREAM_NOTIFICATION to "Notification"
+            "alarm" -> AudioManager.STREAM_ALARM to "Alarm"
+            "call" -> AudioManager.STREAM_VOICE_CALL to "Call"
+            else -> AudioManager.STREAM_MUSIC to "Volume"
+        }
+        val max = am.getStreamMaxVolume(type)
         if (max <= 0) return null
 
-        if (percent != null) {
-            am.setStreamVolume(AudioManager.STREAM_MUSIC, percent * max / 100, 0)
-            return sass(
-                when (percent) {
-                    0 -> "Muted."
-                    100 -> "Volume maxed."
-                    else -> "Volume at $percent%."
-                }
-            )
+        val target = if (percent != null) {
+            percent * max / 100
+        } else {
+            val step = (max / 7).coerceAtLeast(1)
+            (am.getStreamVolume(type) + direction * step).coerceIn(0, max)
+        }
+        am.setStreamVolume(type, target, 0)
+
+        // Read it back. Do Not Disturb refuses ringer and notification changes
+        // without erroring, and "ringer at 60%" over a phone that is still silent is
+        // the exact shape of lie this app is built not to tell.
+        val actual = am.getStreamVolume(type)
+        if (actual != target) {
+            return "$label wouldn't move — still ${actual * 100 / max}%. " +
+                "Do Not Disturb holds it there."
         }
 
-        val current = am.getStreamVolume(AudioManager.STREAM_MUSIC)
-        val step = (max / 7).coerceAtLeast(1)
-        val next = (current + direction * step).coerceIn(0, max)
-        am.setStreamVolume(AudioManager.STREAM_MUSIC, next, 0)
-        return sass("Volume ${if (direction > 0) "up" else "down"} — ${next * 100 / max}%.")
+        val reached = actual * 100 / max
+        return sass(
+            when {
+                reached == 0 -> if (label == "Volume") "Muted." else "$label off."
+                reached == 100 -> "$label maxed."
+                percent != null -> "$label at $reached%."
+                else -> "$label ${if (direction > 0) "up" else "down"} — $reached%."
+            }
+        )
+    }
+
+    // ---------------------------------------------------------- brightness
+
+    /**
+     * Screen brightness, answered on the device.
+     *
+     * Returns null only when the value can't be read to step from — anything else,
+     * including the missing permission, is reported here rather than handed to the
+     * model, which cannot do better and would take a round trip to say the same
+     * thing. [ScreenBrightness] opens the grant screen itself when it needs to.
+     */
+    private fun brightness(percent: Int?, direction: Int, auto: Boolean): String? {
+        val screen = ScreenBrightness(context)
+        if (auto) return screen.setAutomatic().let { it.error ?: it.result }
+
+        val target = percent ?: run {
+            val current = screen.current() ?: return null
+            (current + direction * 20).coerceIn(0, 100)
+        }
+        val outcome = screen.set(target)
+        return outcome.error ?: outcome.result?.let { sass(it) }
     }
 
     // --------------------------------------------------------------- torch

@@ -21,6 +21,7 @@ class UserPreferencesRepository(private val context: Context) {
         val NICKNAME = stringPreferencesKey("nickname")
         val ONBOARDED = booleanPreferencesKey("onboarded")
         val LEGAL_VERSION = intPreferencesKey("legal_version")
+        val DEVELOPER_KNOWN = booleanPreferencesKey("developer_known")
         val PROVIDER = stringPreferencesKey("provider")
         val MODEL_ID = stringPreferencesKey("model_id")
         val KOKORO_ENDPOINT = stringPreferencesKey("kokoro_endpoint")
@@ -51,6 +52,20 @@ class UserPreferencesRepository(private val context: Context) {
 
     suspend fun acceptLegalVersion(version: Int) {
         context.dataStore.edit { it[Keys.LEGAL_VERSION] = version }
+    }
+
+    /**
+     * Whether whoever is holding the phone has answered the developer challenge.
+     *
+     * Persisted so he is not re-interrogated on every launch, and it changes only
+     * how she addresses him — nothing in the app grants any capability on the
+     * strength of it. See [com.lain.assistant.agent.DeveloperGate] for why that
+     * separation is deliberate.
+     */
+    val isDeveloperKnown: Flow<Boolean> = context.dataStore.data.map { it[Keys.DEVELOPER_KNOWN] ?: false }
+
+    suspend fun setDeveloperKnown(known: Boolean) {
+        context.dataStore.edit { it[Keys.DEVELOPER_KNOWN] = known }
     }
 
     val userProfile: Flow<UserProfile> = context.dataStore.data.map { prefs ->

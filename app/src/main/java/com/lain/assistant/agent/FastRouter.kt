@@ -28,8 +28,16 @@ sealed class LocalIntent {
     /** "call John", "ring mum" */
     data class Call(val contact: String) : LocalIntent()
 
-    /** "volume up", "set volume to 40" */
-    data class Volume(val percent: Int?, val direction: Int) : LocalIntent()
+    /**
+     * "volume up", "set volume to 40", "turn the ringer down".
+     *
+     * [stream] names which volume, because they are separate and getting it wrong is
+     * how a phone ends up ringing at full volume in a meeting.
+     */
+    data class Volume(val percent: Int?, val direction: Int, val stream: String = "media") : LocalIntent()
+
+    /** "dim the screen", "brightness to 70", "auto brightness". */
+    data class Brightness(val percent: Int?, val direction: Int, val auto: Boolean = false) : LocalIntent()
 
     /** "torch on", "turn off the flashlight" */
     data class Torch(val on: Boolean) : LocalIntent()
@@ -55,6 +63,15 @@ sealed class LocalIntent {
      * of calendar arithmetic.
      */
     data class Schedule(val phrase: String, val alarm: Boolean) : LocalIntent()
+
+    /**
+     * Someone saying they are the developer. Answered with the challenge, never
+     * with belief.
+     */
+    object DeveloperClaim : LocalIntent()
+
+    /** Whatever they said next, read as their answer to the challenge. */
+    data class DeveloperAnswer(val text: String) : LocalIntent()
 
     /** "what alarms have I got", "list my reminders". */
     object ListSchedule : LocalIntent()
@@ -124,7 +141,11 @@ sealed class LocalIntent {
 enum class TransportAction { PLAY, PAUSE, TOGGLE, NEXT, PREVIOUS, STOP }
 
 /** Things Lain already knows without asking anybody. */
-enum class IdentityQuestion { USER_NAME, USER_AGE, LAIN_NAME, APP_NAME, CAPABILITIES, NECIO }
+enum class IdentityQuestion {
+    USER_NAME, USER_AGE, LAIN_NAME, APP_NAME, CAPABILITIES, NECIO,
+    /** "who made you" — a fact about the world that no model has, so it is answered here. */
+    DEVELOPER
+}
 
 enum class SmallTalkKind { GREETING, THANKS, HOW_ARE_YOU, GOODBYE, AFFIRMATION }
 
@@ -255,6 +276,11 @@ object FastRouter {
         val normalised = normalise(message)
         if (normalised.isEmpty()) return Route.Chat
 
+        // Ahead of everything, including the local matchers: a challenge is armed and
+        // this message is the reply to it, whatever else it looks like. Routing "soft"
+        // anywhere else would send the one word that proves who he is to a model.
+        if (DeveloperGate.isArmed) return Route.Local(LocalIntent.DeveloperAnswer(message))
+
         // Resolved once and reused: a local reading beats both of the checks below,
         // so "open Python" stays an app launch and "solve 12 x 4" stays arithmetic.
         val local = localIntent(normalised)
@@ -361,13 +387,13 @@ object FastRouter {
 
     private fun localIntent(t: String): LocalIntent? =
         // Identity first and cheapest: these are constants and a database row.
-        smallTalk(t) ?: identity(t) ?: recite(t) ?: whereAmI(t)
+        smallTalk(t) ?: identity(t) ?: developerClaim(t) ?: recite(t) ?: whereAmI(t)
             ?: lockScreen(t) ?: power(t) ?: closeSelf(t)
             ?: clock(t) ?: battery(t) ?: torch(t)
             // Do Not Disturb before the generic volume matcher: "silence my phone"
             // means the ringer, not the media stream.
             ?: dnd(t) ?: ringer(t)
-            ?: volume(t)
+            ?: volume(t) ?: brightness(t)
             // Scheduling is checked before timer(), which only understands delays;
             // "set an alarm for 2:30" is a clock time and would otherwise fall
             // through to the model.
@@ -414,26 +440,83 @@ object FastRouter {
     }
 
     private fun volume(t: String): LocalIntent? {
-        if (!t.contains("volume") && !t.contains("sound")) return null
+        // "Turn the ringer down" never says the word volume, and it is the phrasing
+        // people actually use for the one stream it matters most to get right.
+        if (!t.contains("volume") && !t.contains("sound") &&
+            !t.contains("ringer") && !t.contains("ringtone")
+        ) {
+            return null
+        }
         if (t.contains("setting")) return null
+
+        // Which volume. Named streams win over the default, so "turn the ringer down"
+        // stops being a media change that leaves the phone as loud as it was.
+        val stream = when {
+            t.contains("ringer") || t.contains("ringtone") || t.contains("ring volume") -> "ring"
+            t.contains("notification") -> "notification"
+            t.contains("alarm") -> "alarm"
+            t.contains("call volume") || t.contains("in-call") || t.contains("earpiece") -> "call"
+            else -> "media"
+        }
 
         Regex("(\\d{1,3})\\s*(%|percent)?").find(t)?.let { m ->
             val value = m.groupValues[1].toIntOrNull()
             if (value != null && value in 0..100 &&
                 (t.contains("set") || t.contains("to ") || t.contains("%") || t.contains("percent"))
             ) {
-                return LocalIntent.Volume(percent = value, direction = 0)
+                return LocalIntent.Volume(percent = value, direction = 0, stream = stream)
             }
         }
         return when {
             t.contains("mute") || t.contains("silence") || t.contains("silent") ->
-                LocalIntent.Volume(percent = 0, direction = 0)
+                LocalIntent.Volume(percent = 0, direction = 0, stream = stream)
             t.contains("max") || t.contains("full") || t.contains("loudest") ->
-                LocalIntent.Volume(percent = 100, direction = 0)
+                LocalIntent.Volume(percent = 100, direction = 0, stream = stream)
             t.contains("up") || t.contains("increase") || t.contains("louder") || t.contains("raise") ->
-                LocalIntent.Volume(percent = null, direction = 1)
+                LocalIntent.Volume(percent = null, direction = 1, stream = stream)
             t.contains("down") || t.contains("decrease") || t.contains("quieter") || t.contains("lower") ->
-                LocalIntent.Volume(percent = null, direction = -1)
+                LocalIntent.Volume(percent = null, direction = -1, stream = stream)
+            else -> null
+        }
+    }
+
+    /**
+     * "dim the screen", "brightness to 70", "put brightness back on auto".
+     *
+     * A screen brightness request has no business costing a network round trip, and
+     * "dim the screen" is one of the things a person says when they are already
+     * squinting at it in the dark.
+     */
+    private fun brightness(t: String): LocalIntent? {
+        val named = t.contains("brightness") || t.contains("brighter") || t.contains("dimmer")
+        val screenish = t.contains("screen") || t.contains("display")
+        val dimming = (t.contains("dim") || t.contains("darken")) && screenish
+        val brightening = t.contains("brighten") && screenish
+        if (!named && !dimming && !brightening) return null
+        // "brightness settings" is a request to see the page, not to change the value.
+        if (t.contains("setting")) return null
+
+        if (t.contains("auto") || t.contains("automatic") || t.contains("adaptive")) {
+            return LocalIntent.Brightness(percent = null, direction = 0, auto = true)
+        }
+
+        Regex("(\\d{1,3})\\s*(%|percent)?").find(t)?.let { m ->
+            val value = m.groupValues[1].toIntOrNull()
+            if (value != null && value in 0..100 &&
+                (t.contains("set") || t.contains("to ") || t.contains("%") || t.contains("percent"))
+            ) {
+                return LocalIntent.Brightness(percent = value, direction = 0)
+            }
+        }
+        return when {
+            t.contains("max") || t.contains("full") || t.contains("brightest") ->
+                LocalIntent.Brightness(percent = 100, direction = 0)
+            dimming || t.contains("dimmer") || t.contains("down") || t.contains("lower") ||
+                t.contains("darker") || t.contains("decrease") ->
+                LocalIntent.Brightness(percent = null, direction = -1)
+            brightening || t.contains("brighter") || t.contains("up") || t.contains("raise") ||
+                t.contains("increase") ->
+                LocalIntent.Brightness(percent = null, direction = 1)
             else -> null
         }
     }
@@ -635,11 +718,44 @@ object FastRouter {
             Regex("\\b(what|why|mean|means|meaning|stand|short)\\b").containsMatchIn(t) ->
             LocalIntent.Identity(IdentityQuestion.NECIO)
 
+        // Who built her. A model asked this has nothing to go on and answers with a
+        // confident invention — an AI lab, a company, a person who does not exist —
+        // so it is answered from a constant like every other fact about herself.
+        Regex(
+            "^who('?s| is| was)? ?(the )?(person |guy |man |one )?(that |who )?" +
+                "(made|built|created|wrote|developed|designed|coded|programmed) (you|this app|lain)\\??$"
+        ).matches(t) ||
+            Regex("^who('?s| is) your (developer|creator|dev|maker|author|programmer)\\??$").matches(t) ||
+            t == "who is behind you" || t == "who's behind you" || t == "whos behind you" ||
+            t == "who made this" || t == "who owns you" ||
+            Regex("^what('?s| is) your (developer|creator)('?s)? name\\??$").matches(t) ->
+            LocalIntent.Identity(IdentityQuestion.DEVELOPER)
+
         t == "what can you do" || t == "what are you able to do" || t == "help" ||
             t == "what can i ask you" || t == "what do you do" ->
             LocalIntent.Identity(IdentityQuestion.CAPABILITIES)
 
         else -> null
+    }
+
+    /**
+     * Someone saying they built her.
+     *
+     * Matched on the whole message so a sentence that merely mentions making
+     * something is left alone, and kept narrow on purpose: the reply to this is a
+     * challenge, and a false match means telling someone who was talking about
+     * something else entirely to prove themselves.
+     */
+    private fun developerClaim(t: String): LocalIntent? {
+        val claim = Regex(
+            "^(i'?m|i am|it'?s me,? i'?m|this is) (your |the |lain'?s )?" +
+                "(developer|creator|dev|maker|author|programmer|the one who (made|built|created) you)\\.?$"
+        ).matches(t) ||
+            Regex("^i (made|built|created|wrote|coded|developed|designed) (you|this app|lain)\\.?$").matches(t) ||
+            Regex("^(i'?m|i am) professor poopy butthole\\.?$").matches(t) ||
+            t == "soy tu desarrollador" || t == "yo te hice"
+
+        return if (claim) LocalIntent.DeveloperClaim else null
     }
 
     // ----------------------------------------------------------- power state

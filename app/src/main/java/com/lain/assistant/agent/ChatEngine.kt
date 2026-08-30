@@ -9,6 +9,7 @@ import com.lain.assistant.automation.VoiceInputController
 import com.lain.assistant.data.ChatMessage
 import com.lain.assistant.data.ConversationStore
 import com.lain.assistant.data.MemoryCategory
+import com.lain.assistant.data.MemoryExtractor
 import com.lain.assistant.data.MemoryStore
 import com.lain.assistant.data.ModelCapabilities
 import com.lain.assistant.data.ModelCapabilityRegistry
@@ -36,6 +37,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -351,13 +354,37 @@ class ChatEngine(
         }
     }
 
+    /**
+     * Stops the running task, and says that it stopped.
+     *
+     * The cancellation itself always worked; what did not was the user being able to
+     * tell. The turn simply vanished — no reply, no note, the same screen as before
+     * — which reads as the app having lost the request rather than having obeyed.
+     * A line in the transcript is the difference between "it stopped" and "it broke".
+     */
     fun stop() {
+        val wasRunning = activeJob != null || _state.value.isSending
         activeJob?.cancel()
         activeJob = null
         clearPendingConfirmation()
         silence()
         AgentForegroundService.stop(appContext)
         _state.update { it.copy(isSending = false, isListening = false, statusLine = null, conversationMode = false) }
+
+        if (wasRunning) {
+            // Deliberately vague about how far it got: a cancelled task may have run
+            // tools already, and claiming either "nothing happened" or "it finished"
+            // would be a guess. What is certain is that it was stopped.
+            _state.update { current ->
+                current.copy(
+                    messages = current.messages + ChatMessage(
+                        sender = Sender.LAIN,
+                        text = "Stopped. Anything already done stays done."
+                    ),
+                    streamingText = null
+                )
+            }
+        }
     }
 
     fun toggleMute() {
@@ -433,6 +460,21 @@ class ChatEngine(
                 statusLine = "Thinking…"
             )
         }
+
+        // A fresh request is allowed to repeat the last one. The duplicate guard is
+        // there to catch a model calling the same tool twice inside one task, not to
+        // overrule someone who asks for the same thing again.
+        com.lain.assistant.tools.RecentSideEffects.clear()
+
+        // Anything durable the user just stated, filed before the turn is answered.
+        //
+        // Here rather than in the housekeeping pass because housekeeping runs on the
+        // model paths only, on a sample of turns, and skips short messages — so "my
+        // mum's name is Salima" was answered and then forgotten. This runs on every
+        // turn including the local ones, costs a few regex matches, and never asks a
+        // model anything. Launched rather than awaited: it must not put a database
+        // write in front of the user's reply.
+        scope.launch { rememberWhatWasStated(message) }
 
         // Routing happens before the foreground service starts and before anything
         // touches the network, because the whole point is that a local command never
@@ -617,6 +659,8 @@ class ChatEngine(
         val accessibilityReady = LainAccessibilityService.isRunning
 
         // Assemble context fresh each turn rather than growing a list forever.
+        val tools = ToolDefinitions.forCapabilities(caps, accessibilityReady)
+
         val relevantMemories = memory.retrieveRelevant(userMessage, caps.memoryBudget)
         val summary = conversations.summaryOf(cid)
         val systemPrompt = PromptBuilder.build(
@@ -627,7 +671,9 @@ class ChatEngine(
             mode = deliveryMode,
             accessibilityReady = accessibilityReady,
             includeTools = route is Route.Model,
-            includeStudy = route is Route.Study
+            includeStudy = route is Route.Study,
+            developerPresent = prefs.isDeveloperKnown.first(),
+            omittedTools = ToolDefinitions.omittedByBudget(caps, accessibilityReady)
         )
 
         val history = buildModelHistory(cid, caps)
@@ -675,8 +721,6 @@ class ChatEngine(
             }
         }
 
-        val tools = ToolDefinitions.forCapabilities(caps, accessibilityReady)
-
         var rounds = 0
         var finalText: String? = null
         var lastSignature: String? = null
@@ -694,6 +738,11 @@ class ChatEngine(
         var fellBack = false
 
         while (rounds < caps.maxToolRounds && finalText == null) {
+            // Checked every round rather than only at suspension points inside the
+            // network call: a task cancelled while a tool is running would otherwise
+            // finish that tool, start the next round, and keep going for a step or two
+            // after STOP was pressed.
+            currentCoroutineContext().ensureActive()
             rounds++
             if (rounds > 1) setStatus("Working… (step $rounds)")
 
@@ -1490,6 +1539,28 @@ class ChatEngine(
         val charging = bm?.isCharging == true
         level in 1..15 && !charging
     }.getOrDefault(false)
+
+    /**
+     * Files the facts [MemoryExtractor] found in the user's own words.
+     *
+     * Saved through the same path as an explicit "remember this", so a fact stated
+     * twice revises rather than duplicating, and everything landing here is visible
+     * and deletable in Memoria like any other memory. Failures are swallowed on
+     * purpose: this is a side effect of a turn, and it must never be the reason a
+     * reply does not arrive.
+     */
+    private suspend fun rememberWhatWasStated(message: String) {
+        runCatching {
+            MemoryExtractor.extract(message).forEach { found ->
+                memory.remember(
+                    subject = found.subject,
+                    fact = found.fact,
+                    category = found.category,
+                    importance = found.importance
+                )
+            }
+        }
+    }
 
     private var turnsSinceExtraction = 0
 

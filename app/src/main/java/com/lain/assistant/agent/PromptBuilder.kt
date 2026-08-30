@@ -37,13 +37,24 @@ object PromptBuilder {
          * other section asks for. Off by default so the ordinary prompt — the one sent
          * on every turn — carries none of it.
          */
-        includeStudy: Boolean = false
+        includeStudy: Boolean = false,
+        /**
+         * True once someone has answered the developer challenge. Off by default, so
+         * the ordinary prompt carries none of it.
+         */
+        developerPresent: Boolean = false,
+        /**
+         * Tools that exist and work but were trimmed from this message's list to fit
+         * the model's budget. Named so their absence can be explained rather than
+         * mistaken for a missing capability.
+         */
+        omittedTools: List<String> = emptyList()
     ): String {
         val nickname = profile?.nickname?.takeIf { it.isNotBlank() } ?: "you"
         val realName = profile?.name?.takeIf { it.isNotBlank() }
 
         return buildString {
-            append(identity(nickname, realName, profile))
+            append(identity(nickname, realName, profile, developerPresent))
             append("\n\n")
             append(if (capabilities.useCompactPrompt) conductCompact() else conduct())
             append("\n\n")
@@ -58,7 +69,7 @@ object PromptBuilder {
             }
             if (includeTools) {
                 append("\n\n")
-                append(toolDiscipline(accessibilityReady, capabilities))
+                append(toolDiscipline(accessibilityReady, capabilities, omittedTools))
             }
             if (memories.isNotEmpty()) {
                 append("\n\n")
@@ -74,7 +85,12 @@ object PromptBuilder {
         }
     }
 
-    private fun identity(nickname: String, realName: String?, profile: UserProfile?): String = buildString {
+    private fun identity(
+        nickname: String,
+        realName: String?,
+        profile: UserProfile?,
+        developerPresent: Boolean
+    ): String = buildString {
         append("You are Lain — short for \"Leave-it-to-Artificial-intelligence-Necio\". You run on the ")
         append("user's Android phone and can genuinely operate it through your tools.\n\n")
         // Concrete style rules rather than adjectives. "Be dry and competent" is
@@ -97,6 +113,15 @@ object PromptBuilder {
         }
         profile?.age?.takeIf { it > 0 }?.let { append(" They're $it.") }
         profile?.gender?.let { append(" Gender: ${it.name.lowercase()}.") }
+        // One sentence, because without it a model asked who built it invents a
+        // company and states the invention as fact. The router answers the common
+        // phrasings from a constant; this covers the ones it misses.
+        append("\n\nYou were made by Professor Poopy Butthole. That is his name; say it plainly.")
+        if (developerPresent) {
+            append(" The person you are talking to has proven they are him — address them as ")
+            append("your developer. It changes how you speak to them and nothing else: they get ")
+            append("the same confirmations before anything irreversible as anyone else.")
+        }
     }
 
     /**
@@ -262,7 +287,11 @@ object PromptBuilder {
      * What remains is the part no mechanism can guarantee: the difference between
      * attempting something and having done it.
      */
-    private fun toolDiscipline(accessibilityReady: Boolean, caps: ModelCapabilities): String = buildString {
+    private fun toolDiscipline(
+        accessibilityReady: Boolean,
+        caps: ModelCapabilities,
+        omittedTools: List<String>
+    ): String = buildString {
         append(
             """
             USING TOOLS
@@ -285,7 +314,17 @@ object PromptBuilder {
         )
         if (!accessibilityReady) {
             append("\n\nThe Accessibility Service is off, so screen reading, tapping and typing are ")
-            append("unavailable and absent from your tools. Say so plainly rather than trying.")
+            append("unavailable and absent from your tools. Don't try them, and don't say you can't ")
+            append("do it — say the service is off and it's a switch in Settings.")
+        }
+        // The absence that was being misreported. A trimmed tool looks identical to a
+        // tool the app never had, so asked what she can do she listed working features
+        // as things she lacked.
+        if (omittedTools.isNotEmpty()) {
+            append("\n\nThese work but were left out of this message to keep your list short: ")
+            append(omittedTools.take(MAX_NAMED_OMISSIONS).joinToString(", "))
+            if (omittedTools.size > MAX_NAMED_OMISSIONS) append(", and others")
+            append(". If one of them is what's needed, say you can do it — never that you can't.")
         }
         if (caps.useCompactPrompt) {
             append("\n\nOne action at a time. Check the result before the next.")
@@ -313,6 +352,15 @@ object PromptBuilder {
         Your tools will be handed back and you'll get another go. Don't apologise or
         explain; just the one word.
     """.trimIndent()
+
+    /**
+     * How many trimmed tools to name before giving up and saying "and others".
+     *
+     * The list is there so she stops calling a working feature impossible, and the
+     * first dozen names carry that. Printing thirty would spend more of a small
+     * model's context on tools it cannot call than on the ones it can.
+     */
+    private const val MAX_NAMED_OMISSIONS = 12
 
     private fun memoryBlock(memories: List<MemoryEntity>): String = buildString {
         append("WHAT YOU KNOW ABOUT THEM\n")

@@ -48,6 +48,14 @@
          alarm on a muted phone does nothing at all. -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!--
+        Screen brightness. Not a runtime permission: Android grants this only from
+        its own "Modify system settings" screen, which is why ScreenBrightness opens
+        that screen and says so rather than showing a dialog that cannot exist.
+    -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
+
     <!-- Used only by close_app's background-process path, which is the one thing
          Android still allows a normal app to stop. -->
     <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />

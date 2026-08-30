@@ -60,16 +60,12 @@ class LainNameTest {
     }
 
     @Test
-    fun `speech gets a spelling that is not lane`() {
-        val spoken = LainName.forSpeech("Hello, I'm Lain.")
-        assertFalse(spoken.contains("Lain"))
-        assertTrue(spoken.contains("Lah-een"))
-    }
-
-    @Test
-    fun `possessives and sentence position survive the respelling`() {
-        assertTrue(LainName.forSpeech("That's Lain's job.").contains("Lah-een's"))
-        // A word that merely contains the letters is not the name.
+    fun `the name reaches the synthesiser spelled the way it is written`() {
+        // Lain is pronounced Lane, which is what an English voice does with the
+        // letters unaided. The respelling that used to happen here produced
+        // "Lah-een" — two syllables the name does not have.
+        assertEquals("Hello, I'm Lain.", LainName.forSpeech("Hello, I'm Lain."))
+        assertEquals("That's Lain's job.", LainName.forSpeech("That's Lain's job."))
         assertEquals("Plainly obvious", LainName.forSpeech("Plainly obvious"))
     }
 

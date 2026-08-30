@@ -21,9 +21,50 @@ class ConversationStore(context: Context) {
     private val conversations = db.conversations()
     private val messages = db.messages()
 
+    /**
+     * Past messages that are about the same thing as [query], newest first.
+     *
+     * The half of "search my history" that a keyword match cannot do: asked about
+     * "the flat", it finds the turn where the user said "apartment". Scored with
+     * [TextIndex] over a bounded window of recent messages rather than by SQL LIKE,
+     * which would only ever find the word that was typed.
+     *
+     * @param limit how many hits to return, not how many messages to consider.
+     */
+    suspend fun searchMessages(query: String, limit: Int = 6): List<MessageEntity> =
+        withContext(Dispatchers.IO) {
+            val wanted = TextIndex.concepts(query)
+            if (wanted.isEmpty()) return@withContext emptyList()
+
+            messages.recentEverywhere(SEARCH_WINDOW)
+                .asSequence()
+                .filter { it.content.isNotBlank() }
+                .map { message ->
+                    val overlap = wanted.intersect(TextIndex.concepts(message.content)).size
+                    message to overlap + TextIndex.similarity(query, message.content)
+                }
+                .filter { it.second >= 1.0 }
+                .sortedByDescending { it.second }
+                .take(limit)
+                .map { it.first }
+                .toList()
+        }
+
+
+
     /** Live tail kept verbatim. Older turns survive via the rolling summary. */
     companion object {
         const val RECENT_WINDOW = 24
+
+        /**
+         * How far back a search looks.
+         *
+         * Far enough to cover the history anyone actually refers back to, small
+         * enough that scoring it is free. Searching everything ever said would get
+         * slower every week the app is used, which is the wrong shape for something
+         * that runs while a person waits.
+         */
+        const val SEARCH_WINDOW = 400
         /** Compress once the backlog behind the window gets this deep. */
         const val SUMMARIZE_THRESHOLD = 12
         /** Captured screens older than this are dropped; they're heavy and quickly stale. */

@@ -70,6 +70,17 @@ interface MessageDao {
     /** Drops stale captured screens; they're the most expensive thing to keep around. */
     @Query("DELETE FROM messages WHERE conversationId = :cid AND hidden = 1 AND createdAt < :before")
     suspend fun pruneHiddenBefore(cid: String, before: Long)
+
+    /**
+     * The most recent visible messages across every conversation, for searching.
+     *
+     * Bounded rather than complete, and ranked in memory afterwards rather than by
+     * SQL LIKE — the point of the search is to match on meaning, and LIKE only ever
+     * matches on spelling. The bound is what keeps that affordable: scoring a few
+     * hundred rows is microseconds, scoring a year of chat is not.
+     */
+    @Query("SELECT * FROM messages WHERE hidden = 0 ORDER BY createdAt DESC LIMIT :limit")
+    suspend fun recentEverywhere(limit: Int): List<MessageEntity>
 }
 
 @Dao

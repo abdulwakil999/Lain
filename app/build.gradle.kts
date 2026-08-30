@@ -16,8 +16,8 @@ android {
         applicationId = "com.lain.assistant"
         minSdk = 26
         targetSdk = 35
-        versionCode = 27
-        versionName = "1.7.0"
+        versionCode = 28
+        versionName = "1.8.0"
     }
 
     /**

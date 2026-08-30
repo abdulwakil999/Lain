@@ -10,6 +10,7 @@ import com.lain.assistant.data.Provider
 import com.lain.assistant.data.UserProfile
 import com.lain.assistant.network.ToolCall
 import com.lain.assistant.tools.FailureKind
+import com.lain.assistant.tools.ToolDefinitions
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -183,6 +184,45 @@ class PromptBudgetTest {
         val spoken = build(free = false, mode = DeliveryMode.VOICE)
         assertTrue(spoken.contains("SPOKEN ALOUD"))
         assertFalse("text-mode length guidance leaked into voice", spoken.contains("MATCH THE QUESTION"))
+    }
+
+    @Test
+    fun `a trimmed tool is named so it is not reported as missing`() {
+        val weak = ModelCapabilityRegistry.forModel("vendor/small-9b:free", Provider.OPENROUTER)
+        val omitted = ToolDefinitions.omittedByBudget(weak, accessibilityReady = true)
+        assertTrue("a weak model should not be shown every tool", omitted.isNotEmpty())
+
+        val prompt = PromptBuilder.build(
+            profile = profile, memories = emptyList(), conversationSummary = null,
+            capabilities = weak, mode = DeliveryMode.TEXT, accessibilityReady = true,
+            omittedTools = omitted
+        )
+        assertTrue(prompt.contains("left out of this message"))
+        assertTrue("the trimmed names aren't there", prompt.contains(omitted.first()))
+        // The whole point: she must not answer "I can't" for something she can.
+        assertTrue(prompt.contains("never that you can't"))
+
+        // And a model shown everything is told nothing about omissions.
+        val strong = ModelCapabilityRegistry.forModel("anthropic/claude-sonnet-5", Provider.OPENROUTER)
+        val full = PromptBuilder.build(
+            profile = profile, memories = emptyList(), conversationSummary = null,
+            capabilities = strong, mode = DeliveryMode.TEXT, accessibilityReady = true,
+            omittedTools = ToolDefinitions.omittedByBudget(strong, accessibilityReady = true)
+        )
+        assertFalse(full.contains("left out of this message"))
+        println("weak prompt with omissions: ${prompt.length} chars")
+        assertTrue("the weak prompt has grown to ${prompt.length} chars", prompt.length < 2900)
+    }
+
+    @Test
+    fun `accessibility being off is a switch, not a missing ability`() {
+        val caps = ModelCapabilityRegistry.forModel("anthropic/claude-sonnet-5", Provider.OPENROUTER)
+        val prompt = PromptBuilder.build(
+            profile = profile, memories = emptyList(), conversationSummary = null,
+            capabilities = caps, mode = DeliveryMode.TEXT, accessibilityReady = false
+        )
+        assertTrue(prompt.contains("Accessibility Service is off"))
+        assertTrue("no route to fixing it", prompt.contains("switch in Settings"))
     }
 
     @Test

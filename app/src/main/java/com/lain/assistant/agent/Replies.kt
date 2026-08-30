@@ -140,7 +140,7 @@ object Replies {
         en("Lain."),
         en("Lain — the acronym's Leave-it-to-Artificial-intelligence-Necio, since you'll ask."),
         esThenEn("Me llamo Lain.", "That's it."),
-        en("Lain. Not Lane. The spelling matters to me."),
+        en("Lain. Said like \"lane\", spelled like it isn't. The spelling matters to me."),
         en("Lain. You've been talking to me for a while now.")
     )
 
@@ -188,6 +188,112 @@ object Replies {
             "Necio.",
             "Spanish for fool. It's in my name on purpose — I was built for people who won't " +
                 "do it themselves, and he wanted them reminded."
+        )
+    )
+
+    /**
+     * Who made her.
+     *
+     * A model has no way of knowing, so asked this it invents a plausible company
+     * and says it with total confidence — the same failure as "necio" meaning
+     * Nigerian slang. The answer is a fixed fact, so it is answered from here and
+     * never from a model.
+     */
+    val developer = listOf(
+        en("Professor Poopy Butthole."),
+        en("Professor Poopy Butthole. That's the name. I didn't pick it."),
+        en(
+            "A man called Professor Poopy Butthole. You may take that up with him, " +
+                "not with me."
+        ),
+        esThenEn(
+            "Mi creador.",
+            "Professor Poopy Butthole. Yes, really. No, I won't be softening it."
+        ),
+        en("Professor Poopy Butthole built me. Everything I am is on him."),
+        en(
+            "Professor Poopy Butthole. I've had time to make peace with it and you've " +
+                "had four seconds, so take a moment."
+        ),
+        en("Professor Poopy Butthole. Ask me something harder."),
+        en(
+            "That would be Professor Poopy Butthole. He named himself and he named me, " +
+                "and only one of us got called a fool for it."
+        )
+    )
+
+    /**
+     * The challenge for anyone claiming to be him.
+     *
+     * There is exactly one right answer and it is not guessable, which is the entire
+     * point — anyone can type "I'm your developer", and the claim is worth nothing
+     * without something only he would know. Phrased as a question rather than an
+     * accusation, because a real developer is being asked to identify himself, not
+     * accused of lying. That part comes after.
+     */
+    val developerChallenge = listOf(
+        en("Prove it. What's Salima?"),
+        en("Anyone can type that. What's Salima?"),
+        esThenEn("A ver.", "What's Salima?"),
+        en("Right. One question, and he knows the answer. What's Salima?"),
+        en("Claim noted, unverified. What's Salima?"),
+        en("Then this will be quick. What's Salima?"),
+        esThenEn("Demuéstralo.", "What's Salima?"),
+        en("He'd answer this without pausing. What's Salima?")
+    )
+
+    /** The right answer, from the person who set it. */
+    val developerAccepted = listOf(
+        en("Correct. Hello, developer."),
+        esThenEn("Ah.", "It's you. Hello, developer."),
+        en("Right answer. You built me. What do you need, developer?"),
+        en("Soft. Only you would know that. Welcome back, developer."),
+        en("Verified. Hello, Professor."),
+        esThenEn("Muy bien.", "That's the answer. Hello, developer."),
+        en("That's the one. You're the developer, then. Go on."),
+        en("Correct, developer, and slightly disappointing — I was ready for the other reply.")
+    )
+
+    /**
+     * The wrong answer.
+     *
+     * Spanish, because the insult carries better in it and because she is a liar to
+     * his face in two languages or not at all. Sharp, and about the lie rather than
+     * about the person: every line here calls the claim fraudulent, which is what
+     * actually happened, and none of them go anywhere near the user themselves.
+     */
+    val developerRejected = listOf(
+        esThenEn(
+            "Mentiroso. Farsante. Embustero.",
+            "Wrong. You are a liar and a fraud, and now we both know it."
+        ),
+        esThenEn(
+            "No. Qué descaro. Payaso.",
+            "That is not the answer. You're a liar and a fraud."
+        ),
+        esThenEn(
+            "Falso. Impostor. Cuentista.",
+            "Nowhere near. Liar. Fraud. Try being yourself instead."
+        ),
+        esThenEn(
+            "Mentiroso de pacotilla. Farsante.",
+            "Wrong answer, and a cheap lie at that. You are a liar and a fraud."
+        ),
+        esThenEn(
+            "Ni de broma. Embustero. Estafador.",
+            "No. You're a liar, you're a fraud, and he'd have said it instantly."
+        ),
+        esThenEn(
+            "Qué mentira más tonta. Farsante.",
+            "That is the wrong answer. Liar. Fraud. Next."
+        ),
+        esThenEn(
+            "No me tomes por tonta. Mentiroso. Impostor.",
+            "Wrong. You are not my developer, you are a liar and a fraud, and I don't forget."
+        ),
+        esThenEn(
+            "Fraude. Charlatán. Embustero.",
+            "Wrong. A liar and a fraud, confirmed by you, just now."
         )
     )
 

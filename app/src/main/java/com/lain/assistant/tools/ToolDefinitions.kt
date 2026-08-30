@@ -84,12 +84,22 @@ object ToolDefinitions {
         ),
         ToolDefinition(
             name = "set_volume",
-            description = "Set the media volume as a percentage.",
+            description = "Set one of the phone's volumes as a percentage. The streams are separate: \"media\" for music and video, \"ring\" for the ringtone, \"notification\", \"alarm\", \"call\". Defaults to media. Do Not Disturb can refuse a ringer change, and the result says so when it does.",
             parameters = schema {
                 property("percent", "number", "0-100")
+                property("stream", "string", "media, ring, notification, alarm or call. Defaults to media.")
                 required("percent")
             },
-            briefDescription = "Set media volume 0-100."
+            briefDescription = "Set the media, ring, notification, alarm or call volume 0-100."
+        ),
+        ToolDefinition(
+            name = "set_brightness",
+            description = "Set screen brightness as a percentage, or pass auto=true to hand it back to the light sensor. Needs Android's \"Modify system settings\" permission; if it isn't granted the tool opens that screen and says so rather than failing quietly.",
+            parameters = schema {
+                property("percent", "number", "0-100. Ignored when auto is true.")
+                property("auto", "boolean", "true to switch brightness back to automatic")
+            },
+            briefDescription = "Set screen brightness 0-100, or back to automatic."
         ),
         ToolDefinition(
             name = "clipboard",
@@ -490,12 +500,12 @@ object ToolDefinitions {
         ),
         ToolDefinition(
             name = "recall",
-            description = "Search your long-term memory. Relevant memories are already provided each turn, so only use this when you need something specific that wasn't included.",
+            description = "Search everything you hold about the user: remembered facts, their saved notes, and what was said in earlier conversations. Matches on meaning, so \"the flat\" finds a note about the apartment. Relevant memories are already provided each turn, so use this when you need something specific that wasn't included.",
             parameters = schema {
                 property("query", "string", "What to look for")
                 required("query")
             },
-            briefDescription = "Search long-term memory."
+            briefDescription = "Search memories, notes and past conversations."
         )
     )
 
@@ -523,7 +533,7 @@ object ToolDefinitions {
         "write_note", "list_notes", "open_url", "wait", "current_app",
         // Longer tail.
         "read_notifications", "find_files", "edit_memory",
-        "open_settings_page", "set_volume", "clipboard", "fetch_page", "open_contacts",
+        "open_settings_page", "set_volume", "set_brightness", "clipboard", "fetch_page", "open_contacts",
         "tap_screen", "look_at_screen", "take_photo", "listen_microphone",
         "list_files", "read_file", "write_file", "rename_file", "make_folder", "delete_file",
         "close_app", "send_sms", "send_whatsapp_message"
@@ -542,7 +552,33 @@ object ToolDefinitions {
     fun forCapabilities(
         caps: com.lain.assistant.data.ModelCapabilities,
         accessibilityReady: Boolean
-    ): List<ToolDefinition> {
+    ): List<ToolDefinition> = shape(caps, accessibilityReady).tools
+
+    /**
+     * The tools that exist and work but were cut from this message to fit the budget.
+     *
+     * Worth knowing about, because the model cannot tell the difference between a
+     * tool the app does not have and a tool it was not shown — and answers both the
+     * same way, with "that isn't in my toolset". Asked to list what she could do, she
+     * reported the clipboard and Do Not Disturb as missing capabilities. Both have
+     * been implemented for months; both had been trimmed off the bottom of a free
+     * model's list.
+     *
+     * Excludes anything gated on Accessibility or vision. Those absences have a
+     * cause the user can act on, and they are explained separately rather than
+     * lumped in with "didn't fit".
+     */
+    fun omittedByBudget(
+        caps: com.lain.assistant.data.ModelCapabilities,
+        accessibilityReady: Boolean
+    ): List<String> = shape(caps, accessibilityReady).omittedByBudget
+
+    private class Shaped(val tools: List<ToolDefinition>, val omittedByBudget: List<String>)
+
+    private fun shape(
+        caps: com.lain.assistant.data.ModelCapabilities,
+        accessibilityReady: Boolean
+    ): Shaped {
         var tools = all
         if (!caps.supportsVision) {
             tools = tools.filterNot { it.name == "look_at_screen" || it.name == "take_photo" }
@@ -553,12 +589,17 @@ object ToolDefinitions {
             tools = tools.filterNot { it.name in accessibilityDependent }
         }
 
+        val available = tools
         if (tools.size > caps.toolBudget) {
             val rank = byImportance.withIndex().associate { (i, name) -> name to i }
             tools = tools.sortedBy { rank[it.name] ?: Int.MAX_VALUE }.take(caps.toolBudget)
         }
 
-        return tools.map { it.describedFor(caps.useCompactToolDescriptions) }
+        val kept = tools.map { it.name }.toSet()
+        return Shaped(
+            tools = tools.map { it.describedFor(caps.useCompactToolDescriptions) },
+            omittedByBudget = available.map { it.name }.filterNot { it in kept }
+        )
     }
 
     private class SchemaBuilder {

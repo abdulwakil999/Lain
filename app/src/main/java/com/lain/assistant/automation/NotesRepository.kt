@@ -32,6 +32,27 @@ class NotesRepository(private val context: Context) {
         save(notes.first().filterNot { it.id == id })
     }
 
+    /**
+     * Notes about the same thing as [query], newest first.
+     *
+     * Concept-matched rather than substring-matched, so a note saying "pick up the
+     * prescription" is found by "my medication". A note is usually one line written
+     * in a hurry, and the words in it are rarely the words used to look for it later.
+     */
+    suspend fun search(query: String, limit: Int = 4): List<Note> {
+        val wanted = com.lain.assistant.data.TextIndex.concepts(query)
+        if (wanted.isEmpty()) return emptyList()
+        return notes.first()
+            .map { note ->
+                val overlap = wanted.intersect(com.lain.assistant.data.TextIndex.concepts(note.text)).size
+                note to overlap + com.lain.assistant.data.TextIndex.similarity(query, note.text)
+            }
+            .filter { it.second >= 1.0 }
+            .sortedByDescending { it.second }
+            .take(limit)
+            .map { it.first }
+    }
+
     private suspend fun save(list: List<Note>) {
         context.notesStore.edit { it[NOTES_KEY] = json.encodeToString(list) }
     }

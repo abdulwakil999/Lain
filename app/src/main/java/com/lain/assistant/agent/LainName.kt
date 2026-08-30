@@ -10,25 +10,16 @@ package com.lain.assistant.agent
  * wake-word matcher already tolerated the variants, so listening started fine and
  * the *message* was wrong, which is the harder version to notice.
  *
- * Text-to-speech has the mirror problem: handed "Lain" it says "lane", because
- * that is what the letters look like in English. No Android TTS engine exposes
- * phoneme input reliably, so the only lever is spelling — and the spelling that
- * sounds right is not the one to display.
+ * Text-to-speech needs nothing done to it. An English voice handed "Lain" says
+ * "Lane", and "Lane" is the pronunciation the name has — so the synthesiser was
+ * already right and a previous version of this file "fixed" it into "Lah-een",
+ * two syllables the name does not have. That respelling is gone.
  *
- * Both fixes are deterministic string work. Neither costs a model call.
+ * Both directions are deterministic string work. Neither costs a model call.
  */
 object LainName {
 
     const val CANONICAL = "Lain"
-
-    /**
-     * How the name is spelled *for the synthesiser only*.
-     *
-     * "Lah-een" reads as two syllables to every English TTS voice, which is the
-     * pronunciation the name actually has. Never shown on screen — the transcript
-     * keeps the real spelling, and only the audio string is rewritten.
-     */
-    private const val PHONETIC = "Lah-een"
 
     /**
      * What recognisers actually return for the name.
@@ -152,15 +143,18 @@ object LainName {
         word.filter { it.isLetter() }.lowercase()
 
     /**
-     * Rewrites text for the synthesiser so the name is pronounced, not read.
+     * What the synthesiser should be handed. The text, unchanged.
      *
-     * Word-boundary matched and case-preserving in intent: only the standalone name
-     * is respelled, so "Lain's" becomes "Lah-een's" and a word merely containing the
-     * letters is left alone.
+     * Kept as a function rather than deleted from the two engines that call it,
+     * because the name is exactly the kind of thing a later voice or a non-English
+     * locale will need respelling again — and the place to do it is here, once,
+     * rather than rediscovered in whichever engine noticed.
+     *
+     * It does nothing today on purpose: "Lain" is pronounced Lane, and an English
+     * voice reading the letters produces Lane already. The respelling that used to
+     * live here turned the name into two syllables it does not have.
      */
-    fun forSpeech(text: String): String =
-        if (text.isBlank()) text
-        else Regex("\\bLain\\b", RegexOption.IGNORE_CASE).replace(text, PHONETIC)
+    fun forSpeech(text: String): String = text
 
     /** Whether a transcript is Lain being addressed by name at all. */
     fun isAddressed(transcript: String): Boolean {
