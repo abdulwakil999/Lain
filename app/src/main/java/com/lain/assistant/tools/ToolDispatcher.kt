@@ -28,6 +28,7 @@ import com.lain.assistant.data.MemoryCategory
 import com.lain.assistant.data.Repeat
 import com.lain.assistant.data.ScheduledTask
 import com.lain.assistant.data.TaskAction
+import com.lain.assistant.data.CurrentGoal
 import com.lain.assistant.data.MemoryStore
 import com.lain.assistant.network.ToolCall
 import com.lain.assistant.network.WebResearch
@@ -85,6 +86,7 @@ class ToolDispatcher(context: Context) {
     private val memory = MemoryStore(appContext)
     private val conversations = com.lain.assistant.data.ConversationStore(appContext)
     private val brightness = com.lain.assistant.automation.ScreenBrightness(appContext)
+    private val actionLog = com.lain.assistant.data.ActionLog(appContext)
     private val json = Json { ignoreUnknownKeys = true }
 
     /** Set by the engine so memories can record where they were learned. */
@@ -110,10 +112,43 @@ class ToolDispatcher(context: Context) {
         }
         if (result.success) RecentSideEffects.record(call.name, call.argumentsJson)
 
+        // Written from the result, not from what the model goes on to say about it.
+        actionLog.record(
+            action = call.name,
+            detail = describeTarget(args),
+            succeeded = result.success,
+            outcome = if (result.success) result.result else (result.error ?: "failed"),
+            goal = CurrentGoal.get()
+        )
+
         // Clip prose, never images or structured payloads.
         if (result.result.length <= MAX_RESULT_CHARS) result
         else result.copy(result = result.result.take(MAX_RESULT_CHARS) + "\n… (truncated)")
     }
+
+    /**
+     * What an action was aimed at, in a few words.
+     *
+     * The named fields only, and never the message body: knowing a text went to Ade
+     * is the auditable fact, and keeping a second copy of everything ever sent would
+     * make the log a worse privacy problem than the one it exists to solve. Falls
+     * back to nothing rather than dumping the raw arguments, which is where a body
+     * would otherwise leak in.
+     */
+    private fun describeTarget(args: JsonObject): String = listOfNotNull(
+        args.str("app_name").ifBlank { null },
+        args.str("contact").ifBlank { null },
+        args.str("phone_number").ifBlank { null },
+        args.str("name").ifBlank { null },
+        args.str("query").ifBlank { null },
+        args.str("what").ifBlank { null },
+        args.str("page").ifBlank { null },
+        args.str("path").ifBlank { null },
+        args.str("url").ifBlank { null },
+        args.str("text").ifBlank { null }.takeIf { args.str("message").isBlank() },
+        args.str("mode").ifBlank { null },
+        args.str("stream").ifBlank { null }
+    ).joinToString(", ")
 
     private suspend fun dispatch(name: String, args: JsonObject): ToolResult = when (name) {
 

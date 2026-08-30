@@ -26,8 +26,10 @@ object LegalText {
      *
      * 2 — location is now requested and can be read; code and schoolwork; permissions
      *     are asked for once; "Knows" is now "Memoria".
+     * 3 — a log of actions taken is now kept on the device, and facts stated in
+     *     conversation are saved without being asked to remember them.
      */
-    const val VERSION = 2
+    const val VERSION = 3
 
     /**
      * What changed since the last version, shown above the documents on the re-consent
@@ -54,6 +56,18 @@ object LegalText {
         into them the same way.
 
         "Knows" is now called "Memoria". Same screen, same data, same delete buttons.
+
+        A record of what she did. Every action she takes on the phone is now logged
+        on the device — what it was, what it was aimed at, and whether it worked. It
+        holds no message contents and no screen contents. It exists so you can check
+        her account of a task against what actually happened, which is the one thing
+        you could not do before. Settings → What she did, and there is a Clear button
+        on the same screen.
+
+        Memory that saves itself. When you state something durable — a birthday, a
+        relative's name, where you work — she now files it without being asked to
+        remember it. It is listed in Memoria like everything else and can be deleted
+        the same way.
     """.trimIndent()
 
     val PRIVACY = """
@@ -73,6 +87,9 @@ object LegalText {
         What Lain remembers about you — facts she saves as you talk.
         Your alarms, reminders and scheduled tasks.
         Notes you ask her to keep.
+        A log of actions she has taken: what the action was, what it was aimed at,
+        whether it succeeded, and the request it was part of. Capped at the most
+        recent few hundred, and it holds no message contents and no screen contents.
         Your API key, held in Android's encrypted storage.
 
         All of it lives in this app's private storage. Backup to the cloud and
@@ -154,7 +171,9 @@ object LegalText {
 
         6. YOUR CONTROL
         Everything Lain remembers is listed in the app under "Memoria", and anything
-        there can be deleted individually or all at once. Conversations can be deleted
+        there can be deleted individually or all at once. Facts she saved on her own
+        from something you said appear there too, and delete the same way. The action
+        log is under Settings, with a button that clears it. Conversations can be deleted
         message by message. Uninstalling removes everything.
 
         We cannot delete anything held by your AI provider — that is between you and

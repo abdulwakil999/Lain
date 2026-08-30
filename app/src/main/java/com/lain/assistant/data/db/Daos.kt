@@ -117,3 +117,23 @@ interface MemoryDao {
     @Query("SELECT * FROM memories ORDER BY importance ASC, useCount ASC, updatedAt ASC LIMIT :limit")
     suspend fun weakest(limit: Int): List<MemoryEntity>
 }
+
+@Dao
+interface ActionLogDao {
+
+    @Insert
+    suspend fun insert(entry: ActionLogEntity)
+
+    @Query("SELECT * FROM action_log ORDER BY at DESC LIMIT :limit")
+    fun observeRecent(limit: Int): Flow<List<ActionLogEntity>>
+
+    @Query("SELECT COUNT(*) FROM action_log")
+    suspend fun count(): Int
+
+    /** Drops everything past the newest [keep] rows. */
+    @Query("DELETE FROM action_log WHERE id NOT IN (SELECT id FROM action_log ORDER BY at DESC LIMIT :keep)")
+    suspend fun prune(keep: Int)
+
+    @Query("DELETE FROM action_log")
+    suspend fun clear()
+}

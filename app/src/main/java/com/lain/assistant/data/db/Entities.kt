@@ -76,3 +76,35 @@ data class MemoryEntity(
     /** Bumped whenever the memory is actually used, so useful facts survive eviction. */
     val useCount: Int = 0
 )
+
+/**
+ * One thing Lain did, and why she did it.
+ *
+ * Kept because an assistant with Accessibility access can read a screen, send a
+ * message and change a setting, and the only evidence a user has of that is her own
+ * account of it in the chat — which is exactly the thing they cannot check. This is
+ * the record that does not depend on her describing it accurately: written by the
+ * dispatcher from the actual outcome, not by the model from what it believes
+ * happened.
+ *
+ * [goal] is the request the action was taken in service of, so a line reads as "did
+ * this, because you asked for that" rather than as a bare event.
+ *
+ * Message bodies are deliberately not stored. Knowing a text went to a contact is
+ * the auditable fact; keeping a second copy of everything ever sent would make this
+ * a bigger privacy liability than the thing it exists to make accountable.
+ */
+@Entity(tableName = "action_log", indices = [Index("at")])
+data class ActionLogEntity(
+    @PrimaryKey val id: String = UUID.randomUUID().toString(),
+    val at: Long = System.currentTimeMillis(),
+    /** The tool or local action, by name. */
+    val action: String,
+    /** What it was aimed at — an app, a contact, a setting. Never message content. */
+    val detail: String,
+    val succeeded: Boolean,
+    /** What came back, truncated. The failure reason when it failed. */
+    val outcome: String,
+    /** The user's request this was part of. */
+    val goal: String
+)

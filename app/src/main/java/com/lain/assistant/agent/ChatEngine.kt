@@ -180,6 +180,7 @@ class ChatEngine(
     private var conversationId: String? = null
     private val working = WorkingMemory()
     private val localActions = LocalActions(appContext)
+    private val actionLog = com.lain.assistant.data.ActionLog(appContext)
 
     /** The irreversible action waiting on the user, if any. */
     private var pendingConfirmation: PendingConfirmation? = null
@@ -461,6 +462,9 @@ class ChatEngine(
             )
         }
 
+        // So every action taken from here on can say what it was for.
+        com.lain.assistant.data.CurrentGoal.set(message)
+
         // A fresh request is allowed to repeat the last one. The duplicate guard is
         // there to catch a model calling the same tool twice inside one task, not to
         // overrule someone who asks for the same thing again.
@@ -598,9 +602,69 @@ class ChatEngine(
      * permission not granted — it returns null and the turn falls through to the
      * model, which can at least explain the problem.
      */
+    /**
+     * How a locally-handled action appears in the log, or null if it never should.
+     *
+     * The line is drawn at whether something changed. Being told the time, the
+     * battery or her own name changes nothing and belongs in the chat and nowhere
+     * else; a log padded with those is a log where the entry that matters — the
+     * message that went out, the setting that flipped — is three screens up.
+     *
+     * Exhaustive on purpose rather than an `else -> null`: a new local action then
+     * has to be a deliberate decision about whether it is auditable, instead of
+     * silently defaulting to invisible.
+     */
+    private fun loggable(intent: LocalIntent): Pair<String, String>? = when (intent) {
+        // Changed something on the phone.
+        is LocalIntent.OpenApp -> "open_app" to intent.appName
+        is LocalIntent.CloseApp -> "close_app" to intent.appName
+        is LocalIntent.Call -> "make_call" to intent.contact
+        is LocalIntent.Torch -> "torch" to if (intent.on) "on" else "off"
+        is LocalIntent.Volume -> "set_volume" to intent.stream
+        is LocalIntent.Brightness -> "set_brightness" to if (intent.auto) "auto" else "manual"
+        is LocalIntent.SystemToggle -> "set_system_toggle" to "${intent.what} ${if (intent.on) "on" else "off"}"
+        is LocalIntent.Dnd -> "set_do_not_disturb" to intent.mode
+        is LocalIntent.Ringer -> "set_ringer_mode" to intent.mode
+        is LocalIntent.Schedule -> "schedule_task" to intent.phrase
+        is LocalIntent.CancelSchedule -> "cancel_scheduled_task" to intent.which
+        is LocalIntent.Timer -> "set_timer" to "${intent.minutes} min ${intent.label}".trim()
+        is LocalIntent.PlayMusic -> "play_music" to listOfNotNull(intent.query.ifBlank { null }, intent.app).joinToString(" on ")
+        is LocalIntent.Transport -> "media_control" to intent.action.name.lowercase()
+        is LocalIntent.Recite -> "recite" to if (intent.stop) "stop" else intent.surah
+        is LocalIntent.SearchIn -> "search_in_app" to "${intent.query} in ${intent.app}"
+        is LocalIntent.ClearRecents -> "clear_recents" to ""
+        is LocalIntent.LockScreen -> "lock_screen" to ""
+        is LocalIntent.Power -> "power_menu" to if (intent.restart) "restart" else "power off"
+        is LocalIntent.SettingsPage -> "open_settings_page" to intent.page
+        is LocalIntent.ToggleRequest -> "open_settings_page" to intent.what
+        is LocalIntent.Navigate -> "navigate" to intent.key
+
+        // Answered a question or said something back. Nothing changed.
+        is LocalIntent.Clock, is LocalIntent.Battery, is LocalIntent.ReadScreen,
+        is LocalIntent.ListSchedule, is LocalIntent.Identity, is LocalIntent.SmallTalk,
+        is LocalIntent.WhereAmI, is LocalIntent.Calculate, is LocalIntent.CloseSelf,
+        is LocalIntent.DeveloperClaim, is LocalIntent.DeveloperAnswer -> null
+    }
+
     private suspend fun runLocal(intent: LocalIntent, message: String, trace: Trace.Turn) {
         try {
             val reply = trace.time("local_action") { localActions.execute(intent) }
+
+            // Local actions reach the phone exactly as tool calls do, so they belong in
+            // the same record. Logged from the reply rather than the intent: a null
+            // means the shortcut didn't handle it after all, and logging the attempt
+            // would put an action in the trail that never happened.
+            loggable(intent)?.let { (action, detail) ->
+                if (reply != null) {
+                    actionLog.record(
+                        action = action,
+                        detail = detail,
+                        succeeded = true,
+                        outcome = reply,
+                        goal = message
+                    )
+                }
+            }
             // "Close yourself" is the one local intent that needs the UI, since only an
             // Activity can finish itself. The engine records the ask; the screen acts.
             if (intent is LocalIntent.CloseSelf) _state.update { it.copy(closeRequested = true) }

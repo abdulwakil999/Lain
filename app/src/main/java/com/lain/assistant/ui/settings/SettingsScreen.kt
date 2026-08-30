@@ -24,6 +24,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -33,6 +34,7 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import com.lain.assistant.automation.AccessibilityMonitor
 import com.lain.assistant.automation.AccessibilityState
 import com.lain.assistant.automation.LainAccessibilityService
@@ -52,6 +54,7 @@ import com.lain.assistant.ui.common.isIgnoringBatteryOptimisations
 import com.lain.assistant.ui.common.openBatteryOptimisationSettings
 import com.lain.assistant.ui.theme.LainCream
 import com.lain.assistant.ui.theme.LainMuted
+import com.lain.assistant.ui.theme.LainNavy
 import com.lain.assistant.ui.theme.LainNavyDeep
 import com.lain.assistant.ui.theme.LainSalmon
 
@@ -60,6 +63,9 @@ import com.lain.assistant.ui.theme.LainSalmon
 fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val actionLog = remember { com.lain.assistant.data.ActionLog(context) }
+    var clearingLog by remember { mutableStateOf(false) }
     val window = rememberLainWindow()
 
     Box(
@@ -364,6 +370,65 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             }
 
             Spacer(Modifier.height(24.dp))
+            SectionLabel("What she did")
+            // The trail, folded away by default.
+            //
+            // In Settings rather than in Memoria on purpose: Memoria is what Lain
+            // knows, and this is what Lain did. They read differently — one is a set
+            // of facts you might correct, the other a history you can only check —
+            // and mixing them makes both harder to scan.
+            //
+            // Written by the dispatcher from the actual result, so where this and the
+            // chat disagree, this is the one that is right.
+            var showingLog by remember { mutableStateOf(false) }
+            val log by actionLog.observe().collectAsState(initial = emptyList())
+
+            Text(
+                "Every action she took on the phone, with what came back. No message " +
+                    "contents, no screen contents — the action and the outcome.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = LainMuted
+            )
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                PixelButton(
+                    text = if (showingLog) "Hide the log" else "Show the log (${log.size})",
+                    onClick = { showingLog = !showingLog },
+                    modifier = Modifier.weight(1f)
+                )
+                PixelButton(
+                    text = if (clearingLog) "Tap again to clear" else "Clear",
+                    onClick = {
+                        // Two taps, because there is no undo and the log is the only
+                        // copy of what happened.
+                        if (clearingLog) {
+                            scope.launch { actionLog.clear() }
+                            clearingLog = false
+                        } else {
+                            clearingLog = true
+                        }
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            if (showingLog) {
+                Spacer(Modifier.height(10.dp))
+                if (log.isEmpty()) {
+                    Text(
+                        "Nothing yet. Actions appear here as she takes them.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = LainMuted
+                    )
+                } else {
+                    log.forEach { entry ->
+                        ActionLogRow(entry)
+                        Spacer(Modifier.height(8.dp))
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(24.dp))
             SectionLabel("Alarms and Do Not Disturb")
             // Two grants Lain can't give herself. Both are offered, neither is
             // requested silently, and the current state is read from the system
@@ -498,6 +563,57 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             Spacer(Modifier.height(28.dp))
             PixelButton(text = if (state.justSaved) "Saved" else "Save", onClick = viewModel::save, enabled = state.loaded && state.canSave)
             Spacer(Modifier.height(40.dp))
+        }
+    }
+}
+
+/**
+ * One line of the trail.
+ *
+ * Outcome first as a colour and a mark, because the question being asked of this
+ * screen is almost always "did that actually work" — and a failure that looks like
+ * every other row is a failure nobody finds. The goal underneath is what makes it
+ * readable as history rather than as telemetry: an action with no "why" is a log
+ * entry, an action with one is an account.
+ */
+@Composable
+private fun ActionLogRow(entry: com.lain.assistant.data.db.ActionLogEntity) {
+    val when_ = remember(entry.at) {
+        java.text.SimpleDateFormat("d MMM, HH:mm", java.util.Locale.getDefault())
+            .format(java.util.Date(entry.at))
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .background(LainNavy)
+            .padding(10.dp)
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                if (entry.succeeded) "OK" else "FAILED",
+                style = MaterialTheme.typography.labelLarge,
+                color = if (entry.succeeded) LainSalmon else LainCream
+            )
+            Text(
+                entry.action + if (entry.detail.isNotBlank()) " · ${entry.detail}" else "",
+                style = MaterialTheme.typography.labelLarge,
+                color = LainCream,
+                modifier = Modifier.weight(1f)
+            )
+            Text(when_, style = MaterialTheme.typography.bodyMedium, color = LainMuted)
+        }
+        if (entry.outcome.isNotBlank()) {
+            Spacer(Modifier.height(4.dp))
+            Text(entry.outcome, style = MaterialTheme.typography.bodyMedium, color = LainMuted)
+        }
+        if (entry.goal.isNotBlank()) {
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "because: ${entry.goal}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = LainMuted
+            )
         }
     }
 }
