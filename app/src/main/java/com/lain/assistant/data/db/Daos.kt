@@ -127,6 +127,9 @@ interface ActionLogDao {
     @Query("SELECT * FROM action_log ORDER BY at DESC LIMIT :limit")
     fun observeRecent(limit: Int): Flow<List<ActionLogEntity>>
 
+    @Query("SELECT * FROM action_log ORDER BY at DESC LIMIT :limit")
+    suspend fun recent(limit: Int): List<ActionLogEntity>
+
     @Query("SELECT COUNT(*) FROM action_log")
     suspend fun count(): Int
 

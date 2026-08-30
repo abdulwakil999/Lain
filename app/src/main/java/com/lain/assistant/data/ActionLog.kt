@@ -51,8 +51,20 @@ class ActionLog(context: Context) {
 
     private val dao by lazy { LainDatabase.get(context).actionLog() }
 
-    /** Newest first. */
+    /** Newest first, for a screen that stays open. */
     fun observe(): Flow<List<ActionLogEntity>> = dao.observeRecent(SHOWN)
+
+    /**
+     * Newest first, read once.
+     *
+     * Memoria reads its other two lists on demand rather than subscribing, because
+     * the screen is opened deliberately and briefly and a live subscription would run
+     * for the whole session to keep a page nobody is looking at current. This matches
+     * that, so all three sections behave the same way.
+     */
+    suspend fun recent(): List<ActionLogEntity> = withContext(Dispatchers.IO) {
+        runCatching { dao.recent(SHOWN) }.getOrDefault(emptyList())
+    }
 
     /**
      * @param goal the request this was part of, so the entry says why.

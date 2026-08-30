@@ -37,8 +37,12 @@ class ActionLogTest {
         assertTrue("the log isn't in the policy", LegalText.PRIVACY.contains("A log of actions"))
         // And says what it deliberately does not hold.
         assertTrue(LegalText.PRIVACY.contains("no message contents"))
-        // The user has to be able to get rid of it.
-        assertTrue(LegalText.PRIVACY.contains("clears it"))
+        // The user has to be able to get rid of it, and be told where it lives.
+        assertTrue("the policy points at the wrong screen", LegalText.PRIVACY.contains("Historial"))
+        assertTrue("no way to clear it is described", LegalText.PRIVACY.contains("clears all at once"))
+        // And the change summary has to name the screen too, since that is the page
+        // someone re-consenting actually reads.
+        assertTrue(LegalText.WHATS_CHANGED.contains("Historial"))
     }
 
     @Test

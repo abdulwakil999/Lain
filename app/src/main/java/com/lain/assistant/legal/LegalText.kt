@@ -61,8 +61,8 @@ object LegalText {
         on the device — what it was, what it was aimed at, and whether it worked. It
         holds no message contents and no screen contents. It exists so you can check
         her account of a task against what actually happened, which is the one thing
-        you could not do before. Settings → What she did, and there is a Clear button
-        on the same screen.
+        you could not do before. It's in Memoria, under "Historial", with a button
+        that clears it.
 
         Memory that saves itself. When you state something durable — a birthday, a
         relative's name, where you work — she now files it without being asked to
@@ -173,7 +173,8 @@ object LegalText {
         Everything Lain remembers is listed in the app under "Memoria", and anything
         there can be deleted individually or all at once. Facts she saved on her own
         from something you said appear there too, and delete the same way. The action
-        log is under Settings, with a button that clears it. Conversations can be deleted
+        log is in the same place, under "Historial"; it clears all at once rather than
+        line by line, because a record you can edit selectively is no longer a record. Conversations can be deleted
         message by message. Uninstalling removes everything.
 
         We cannot delete anything held by your AI provider — that is between you and

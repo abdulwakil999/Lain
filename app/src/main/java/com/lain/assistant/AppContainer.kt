@@ -30,6 +30,7 @@ class AppContainer(context: Context) {
     val openRouterModelsClient = OpenRouterModelsClient()
     val connectionTester = ConnectionTester(appContext)
     val scheduler = com.lain.assistant.automation.Scheduler(appContext)
+    val actionLog = com.lain.assistant.data.ActionLog(appContext)
 
     /** Alias, so screens read as "what she remembers" rather than "the store". */
     val memory: MemoryStore get() = memoryStore
