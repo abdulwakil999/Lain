@@ -28,8 +28,9 @@ object LegalText {
      *     are asked for once; "Knows" is now "Memoria".
      * 3 — a log of actions taken is now kept on the device, and facts stated in
      *     conversation are saved without being asked to remember them.
+     * 4 — an optional voice service (Fish Audio), which receives the text she speaks.
      */
-    const val VERSION = 3
+    const val VERSION = 4
 
     /**
      * What changed since the last version, shown above the documents on the re-consent
@@ -64,6 +65,13 @@ object LegalText {
         you could not do before. It's in Memoria, under "Historial", with a button
         that clears it.
 
+        A voice, if you want one. Lain can now speak with a voice from Fish Audio
+        instead of the phone's built-in one. It is off unless you enter a key, and it
+        is a service on the internet, not something running on your phone: what she is
+        about to say is sent to them to be turned into audio. Downloading her voice
+        renders her fixed lines once and keeps the audio here, so those work offline
+        afterwards and are not sent again.
+
         Memory that saves itself. When you state something durable — a birthday, a
         relative's name, where you work — she now files it without being asked to
         remember it. It is listed in Memoria like everything else and can be deleted
@@ -90,7 +98,9 @@ object LegalText {
         A log of actions she has taken: what the action was, what it was aimed at,
         whether it succeeded, and the request it was part of. Capped at the most
         recent few hundred, and it holds no message contents and no screen contents.
-        Your API key, held in Android's encrypted storage.
+        Your API key, and your Fish Audio key if you set one, both held in Android's
+        encrypted storage.
+        Downloaded voice audio, if you asked for it — her fixed lines, as sound files.
 
         All of it lives in this app's private storage. Backup to the cloud and
         device-to-device transfer are both switched off, so none of it is copied
@@ -123,6 +133,13 @@ object LegalText {
 
         Lain also contacts DuckDuckGo when you ask her to search the web, sending
         only the search terms.
+
+        If you set up a Fish Audio voice, the text she is about to speak is sent to
+        Fish Audio to be turned into audio, using the key you gave. That is her words,
+        not yours, and it happens only when she speaks aloud. Their handling of it is
+        governed by their terms. Leave the key empty and nothing is sent: she uses the
+        voice already on your phone. Audio you have downloaded is played from the
+        phone and sent nowhere.
 
         Nothing else is transmitted. Not your contacts list, not your files, not your
         coordinates, and nothing at all about what you do on your phone when you have

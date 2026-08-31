@@ -1,5 +1,6 @@
 package com.lain.assistant.automation
 
+import android.app.KeyguardManager
 import android.app.PendingIntent
 import android.content.Intent
 import android.graphics.drawable.Icon
@@ -34,11 +35,28 @@ class VoiceInputTileService : TileService() {
         refresh()
     }
 
+    /**
+     * Starts the activity immediately, and only defers when the phone is locked.
+     *
+     * The permission to launch an activity from the shade is granted by the tap and
+     * does not last: it is attached to this click, and anything that returns to the
+     * looper before using it can find the grant gone. `unlockAndRun` does exactly
+     * that — it posts the block for later — so wrapping every click in it spent the
+     * grant on the common case, where the phone was not locked and there was nothing
+     * to unlock. That is the intermittent nothing-happens: same tap, same code, and
+     * whether it worked depended on timing the user cannot see or influence.
+     *
+     * Locked is the only case that genuinely needs deferring, so it is the only case
+     * that gets it.
+     */
     override fun onClick() {
         super.onClick()
-        // unlockAndRun because a tile is reachable from the lock screen, where an
-        // activity start would otherwise be dropped on the floor.
-        unlockAndRun { openLain() }
+        val keyguard = getSystemService(KeyguardManager::class.java)
+        if (keyguard?.isKeyguardLocked == true) {
+            unlockAndRun { openLain() }
+        } else {
+            openLain()
+        }
     }
 
     private fun openLain() {
@@ -53,7 +71,7 @@ class VoiceInputTileService : TileService() {
             this, 0, intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        runCatching {
+        val collapsed = runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 // The Intent overload was removed in Android 14 and throws
                 // UnsupportedOperationException; only the PendingIntent form works.
@@ -63,10 +81,30 @@ class VoiceInputTileService : TileService() {
                 @android.annotation.SuppressLint("StartActivityAndCollapseDeprecated")
                 startActivityAndCollapse(intent)
             }
-        }.onFailure {
-            // Shade refused to collapse for us; the activity start still stands on
-            // its own, and a tile that opens the app late beats one that does nothing.
-            runCatching { startActivity(intent) }
+        }.isSuccess
+
+        if (collapsed) return
+
+        // The fallback used to be startActivity(intent), which cannot work: this is a
+        // Service, and a background activity start from one is refused outright on
+        // Android 10 and up. It threw nothing and did nothing, so a failed tile looked
+        // identical to a tile nobody pressed.
+        //
+        // Sending the PendingIntent is the one route left that carries the app's own
+        // launch privilege rather than a Service's.
+        val sent = runCatching { pending.send() }.isSuccess
+        if (sent) return
+
+        // Both routes are gone. Say so on the tile itself, because the alternative is
+        // a control that silently does nothing and a user who concludes the app is
+        // broken — which, from where they are standing, it is.
+        runCatching {
+            qsTile?.let { tile ->
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    tile.subtitle = "Couldn't open — tap the app"
+                }
+                tile.updateTile()
+            }
         }
     }
 

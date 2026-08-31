@@ -25,6 +25,7 @@ class UserPreferencesRepository(private val context: Context) {
         val PROVIDER = stringPreferencesKey("provider")
         val MODEL_ID = stringPreferencesKey("model_id")
         val KOKORO_ENDPOINT = stringPreferencesKey("kokoro_endpoint")
+        val FISH_VOICE_ID = stringPreferencesKey("fish_voice_id")
         val MUTED = booleanPreferencesKey("muted")
         val OVERLAY_ENABLED = booleanPreferencesKey("overlay_enabled")
         val MODEL_FALLBACK = booleanPreferencesKey("model_fallback")
@@ -89,6 +90,21 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun saveKokoroEndpoint(url: String?) {
         context.dataStore.edit { prefs ->
             if (url.isNullOrBlank()) prefs.remove(Keys.KOKORO_ENDPOINT) else prefs[Keys.KOKORO_ENDPOINT] = url
+        }
+    }
+
+    /**
+     * Which Fish Audio voice to use, or blank for the model's default.
+     *
+     * Stored rather than hardcoded because the library is theirs and its ids are not
+     * ours to guess. It also keys the audio cache, so changing it correctly stops the
+     * old voice being replayed from disk.
+     */
+    val fishVoiceId: Flow<String> = context.dataStore.data.map { it[Keys.FISH_VOICE_ID] ?: "" }
+
+    suspend fun saveFishVoiceId(id: String) {
+        context.dataStore.edit { prefs ->
+            if (id.isBlank()) prefs.remove(Keys.FISH_VOICE_ID) else prefs[Keys.FISH_VOICE_ID] = id.trim()
         }
     }
 

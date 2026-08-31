@@ -19,7 +19,11 @@ import kotlinx.coroutines.launch
 
 /** Manual service locator — deliberately no DI framework, the object graph here is small and static. */
 class AppContainer(context: Context) {
-    private val appContext = context.applicationContext
+    /**
+     * Internal rather than private: the settings screen builds a voice engine and a
+     * voice pack of its own, and both need a Context that outlives the screen.
+     */
+    internal val appContext = context.applicationContext
 
     val userPreferencesRepository = UserPreferencesRepository(appContext)
     val memoryStore = MemoryStore(appContext)

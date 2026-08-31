@@ -30,5 +30,27 @@ class SecureKeyStore(context: Context) {
         prefs.edit().remove(keyFor(provider)).apply()
     }
 
+    /**
+     * The Fish Audio key, kept beside the model keys and under the same encryption.
+     *
+     * Its own accessor rather than a [Provider] entry because Fish Audio is not one:
+     * it synthesises speech, it never sees a conversation, and folding it into the
+     * provider enum would put a voice service in every list that means "the thing
+     * answering your questions".
+     */
+    fun saveVoiceKey(apiKey: String) {
+        prefs.edit().putString(VOICE_KEY, apiKey.trim()).apply()
+    }
+
+    fun getVoiceKey(): String? = prefs.getString(VOICE_KEY, null)?.takeIf { it.isNotBlank() }
+
+    fun clearVoiceKey() {
+        prefs.edit().remove(VOICE_KEY).apply()
+    }
+
     private fun keyFor(provider: Provider) = "api_key_${provider.name}"
+
+    private companion object {
+        const val VOICE_KEY = "api_key_FISH_AUDIO"
+    }
 }

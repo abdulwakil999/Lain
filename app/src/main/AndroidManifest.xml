@@ -118,6 +118,32 @@
             </intent-filter>
         </activity>
 
+        <!--
+            The assistant gesture. Declaring ACTION_ASSIST is what puts Lain in
+            Settings → Default apps → Digital assistant, which is the only way she can
+            become the app the power-button hold opens: an app cannot select itself.
+
+            exported because the system starts it from outside the app. It is a
+            forwarder with no UI and no state, and it discards the screenshot and
+            structured app data ACTION_ASSIST offers rather than accepting them.
+        -->
+        <activity
+            android:name=".AssistActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoDisplay"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:launchMode="singleInstance">
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VOICE_COMMAND" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
         <!-- Compact surface for the widget/tile/bubble/wake word: a message bar and
              recent messages over a translucent scrim, instead of the whole app. -->
         <activity

@@ -144,7 +144,10 @@ enum class TransportAction { PLAY, PAUSE, TOGGLE, NEXT, PREVIOUS, STOP }
 enum class IdentityQuestion {
     USER_NAME, USER_AGE, LAIN_NAME, APP_NAME, CAPABILITIES, NECIO,
     /** "who made you" — a fact about the world that no model has, so it is answered here. */
-    DEVELOPER
+    DEVELOPER,
+
+    /** "are you named after the anime" — she isn't, and a model will say she is. */
+    ANIME
 }
 
 enum class SmallTalkKind { GREETING, THANKS, HOW_ARE_YOU, GOODBYE, AFFIRMATION }
@@ -305,6 +308,13 @@ object FastRouter {
         // because the fast path carries an escape hatch — a model that decides it
         // needs the phone after all says so, and the caller falls through to the full
         // loop. A misroute costs one cheap request, never a wrong answer.
+        // A question about herself beats the conversational hedges, because the hedges
+        // exist for things a model knows better than the app does — and it never knows
+        // better about her own name, her developer, or what "necio" means. "Why are you
+        // called Lain" was reaching a model on the strength of the word "why", and the
+        // model answered with the anime. These are constants; they are answered here.
+        if (local is LocalIntent.Identity) return Route.Local(local)
+
         if (conversational.containsMatchIn(normalised)) return Route.Chat
 
         if (local != null) return Route.Local(local)
@@ -703,7 +713,11 @@ object FastRouter {
             LocalIntent.Identity(IdentityQuestion.USER_AGE)
 
         Regex("^(what('?s| is) )?your name\\??$").matches(t) || t == "who are you" ||
-            t == "what are you called" || t == "what should i call you" ->
+            t == "what are you called" || t == "what should i call you" ||
+            // Asking where the name is from is asking for the acronym, and is the
+            // other phrasing a model answers with the anime.
+            Regex("^where (does|did) (your|the) name come from\\??$").matches(t) ||
+            t == "why are you called lain" || t == "why lain" ->
             LocalIntent.Identity(IdentityQuestion.LAIN_NAME)
 
         Regex("^(what('?s| is) )?(the name of )?(this|your) app( called)?\\??$").matches(t) ||
@@ -730,6 +744,15 @@ object FastRouter {
             t == "who made this" || t == "who owns you" ||
             Regex("^what('?s| is) your (developer|creator)('?s)? name\\??$").matches(t) ->
             LocalIntent.Identity(IdentityQuestion.DEVELOPER)
+
+        // Serial Experiments Lain is all over any model's training data and her real
+        // origin is in none of it, so left alone she confirms the wrong answer with
+        // complete confidence. Checked before the plain name question, since these
+        // phrasings contain it.
+        (t.contains("serial experiment") || t.contains("anime") || t.contains("manga") ||
+            t.contains("named after") || t.contains("name from")) &&
+            Regex("\\b(you|your|lain|name)\\b").containsMatchIn(t) ->
+            LocalIntent.Identity(IdentityQuestion.ANIME)
 
         t == "what can you do" || t == "what are you able to do" || t == "help" ||
             t == "what can i ask you" || t == "what do you do" ->

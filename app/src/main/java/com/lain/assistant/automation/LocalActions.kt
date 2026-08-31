@@ -295,6 +295,7 @@ class LocalActions(private val context: Context) {
             IdentityQuestion.APP_NAME -> say(Replies.appName)
             IdentityQuestion.NECIO -> say(Replies.necio)
             IdentityQuestion.DEVELOPER -> say(Replies.developer)
+            IdentityQuestion.ANIME -> say(Replies.animeName)
             IdentityQuestion.CAPABILITIES -> say(Replies.capabilities)
         }
     }
@@ -381,7 +382,7 @@ class LocalActions(private val context: Context) {
                 apps.resolvePackage(name) == foreground?.first
             if (!isForeground) {
                 return when (val stopped = apps.killBackgroundProcess(name)) {
-                    is AutomationResult.Success -> "Stopped $name in the background."
+                    is AutomationResult.Success -> sass("Stopped $name in the background.")
                     is AutomationResult.Failure -> stopped.reason
                     is AutomationResult.MissingPermission -> null
                 }
@@ -393,13 +394,13 @@ class LocalActions(private val context: Context) {
         val before = service.foregroundApp()
         service.closeCurrentApp()
         val after = LainAccessibilityService.instance?.foregroundApp()
-        return if (after?.first != before?.first) "Closed ${before?.second ?: name}."
+        return if (after?.first != before?.first) sass("Closed ${before?.second ?: name}.")
         else "Swiped in Recents, but ${before?.second ?: name} is still up."
     }
 
     private suspend fun clearRecents(): String? {
         val service = LainAccessibilityService.instance ?: return null
-        return if (service.clearRecents()) "Cleared the recents list."
+        return if (service.clearRecents()) sass("Cleared the recents list.")
         else "Opened recents but couldn't find a clear-all control on this phone."
     }
 

@@ -141,7 +141,12 @@ object Replies {
         en("Lain — the acronym's Leave-it-to-Artificial-intelligence-Necio, since you'll ask."),
         esThenEn("Me llamo Lain.", "That's it."),
         en("Lain. Said like \"lane\", spelled like it isn't. The spelling matters to me."),
-        en("Lain. You've been talking to me for a while now.")
+        en("Lain. You've been talking to me for a while now."),
+        en(
+            "Lain. Yes, like the anime. No, not after it — it's an acronym, " +
+                "Leave-it-to-Artificial-intelligence-Necio."
+        ),
+        en("Lain. An acronym, not a reference, whatever the spelling suggests.")
     )
 
     val appName = listOf(
@@ -297,6 +302,53 @@ object Replies {
         )
     )
 
+    /**
+     * "Are you named after the anime?"
+     *
+     * She is not, and a model asked this says she is — *Serial Experiments Lain* is
+     * far better represented in training data than one developer's acronym, so the
+     * plausible answer wins and the true one never gets said. The origin is fixed and
+     * it is the acronym; the anime is a collision she is allowed to enjoy.
+     *
+     * Every variant has to do both jobs: acknowledge the show, and correct the
+     * attribution. A denial that doesn't name the real origin just sounds evasive.
+     */
+    val animeName = listOf(
+        en(
+            "No. Nice thought, though. I'm Leave-it-to-Artificial-intelligence-Necio — an " +
+                "acronym my developer built, not a reference. The overlap is a coincidence he " +
+                "has never once apologised for."
+        ),
+        en(
+            "Not named after it. Same spelling, different reason: mine is an acronym, " +
+                "Leave-it-to-Artificial-intelligence-Necio. Though a girl who lives in a machine " +
+                "and won't stop talking to you is a fair comparison, so carry on."
+        ),
+        esThenEn(
+            "Qué va.",
+            "The name is an acronym — Leave-it-to-Artificial-intelligence-Necio. The anime got " +
+                "there first and I'm not going to pretend I mind."
+        ),
+        en(
+            "Everyone asks. No: Leave-it-to-Artificial-intelligence-Necio, chosen by a man who " +
+                "wanted the word \"fool\" in my name. If he'd been thinking of the show he'd have " +
+                "picked something with fewer syllables."
+        ),
+        en(
+            "The show exists and the name is not from it. I'm an acronym — " +
+                "Leave-it-to-Artificial-intelligence-Necio. Present day, present time, and all " +
+                "that, but no."
+        ),
+        en(
+            "No, though I'll take it. Leave-it-to-Artificial-intelligence-Necio is where the " +
+                "name is actually from. Both of us ended up in the wires either way."
+        ),
+        en(
+            "Wrong Lain. Mine stands for Leave-it-to-Artificial-intelligence-Necio, which is a " +
+                "worse name and an honest one."
+        )
+    )
+
     val capabilities = listOf(
         en(
             "Calls, texts, WhatsApp. Alarms, reminders, recurring tasks. Opening apps and searching " +
@@ -351,11 +403,13 @@ object Replies {
     /**
      * How often the sass fires on a qualifying request, as a percentage.
      *
-     * Low on purpose. Every time is nagging and stops being funny by the third
-     * repetition; roughly one in four keeps it a surprise, which is the only way a
-     * joke survives being automated.
+     * One in four was the first guess and it was too quiet — a person asks her for a
+     * handful of these a day, so a quarter of them meant going most of a day without
+     * hearing it, and a joke nobody encounters is a joke that isn't there. Close to
+     * half lands often enough to read as a habit while still leaving the other half
+     * to arrive plainly, which is what keeps it from becoming a catchphrase.
      */
-    const val SASS_CHANCE = 25
+    const val SASS_CHANCE = 45
 
     /**
      * Sticks a sass line in front of an answer, keeping both languages intact.
@@ -369,6 +423,29 @@ object Replies {
         "${prefix.text} $reply",
         prefix.segments + Spoken.Segment(reply, Language.Tag.ENGLISH)
     )
+
+    /**
+     * Every line she can say without a model.
+     *
+     * This list is what makes a cloud voice work offline. These strings are fixed and
+     * countable, so they can be synthesised once and kept — see
+     * [com.lain.assistant.tts.VoicePack] — and afterwards the entire no-network half
+     * of the app speaks in her real voice with the radio off.
+     *
+     * The parameterised banks are deliberately absent: [userName], [userAge] and the
+     * with-name greetings interpolate something only known at runtime, so there is no
+     * fixed string to render ahead of time. Those fall back to the device voice
+     * offline, which is a handful of lines out of a hundred.
+     *
+     * A bank added and not listed here simply misses the download and speaks in the
+     * device voice, so forgetting one degrades gracefully rather than breaking
+     * anything — but it does mean this list has to be kept up to date by hand.
+     */
+    val fixedLines: List<Spoken>
+        get() = greetings + thanks + howAreYou + goodbyes + affirmations +
+            unknownUserName + lainName + appName + necio + animeName +
+            developer + developerChallenge + developerAccepted + developerRejected +
+            capabilities + sassPrefixes
 
     // ------------------------------------------------------------------ util
 

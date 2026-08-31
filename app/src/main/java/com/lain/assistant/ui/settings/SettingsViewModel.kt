@@ -14,6 +14,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import com.lain.assistant.tts.FishAudioTtsEngine
+import com.lain.assistant.tts.VoicePack
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 data class SettingsUiState(
@@ -25,6 +28,12 @@ data class SettingsUiState(
     val modelId: String? = null,
     val apiKey: String = "",
     val kokoroEndpoint: String = "",
+    val fishKey: String = "",
+    val fishVoiceId: String = "",
+    /** null while nothing is downloading. */
+    val voiceDownload: VoicePack.Progress? = null,
+    val voiceLinesHeld: Int = 0,
+    val voiceBytesHeld: Long = 0,
     val overlayEnabled: Boolean = false,
     val loaded: Boolean = false,
     val justSaved: Boolean = false,
@@ -78,6 +87,9 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             val modelId = container.userPreferencesRepository.selectedModelId.first()
             val apiKey = container.secureKeyStore.getApiKey(provider).orEmpty()
             val kokoroEndpoint = container.userPreferencesRepository.kokoroEndpoint.first().orEmpty()
+            val fishKey = container.secureKeyStore.getVoiceKey().orEmpty()
+            val fishVoiceId = container.userPreferencesRepository.fishVoiceId.first()
+            val pack = VoicePack(container.appContext)
             val overlayEnabled = container.userPreferencesRepository.isOverlayEnabled.first()
             val fallback = container.userPreferencesRepository.isModelFallbackEnabled.first()
             val broken = container.userPreferencesRepository.brokenModels.first()
@@ -91,6 +103,10 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
                     modelId = modelId,
                     apiKey = apiKey,
                     kokoroEndpoint = kokoroEndpoint,
+                    fishKey = fishKey,
+                    fishVoiceId = fishVoiceId,
+                    voiceLinesHeld = pack.heldCount(),
+                    voiceBytesHeld = pack.heldBytes(),
                     overlayEnabled = overlayEnabled,
                     modelFallback = fallback,
                     brokenModels = broken,
@@ -153,6 +169,71 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     }
     fun setApiKey(value: String) = _state.update { it.copy(apiKey = value, justSaved = false) }
     fun setKokoroEndpoint(value: String) = _state.update { it.copy(kokoroEndpoint = value, justSaved = false) }
+    fun setFishKey(value: String) = _state.update { it.copy(fishKey = value, justSaved = false) }
+    fun setFishVoiceId(value: String) = _state.update { it.copy(fishVoiceId = value, justSaved = false) }
+
+    /**
+     * Renders every fixed line once, so the voice keeps working with no signal.
+     *
+     * Saves the key and voice id first: someone who typed both and pressed download
+     * has plainly asked for both to be kept, and making them press Save separately is
+     * a step that exists only because the code was written that way.
+     */
+    fun downloadVoice() {
+        val s = _state.value
+        if (s.fishKey.isBlank() || s.voiceDownload != null) return
+
+        voiceJob?.cancel()
+        voiceJob = viewModelScope.launch {
+            container.secureKeyStore.saveVoiceKey(s.fishKey.trim())
+            container.userPreferencesRepository.saveFishVoiceId(s.fishVoiceId.trim())
+
+            val pack = VoicePack(container.appContext)
+            val engine = FishAudioTtsEngine(
+                container.appContext,
+                s.fishKey.trim(),
+                s.fishVoiceId.trim()
+            )
+            val voiceKey = s.fishVoiceId.trim().ifBlank { FishAudioTtsEngine.DEFAULT_VOICE_KEY }
+
+            pack.download(engine, voiceKey).collect { progress ->
+                _state.update {
+                    it.copy(
+                        voiceDownload = if (progress.finished) null else progress,
+                        voiceLinesHeld = pack.heldCount(),
+                        voiceBytesHeld = pack.heldBytes(),
+                        // Reported rather than swallowed: a partly-downloaded voice
+                        // still works, and the lines that failed will speak in the
+                        // device voice, which the user should hear about here rather
+                        // than notice later and wonder about.
+                        testResult = if (progress.finished && progress.failed > 0) {
+                            "Voice downloaded, but ${progress.failed} of ${progress.total} lines " +
+                                "wouldn't render. Those fall back to the device voice."
+                        } else if (progress.finished) {
+                            "Voice downloaded. She speaks offline now."
+                        } else {
+                            it.testResult
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    fun cancelVoiceDownload() {
+        voiceJob?.cancel()
+        voiceJob = null
+        _state.update { it.copy(voiceDownload = null) }
+    }
+
+    fun clearVoice() {
+        viewModelScope.launch {
+            VoicePack(container.appContext).clear()
+            _state.update { it.copy(voiceLinesHeld = 0, voiceBytesHeld = 0) }
+        }
+    }
+
+    private var voiceJob: Job? = null
 
     /**
      * Applied immediately rather than on Save — the bubble is a visible, running
@@ -217,6 +298,8 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             container.userPreferencesRepository.saveModelSelection(s.provider, modelId, s.infoFor(modelId))
             container.secureKeyStore.saveApiKey(s.provider, s.apiKey.trim())
             container.userPreferencesRepository.saveKokoroEndpoint(s.kokoroEndpoint.trim())
+            container.secureKeyStore.saveVoiceKey(s.fishKey.trim())
+            container.userPreferencesRepository.saveFishVoiceId(s.fishVoiceId.trim())
             _state.update { it.copy(justSaved = true) }
         }
     }

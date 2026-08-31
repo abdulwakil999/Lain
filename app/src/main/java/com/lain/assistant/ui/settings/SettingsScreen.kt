@@ -41,6 +41,7 @@ import com.lain.assistant.automation.OverlayBubbleService
 import com.lain.assistant.data.Gender
 import com.lain.assistant.data.Provider
 import com.lain.assistant.automation.QuickToggles
+import com.lain.assistant.automation.AssistantRole
 import com.lain.assistant.automation.Scheduler
 import com.lain.assistant.ui.common.PixelButton
 import com.lain.assistant.ui.common.PixelChoiceChip
@@ -188,7 +189,71 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             }
 
             Spacer(Modifier.height(24.dp))
+            SectionLabel("Lain's voice (Fish Audio)")
+            Text(
+                "Fish Audio runs on their servers, not the phone — nothing about it can be " +
+                    "installed here. What can be downloaded is the audio: every line she says " +
+                    "without a model gets rendered once and kept, so all of it works with no " +
+                    "signal afterwards. Replies that came from a model still need the network " +
+                    "they needed anyway.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = LainMuted
+            )
+            Spacer(Modifier.height(10.dp))
+            PixelTextField(state.fishKey, viewModel::setFishKey, "Fish Audio API key")
+            Spacer(Modifier.height(8.dp))
+            PixelTextField(state.fishVoiceId, viewModel::setFishVoiceId, "Voice ID (blank = default)")
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Pick a voice at fish.audio and paste its ID. No voice is chosen for you: the " +
+                    "library is theirs and its IDs change, so a hardcoded one would eventually " +
+                    "fail silently. Something low, dry and flat suits her.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = LainMuted
+            )
+
+            val download = state.voiceDownload
+            Spacer(Modifier.height(10.dp))
+            if (download != null) {
+                Text(
+                    "Downloading her voice — ${download.done} of ${download.total}" +
+                        if (download.failed > 0) ", ${download.failed} failed" else "",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = LainCream
+                )
+                Spacer(Modifier.height(8.dp))
+                PixelButton(text = "Stop", onClick = viewModel::cancelVoiceDownload)
+            } else {
+                Text(
+                    if (state.voiceLinesHeld > 0) {
+                        "${state.voiceLinesHeld} lines held, ${state.voiceBytesHeld / 1024} KB."
+                    } else {
+                        "Nothing downloaded yet — she'll use the phone's voice offline."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (state.voiceLinesHeld > 0) LainCream else LainMuted
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    PixelButton(
+                        text = "Download her voice",
+                        onClick = viewModel::downloadVoice,
+                        // Nothing to authenticate with is nothing to download.
+                        enabled = state.fishKey.isNotBlank(),
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (state.voiceLinesHeld > 0) {
+                        PixelButton(
+                            text = "Delete",
+                            onClick = viewModel::clearVoice,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+
             SectionLabel("Kokoro TTS endpoint (optional)")
+
             PixelTextField(state.kokoroEndpoint, viewModel::setKokoroEndpoint, "https://your-kokoro-server")
             Text(
                 "Leave blank to use the on-device Android voice.",
@@ -360,6 +425,34 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
                     else com.lain.assistant.legal.LegalText.TERMS,
                     style = MaterialTheme.typography.bodyMedium,
                     color = LainMuted
+                )
+            }
+
+            Spacer(Modifier.height(24.dp))
+            SectionLabel("The assistant key")
+            // Read from the system every time this screen appears, never remembered.
+            // The user can change their assistant in Settings without coming back
+            // here, and a cached "you're the assistant" would then be a lie.
+            var isAssistant by remember { mutableStateOf(AssistantRole.isLain(context)) }
+            LaunchedEffect(Unit) { isAssistant = AssistantRole.isLain(context) }
+
+            Text(
+                if (isAssistant) {
+                    "Lain is your assistant. Hold the power button, or whatever gesture your phone " +
+                        "uses, and she opens listening."
+                } else {
+                    "Android decides which app the power-button hold opens, and only you can change " +
+                        "it — an app is not allowed to make itself the assistant. Lain is in the list " +
+                        "now; pick her there."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (isAssistant) LainCream else LainMuted
+            )
+            if (!isAssistant) {
+                Spacer(Modifier.height(8.dp))
+                PixelButton(
+                    text = "Open the assistant picker",
+                    onClick = { AssistantRole.openPicker(context) }
                 )
             }
 

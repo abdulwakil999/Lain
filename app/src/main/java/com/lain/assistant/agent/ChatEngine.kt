@@ -197,7 +197,12 @@ class ChatEngine(
             _state.update {
                 it.copy(profile = prefs.userProfile.first(), isMuted = prefs.isMuted.first())
             }
-            ttsEngine = TtsEngineProvider.create(appContext, prefs.kokoroEndpoint.first()).also { engine ->
+            ttsEngine = TtsEngineProvider.create(
+                appContext,
+                kokoroEndpoint = prefs.kokoroEndpoint.first(),
+                fishKey = keyStore.getVoiceKey(),
+                fishVoiceId = prefs.fishVoiceId.first()
+            ).also { engine ->
                 speaker = StreamingSpeaker(engine, scope) { speaking ->
                     _state.update { it.copy(isSpeaking = speaking) }
                 }

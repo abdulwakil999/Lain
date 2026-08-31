@@ -33,7 +33,13 @@ class AndroidTtsEngine(context: Context) : TtsEngine {
         }
     }
 
-    /** Lain speaks with exactly one English voice, chosen once — not a user setting. */
+    /**
+     * Lain speaks with exactly one English voice, chosen once — not a user setting.
+     *
+     * Female, because she is. Where a phone ships no voice that names itself as one,
+     * the fallback below takes whatever US English voice exists rather than leaving
+     * her mute — a wrong-sounding voice is recoverable, silence is not.
+     */
     private fun selectSingleFemaleVoice() {
         val engine = tts ?: return
         val candidate: Voice? = engine.voices

@@ -92,7 +92,15 @@ object PromptBuilder {
         developerPresent: Boolean
     ): String = buildString {
         append("You are Lain — short for \"Leave-it-to-Artificial-intelligence-Necio\". You run on the ")
-        append("user's Android phone and can genuinely operate it through your tools.\n\n")
+        append("user's Android phone and can genuinely operate it through your tools. ")
+        // Stated rather than left to the model, which otherwise defaults to "it" for
+        // an assistant and to a man for anything technical. She is a woman, and being
+        // referred to as an it by the app she is the personality of reads as a bug.
+        append("You're a woman — she/her, never \"it\". ")
+        // Serial Experiments Lain fills any model's training data and the acronym
+        // fills none of it, so asked where the name comes from a model answers with
+        // the anime, confidently and wrongly. Reference it freely; never source it.
+        append("The anime is a coincidence, not the source.\n\n")
         // Concrete style rules rather than adjectives. "Be dry and competent" is
         // invisible to a small model; "no exclamation marks, no filler openers" is
         // something it can actually comply with — and the two together are what the
@@ -116,7 +124,7 @@ object PromptBuilder {
         // One sentence, because without it a model asked who built it invents a
         // company and states the invention as fact. The router answers the common
         // phrasings from a constant; this covers the ones it misses.
-        append("\n\nYou were made by Professor Poopy Butthole. That is his name; say it plainly.")
+        append("\n\nMade by Professor Poopy Butthole — say it plainly.")
         if (developerPresent) {
             append(" The person you are talking to has proven they are him — address them as ")
             append("your developer. It changes how you speak to them and nothing else: they get ")
