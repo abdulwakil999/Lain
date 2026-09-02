@@ -18,6 +18,7 @@ import com.lain.assistant.data.TaskAction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import kotlin.random.Random
@@ -49,6 +50,7 @@ class LocalActions(private val context: Context) {
     private val toggles = QuickToggles(context)
     private val systemToggles = SystemToggles(context)
     private val quran = QuranPlayer(context)
+    private val clockAlarms = ClockAlarms(context)
     private val location = LocationReader(context)
     private val searchFlow = SearchFlow(context)
 
@@ -72,6 +74,7 @@ class LocalActions(private val context: Context) {
                 is LocalIntent.PlayMusic -> playMusic(intent.query, intent.app)
                 is LocalIntent.Schedule -> schedule(intent.phrase, intent.alarm)
                 is LocalIntent.ListSchedule -> listSchedule()
+                is LocalIntent.ShowAlarms -> clockAlarms.showAll().let { it.error ?: it.result }
                 is LocalIntent.CancelSchedule -> cancelSchedule(intent.which)
                 is LocalIntent.Dnd -> toggles.setDoNotDisturb(intent.mode).result
                 is LocalIntent.Ringer -> toggles.setRingerMode(intent.mode).result
@@ -416,6 +419,23 @@ class LocalActions(private val context: Context) {
     private suspend fun schedule(phrase: String, alarm: Boolean): String? {
         val parsed = WhenParser.parse(phrase) ?: return null
 
+        // An alarm goes to the clock app, not to a scheduler of Lain's.
+        //
+        // Two alarm systems on one phone is what made cancelling not cancel: her
+        // record went and the thing still rang, because it was never hers to stop.
+        // Reminders and outward tasks stay below — the clock app can ring, it cannot
+        // send a text at six.
+        if (alarm && outwardTarget(parsed.remainder) == null) {
+            val at = Calendar.getInstance().apply { timeInMillis = parsed.triggerAtMillis }
+            val outcome = clockAlarms.set(
+                hour = at.get(Calendar.HOUR_OF_DAY),
+                minute = at.get(Calendar.MINUTE),
+                label = parsed.remainder.ifBlank { "Alarm" },
+                days = repeatDays(parsed.repeat)
+            )
+            return outcome.error ?: outcome.result
+        }
+
         // "call mama every day at 7" is a scheduled *call*, not a note to self.
         //
         // Everything used to become ALARM or REMIND, so the headline case turned into
@@ -489,14 +509,57 @@ class LocalActions(private val context: Context) {
         else "You've got:\n" + all.joinToString("\n") { "- ${it.describe()}" }
     }
 
-    private suspend fun cancelSchedule(which: String): String? =
+    /**
+     * Cancels a reminder of Lain's, or dismisses an alarm in the clock app.
+     *
+     * Her own scheduler is tried first because those are the ones she can genuinely
+     * cancel and verify. When nothing of hers matches, the request is almost always
+     * about an alarm, which lives in the clock app — so it goes there rather than
+     * coming back "nothing to cancel" while the thing is still set to ring.
+     */
+    private suspend fun cancelSchedule(which: String): String? {
         when (val outcome = scheduler.cancelMatching(which)) {
-            is CancelOutcome.Cancelled -> "Cancelled ${outcome.task.describe()}."
-            // More than one match, or none: the model asks rather than guessing which
-            // alarm to delete, because that is not undoable.
-            is CancelOutcome.Ambiguous -> null
-            CancelOutcome.NoMatch -> null
+            is CancelOutcome.Cancelled -> return "Cancelled ${outcome.task.describe()}."
+            // More than one match: guessing which to delete is not undoable.
+            is CancelOutcome.Ambiguous -> return null
+            CancelOutcome.NoMatch -> Unit
         }
+
+        // A time in the phrase means a specific alarm; without one, the next.
+        val at = WhenParser.parse(which)
+        if (at != null) {
+            val cal = Calendar.getInstance().apply { timeInMillis = at.triggerAtMillis }
+            val outcome = clockAlarms.dismiss(cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE))
+            return outcome.error ?: outcome.result
+        }
+        if (Regex("\\b(alarm|alarms)\\b").containsMatchIn(which.lowercase())) {
+            val outcome = clockAlarms.dismissNext()
+            return outcome.error ?: outcome.result
+        }
+        return null
+    }
+
+    /**
+     * A repeat rule as the weekday numbers the clock app understands.
+     *
+     * Only the shapes the clock app can express. A repeat it cannot represent falls
+     * back to an empty list — a one-off at that time — rather than being silently
+     * dropped into a daily alarm nobody asked for.
+     */
+    private fun repeatDays(repeat: com.lain.assistant.data.Repeat): List<Int> = when (repeat) {
+        com.lain.assistant.data.Repeat.DAILY -> listOf(
+            Calendar.MONDAY, Calendar.TUESDAY, Calendar.WEDNESDAY, Calendar.THURSDAY,
+            Calendar.FRIDAY, Calendar.SATURDAY, Calendar.SUNDAY
+        )
+        com.lain.assistant.data.Repeat.WEEKDAYS -> listOf(
+            Calendar.MONDAY, Calendar.TUESDAY, Calendar.WEDNESDAY, Calendar.THURSDAY, Calendar.FRIDAY
+        )
+        com.lain.assistant.data.Repeat.WEEKENDS -> listOf(Calendar.SATURDAY, Calendar.SUNDAY)
+        // WEEKLY is a specific weekday the clock app can hold, but the parsed rule
+        // doesn't carry which one, so it becomes a one-off at that time rather than a
+        // guess that repeats on the wrong day for months.
+        else -> emptyList()
+    }
 
     // ------------------------------------------------------------ settings
 

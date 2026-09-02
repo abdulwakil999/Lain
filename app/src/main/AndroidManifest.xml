@@ -44,6 +44,13 @@
         tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
+    <!--
+        Setting alarms in the phone's own clock app. A normal permission, granted at
+        install: no dialog, no special access. It is what lets an alarm land where the
+        user actually looks for alarms rather than in a second system inside Lain.
+    -->
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+
     <!-- Lets a scheduled task raise its own screen when the phone is locked or the
          screen is off. A plain activity start from a receiver is refused on Android
          10+, which is why alarms fired on some phones and not others. -->

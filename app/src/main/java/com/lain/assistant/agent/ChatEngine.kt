@@ -684,7 +684,8 @@ class ChatEngine(
 
         // Answered a question or said something back. Nothing changed.
         is LocalIntent.Clock, is LocalIntent.Battery, is LocalIntent.ReadScreen,
-        is LocalIntent.ListSchedule, is LocalIntent.Identity, is LocalIntent.SmallTalk,
+        is LocalIntent.ListSchedule, is LocalIntent.ShowAlarms,
+        is LocalIntent.Identity, is LocalIntent.SmallTalk,
         is LocalIntent.WhereAmI, is LocalIntent.Calculate, is LocalIntent.CloseSelf,
         is LocalIntent.DeveloperClaim, is LocalIntent.DeveloperAnswer -> null
     }

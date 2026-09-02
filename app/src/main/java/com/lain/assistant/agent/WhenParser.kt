@@ -118,17 +118,29 @@ object WhenParser {
             if (hour > 23) return null
             return Clock(applyMeridiem(hour, m.groupValues[2], t), 0)
         }
-        // "at 7", with no am/pm — the "at" is required so a bare number in
-        // "remind me about room 7" isn't mistaken for a time.
-        Regex("\\bat\\s+(\\d{1,2})\\b").find(t)?.let { m ->
+        // "2 o'clock", "7 oclock", "2 o clock". Checked before the bare-number rule
+        // because "o'clock" is itself the proof that the number is a time — and
+        // without this the whole phrase parsed as nothing at all, the local path gave
+        // up, and the model was left to invent an hour. It reliably invented morning.
+        Regex("\\b(\\d{1,2})\\s*o'?\\s*clock\\b").find(t)?.let { m ->
+            val hour = m.groupValues[1].toIntOrNull() ?: return null
+            if (hour > 23) return null
+            return Clock(applyMeridiem(hour, "", t), 0)
+        }
+        // "at 7", "for 7" — a preposition is required so a bare number in
+        // "remind me about room 7" isn't mistaken for a time. "For" belongs here as
+        // much as "at": nobody says "set an alarm at 7" as often as "for 7".
+        Regex("\\b(?:at|for)\\s+(\\d{1,2})\\b").find(t)?.let { m ->
             val hour = m.groupValues[1].toIntOrNull() ?: return null
             if (hour > 23) return null
             return Clock(applyMeridiem(hour, "", t), 0)
         }
         // "at seven", "at midnight", "at noon".
-        WORD_NUMBERS.entries.firstOrNull { Regex("\\b(at\\s+)?${it.key}\\b").containsMatchIn(t) }?.let { (word, hour) ->
+        WORD_NUMBERS.entries.firstOrNull { Regex("\\b((at|for)\\s+)?${it.key}\\b").containsMatchIn(t) }?.let { (word, hour) ->
             if (word == "midnight" || word == "noon" || word == "midday") return Clock(hour, 0)
-            if (!t.contains("at $word")) return null
+            val introduced = t.contains("at $word") || t.contains("for $word") ||
+                Regex("\\b$word\\s*o'?\\s*clock\\b").containsMatchIn(t)
+            if (!introduced) return null
             return Clock(applyMeridiem(hour, "", t), 0)
         }
         return null
@@ -143,9 +155,26 @@ object WhenParser {
      * "meet at 3" almost never means three in the morning.
      */
     private fun applyMeridiem(hour: Int, marker: String, whole: String): Int {
-        val pm = marker.startsWith("p") || whole.contains("evening") || whole.contains("tonight") ||
+        // The marker is whatever sat directly against the number, and often nothing
+        // does: "2 o'clock pm" and "half seven pm" both put words in between. So a
+        // standalone am/pm anywhere in the phrase counts too. Without this, saying pm
+        // and being given the morning was not a misreading — the pm was never read.
+        val looseP = Regex("\\bp\\.?m\\.?\\b").containsMatchIn(whole)
+        val looseA = Regex("\\ba\\.?m\\.?\\b").containsMatchIn(whole)
+
+        // A marker written against the number settles it outright. Everything else —
+        // a stray "pm" further along, or a word like "tonight" — only gets a say when
+        // nothing explicit was said, or "7am tonight" comes out as seven in the
+        // evening on the strength of a word the user used to mean "later today".
+        val explicitPm = marker.startsWith("p")
+        val explicitAm = marker.startsWith("a")
+
+        val contextPm = looseP || whole.contains("evening") || whole.contains("tonight") ||
             whole.contains("afternoon")
-        val am = marker.startsWith("a") || whole.contains("morning")
+        val contextAm = looseA || whole.contains("morning")
+
+        val pm = explicitPm || (!explicitAm && contextPm)
+        val am = explicitAm || (!explicitPm && contextAm)
         return when {
             hour == 12 && am -> 0
             hour == 12 -> 12

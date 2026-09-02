@@ -76,6 +76,9 @@ sealed class LocalIntent {
     /** "what alarms have I got", "list my reminders". */
     object ListSchedule : LocalIntent()
 
+    /** "show my alarms" — opens the clock app, the only place the real list exists. */
+    object ShowAlarms : LocalIntent()
+
     /** "cancel my 7am alarm". */
     data class CancelSchedule(val which: String) : LocalIntent()
 
@@ -421,7 +424,7 @@ object FastRouter {
             // Scheduling is checked before timer(), which only understands delays;
             // "set an alarm for 2:30" is a clock time and would otherwise fall
             // through to the model.
-            ?: listSchedule(t) ?: cancelSchedule(t) ?: schedule(t) ?: timer(t)
+            ?: showAlarms(t) ?: listSchedule(t) ?: cancelSchedule(t) ?: schedule(t) ?: timer(t)
             // Search before the plain app launcher: "open chrome and search X" names an
             // app but is not an app launch, and going through the model for it cost
             // five round trips and stalled halfway.
@@ -793,6 +796,20 @@ object FastRouter {
             t == "soy tu desarrollador" || t == "yo te hice"
 
         return if (claim) LocalIntent.DeveloperClaim else null
+    }
+
+    /**
+     * "Show my alarms", "open my alarms".
+     *
+     * Distinct from listing her own reminders. Android publishes no way to read the
+     * clock app's alarms, so the honest answer to "what alarms have I got" is to open
+     * the list rather than recite one that may not match what will actually ring.
+     */
+    private fun showAlarms(t: String): LocalIntent? = when {
+        Regex("^(show|open|see|check)( me)? (my )?alarms?$").matches(t) ||
+            t == "what alarms do i have" || t == "what alarms have i got" ||
+            t == "my alarms" || t == "list my alarms" -> LocalIntent.ShowAlarms
+        else -> null
     }
 
     // ----------------------------------------------------------- power state

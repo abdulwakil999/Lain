@@ -88,6 +88,7 @@ class ToolDispatcher(context: Context) {
     private val brightness = com.lain.assistant.automation.ScreenBrightness(appContext)
     private val actionLog = com.lain.assistant.data.ActionLog(appContext)
     private val calendar = com.lain.assistant.automation.CalendarAccess(appContext)
+    private val clockAlarms = com.lain.assistant.automation.ClockAlarms(appContext)
     private val email = com.lain.assistant.automation.EmailComposer(appContext)
     private val channels = com.lain.assistant.network.CommunityChannels(
         com.lain.assistant.data.StoredChannelCredentials(com.lain.assistant.data.SecureKeyStore(appContext))
@@ -412,6 +413,7 @@ class ToolDispatcher(context: Context) {
 
         "schedule_task" -> scheduleTask(args)
         "list_scheduled_tasks" -> listScheduled()
+        "show_alarms" -> clockAlarms.showAll()
         "cancel_scheduled_task" -> cancelScheduled(args.str("which"))
 
         // ---------------------------------------------- device toggles
@@ -749,6 +751,35 @@ class ToolDispatcher(context: Context) {
             ?.let { runCatching { Repeat.valueOf(it.uppercase()) }.getOrNull() }
             ?: parsed.repeat
 
+        // An alarm belongs to the clock app, wherever the request came from.
+        //
+        // Routed here as well as on the local path, or the model would quietly rebuild
+        // the second alarm system this change exists to remove — and the user would be
+        // back to alarms that cannot be cancelled because they were never the clock's.
+        if (action == TaskAction.ALARM && args.str("target").isBlank()) {
+            val at = java.util.Calendar.getInstance().apply { timeInMillis = parsed.triggerAtMillis }
+            return clockAlarms.set(
+                hour = at.get(java.util.Calendar.HOUR_OF_DAY),
+                minute = at.get(java.util.Calendar.MINUTE),
+                label = label.ifBlank { parsed.remainder.ifBlank { "Alarm" } },
+                days = when (repeat) {
+                    Repeat.DAILY -> listOf(
+                        java.util.Calendar.SUNDAY, java.util.Calendar.MONDAY,
+                        java.util.Calendar.TUESDAY, java.util.Calendar.WEDNESDAY,
+                        java.util.Calendar.THURSDAY, java.util.Calendar.FRIDAY,
+                        java.util.Calendar.SATURDAY
+                    )
+                    Repeat.WEEKDAYS -> listOf(
+                        java.util.Calendar.MONDAY, java.util.Calendar.TUESDAY,
+                        java.util.Calendar.WEDNESDAY, java.util.Calendar.THURSDAY,
+                        java.util.Calendar.FRIDAY
+                    )
+                    Repeat.WEEKENDS -> listOf(java.util.Calendar.SATURDAY, java.util.Calendar.SUNDAY)
+                    else -> emptyList()
+                }
+            )
+        }
+
         val target = args.str("target")
         val needsTarget = action in setOf(
             TaskAction.CALL, TaskAction.SMS, TaskAction.WHATSAPP, TaskAction.OPEN_APP
@@ -850,10 +881,26 @@ class ToolDispatcher(context: Context) {
                     outcome.candidates.joinToString("\n") { "- ${it.describe()}" } +
                     "\nAsk the user which one."
             )
-            CancelOutcome.NoMatch -> ToolResult.fail(
-                FailureKind.INVALID_INPUT,
-                "Nothing scheduled matches \"$which\". Call list_scheduled_tasks to see what's set."
-            )
+            // Nothing of Lain's matches, so it is almost certainly an alarm — those
+            // live in the clock app now. Coming back "nothing to cancel" while the
+            // thing is still set to ring is the bug this replaces.
+            CancelOutcome.NoMatch -> {
+                val at = WhenParser.parse(which)
+                when {
+                    at != null -> {
+                        val cal = java.util.Calendar.getInstance().apply { timeInMillis = at.triggerAtMillis }
+                        clockAlarms.dismiss(
+                            cal.get(java.util.Calendar.HOUR_OF_DAY),
+                            cal.get(java.util.Calendar.MINUTE)
+                        )
+                    }
+                    which.contains("alarm", ignoreCase = true) -> clockAlarms.dismissNext()
+                    else -> ToolResult.fail(
+                        FailureKind.INVALID_INPUT,
+                        "Nothing scheduled matches \"$which\". Call list_scheduled_tasks to see what's set."
+                    )
+                }
+            }
         }
 
     /**
