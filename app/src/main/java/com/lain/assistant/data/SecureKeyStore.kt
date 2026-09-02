@@ -50,6 +50,24 @@ class SecureKeyStore(context: Context) {
 
     private fun keyFor(provider: Provider) = "api_key_${provider.name}"
 
+    /**
+     * Credentials for the channels that publish a real API.
+     *
+     * Encrypted alongside the model keys and never leaving the device except to the
+     * service they belong to. Kept as free-form named slots rather than typed fields
+     * so adding a platform later is a string, not a schema change.
+     */
+    fun saveChannel(slot: String, value: String) {
+        prefs.edit().putString("channel_$slot", value.trim()).apply()
+    }
+
+    fun channel(slot: String): String? =
+        prefs.getString("channel_$slot", null)?.takeIf { it.isNotBlank() }
+
+    fun clearChannel(slot: String) {
+        prefs.edit().remove("channel_$slot").apply()
+    }
+
     private companion object {
         const val VOICE_KEY = "api_key_FISH_AUDIO"
     }

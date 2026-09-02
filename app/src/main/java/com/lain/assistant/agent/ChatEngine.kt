@@ -181,6 +181,7 @@ class ChatEngine(
     private val working = WorkingMemory()
     private val localActions = LocalActions(appContext)
     private val actionLog = com.lain.assistant.data.ActionLog(appContext)
+    private val skills = com.lain.assistant.data.SkillStore(appContext)
 
     /** The irreversible action waiting on the user, if any. */
     private var pendingConfirmation: PendingConfirmation? = null
@@ -491,6 +492,43 @@ class ChatEngine(
         val route = trace.time("route") { FastRouter.route(message) }
         trace.route = route::class.simpleName ?: "unknown"
 
+        // Checked here rather than in the router because it needs the store: only a
+        // skill that exists can be forgotten, and that is the one thing that tells
+        // "forget the wind down skill" apart from "forget my birthday".
+        activeJob = scope.launch {
+            val forgotten = forgetSkillIfAsked(message)
+            if (forgotten != null) {
+                val cid = ensureConversation()
+                conversations.append(
+                    MessageEntity(conversationId = cid, role = "user", content = message)
+                )
+                finishTurn(cid, forgotten, usedModel = "Lain (on-device)", fellBack = false)
+            } else {
+                continueTurn(message, outbound, messageId, route, attached, trace)
+            }
+        }
+        return
+    }
+
+    /**
+     * The rest of a turn, once it is settled that no skill is being forgotten.
+     *
+     * Split out only because that check needs a database read and everything above it
+     * is synchronous; the ordering is the point, not the shape.
+     */
+    private suspend fun continueTurn(
+        message: String,
+        outbound: String,
+        messageId: String,
+        route: Route,
+        attached: List<Attachment>,
+        trace: Trace.Turn
+    ) {
+        if (route is Route.LearnSkill) {
+            activeJob = scope.launch { learnSkill(route.name, route.steps, message) }
+            return
+        }
+
         if (route is Route.Local) {
             activeJob = scope.launch { runLocal(route.intent, message, trace) }
             return
@@ -651,6 +689,40 @@ class ChatEngine(
         is LocalIntent.DeveloperClaim, is LocalIntent.DeveloperAnswer -> null
     }
 
+    /**
+     * Files a taught skill and says back what was understood.
+     *
+     * Reading it back is the whole safeguard. A skill is invoked by name weeks later,
+     * and a misparse discovered then is indistinguishable from Lain being broken —
+     * whereas one shown immediately is corrected by saying it again.
+     */
+    private suspend fun learnSkill(name: String, steps: String, original: String) {
+        val cid = ensureConversation()
+        conversations.append(MessageEntity(conversationId = cid, role = "user", content = original))
+
+        val taught = skills.teach(name = name, steps = steps)
+        val reply = if (taught == null) {
+            "Couldn't save that one — I need a name and something to do, separated by a comma or a colon."
+        } else {
+            "Learned \"$name\". Say it and I'll do: ${taught.steps}"
+        }
+        finishTurn(cid, reply, usedModel = "Lain (on-device)", fellBack = false)
+    }
+
+    /**
+     * Whether this message is asking her to forget a skill she actually has.
+     *
+     * Checked against the store rather than on the phrasing alone: "forget my
+     * birthday" is a memory operation and "forget the wind down skill" is this one,
+     * and the only reliable difference is whether a skill by that name exists.
+     */
+    private suspend fun forgetSkillIfAsked(message: String): String? {
+        val name = SkillTeacher.parseForget(message) ?: return null
+        val skill = skills.byName(name) ?: return null
+        skills.delete(skill.id)
+        return "Forgotten \"${skill.name}\". You'll have to teach me again."
+    }
+
     private suspend fun runLocal(intent: LocalIntent, message: String, trace: Trace.Turn) {
         try {
             val reply = trace.time("local_action") { localActions.execute(intent) }
@@ -730,6 +802,27 @@ class ChatEngine(
         // Assemble context fresh each turn rather than growing a list forever.
         val tools = ToolDefinitions.forCapabilities(caps, accessibilityReady)
 
+        // A skill the user taught, if this message asked for one.
+        //
+        // Injected as an extra instruction rather than executed by a runner of its
+        // own, and that is the design rather than a shortcut. A skill is stored as the
+        // user's own words, so it stays runnable by whatever Lain can do later rather
+        // than by whatever she could do the day it was written — and handing those
+        // words to the same loop that handles everything else means a skill gets the
+        // tools, the confirmations and the honesty rules for free.
+        val skill = trace.time("skill_match") { skills.match(userMessage) }
+        val skillBrief = skill?.let { matched ->
+            val steps = skills.expand(matched)
+            actionLog.record(
+                action = "skill",
+                detail = matched.name,
+                succeeded = true,
+                outcome = "Ran the \"${matched.name}\" skill",
+                goal = userMessage
+            )
+            PromptBuilder.skillRule(matched.name, steps)
+        }
+
         val relevantMemories = memory.retrieveRelevant(userMessage, caps.memoryBudget)
         val summary = conversations.summaryOf(cid)
         val systemPrompt = PromptBuilder.build(
@@ -743,7 +836,7 @@ class ChatEngine(
             includeStudy = route is Route.Study,
             developerPresent = prefs.isDeveloperKnown.first(),
             omittedTools = ToolDefinitions.omittedByBudget(caps, accessibilityReady)
-        )
+        ) + skillBrief.orEmpty()
 
         val history = buildModelHistory(cid, caps)
 

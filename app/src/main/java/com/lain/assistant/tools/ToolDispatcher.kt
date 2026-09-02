@@ -87,6 +87,11 @@ class ToolDispatcher(context: Context) {
     private val conversations = com.lain.assistant.data.ConversationStore(appContext)
     private val brightness = com.lain.assistant.automation.ScreenBrightness(appContext)
     private val actionLog = com.lain.assistant.data.ActionLog(appContext)
+    private val calendar = com.lain.assistant.automation.CalendarAccess(appContext)
+    private val email = com.lain.assistant.automation.EmailComposer(appContext)
+    private val channels = com.lain.assistant.network.CommunityChannels(
+        com.lain.assistant.data.StoredChannelCredentials(com.lain.assistant.data.SecureKeyStore(appContext))
+    )
     private val json = Json { ignoreUnknownKeys = true }
 
     /** Set by the engine so memories can record where they were learned. */
@@ -520,6 +525,42 @@ class ToolDispatcher(context: Context) {
         }
 
         "recall" -> recall(args.str("query"))
+
+        // ------------------------------------------------------ calendar
+        "read_calendar" -> {
+            val days = args.num("days_ahead").toInt().coerceIn(1, 60)
+            val now = System.currentTimeMillis()
+            calendar.events(now, now + days * 86_400_000L)
+        }
+
+        "add_calendar_event" -> {
+            val start = WhenParser.parse(args.str("when"))?.triggerAtMillis
+            when {
+                start == null -> ToolResult.fail(
+                    FailureKind.INVALID_INPUT,
+                    "Couldn't work out when \"${args.str("when")}\" is. Give a day and a time."
+                )
+                // Without the write permission the event is not lost — it goes to the
+                // calendar app with everything filled in, and the user presses save.
+                !calendar.canWrite() -> calendar.composeEvent(
+                    args.str("title"), start, args.num("duration_minutes").toInt().takeIf { it > 0 } ?: 60,
+                    args.str("location")
+                )
+                else -> calendar.addEvent(
+                    args.str("title"), start, args.num("duration_minutes").toInt().takeIf { it > 0 } ?: 60,
+                    args.str("location")
+                )
+            }
+        }
+
+        // --------------------------------------------------------- email
+        "compose_email" -> email.compose(args.str("to"), args.str("subject"), args.str("body"))
+
+        // ------------------------------------------------------ channels
+        "post_to_reddit" -> channels.postToReddit(
+            args.str("subreddit"), args.str("title"), args.str("body")
+        )
+        "post_to_discord" -> channels.postToDiscord(args.str("channel_id"), args.str("message"))
 
         else -> ToolResult.fail(FailureKind.INVALID_INPUT, "Unknown tool: $name")
     }

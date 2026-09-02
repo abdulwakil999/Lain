@@ -108,3 +108,43 @@ data class ActionLogEntity(
     /** The user's request this was part of. */
     val goal: String
 )
+
+/**
+ * Something Lain was taught to do, kept for good.
+ *
+ * The difference between an assistant that is useful and one that gets *more* useful
+ * is whether last week's explanation is still worth anything today. Everything else
+ * she holds is a fact; this is a procedure — "when I say wind down, put the phone on
+ * Do Not Disturb, drop the brightness and set an alarm for seven" — taught once and
+ * hers from then on.
+ *
+ * [steps] is kept as the user's own words rather than compiled into anything. A
+ * parsed representation would be faster and would rot: it can only encode the
+ * actions that existed the day it was written, and the whole point is that a skill
+ * outlives the version of the app that learned it. Plain text stays executable by
+ * whatever Lain can do next year.
+ *
+ * [uses] and [lastUsedAt] are what let the useful ones rise and the abandoned ones be
+ * found and dropped, so a hundred skills do not become a hundred things to search.
+ */
+@Entity(tableName = "skills", indices = [Index("name"), Index("lastUsedAt")])
+data class SkillEntity(
+    @PrimaryKey val id: String = UUID.randomUUID().toString(),
+    /** What it is called, lowercased. The handle the user and other skills refer to. */
+    val name: String,
+    /** Phrases that should invoke it, newline-separated. The name always counts. */
+    val triggers: String,
+    /** The procedure, in the user's own words. */
+    val steps: String,
+    val createdAt: Long = System.currentTimeMillis(),
+    val lastUsedAt: Long = 0,
+    val uses: Int = 0,
+    /**
+     * True when every step resolved to something Lain can do with no model.
+     *
+     * Set when the skill is taught and re-checked when it runs. A skill that is
+     * entirely local runs offline and instantly, which is worth knowing about rather
+     * than discovering by trying.
+     */
+    val fullyLocal: Boolean = false
+)

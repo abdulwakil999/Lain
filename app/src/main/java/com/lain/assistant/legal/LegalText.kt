@@ -29,8 +29,9 @@ object LegalText {
      * 3 — a log of actions taken is now kept on the device, and facts stated in
      *     conversation are saved without being asked to remember them.
      * 4 — an optional voice service (Fish Audio), which receives the text she speaks.
+     * 5 — the calendar, taught skills, and optional Reddit and Discord posting.
      */
-    const val VERSION = 4
+    const val VERSION = 5
 
     /**
      * What changed since the last version, shown above the documents on the re-consent
@@ -65,6 +66,21 @@ object LegalText {
         you could not do before. It's in Memoria, under "Historial", with a button
         that clears it.
 
+        Your calendar. Lain can read what's coming up, and add events if you let her.
+        It goes through the calendar already on your phone, so it works offline and no
+        calendar data is sent anywhere. Reading and adding are separate permissions
+        and either can be refused on its own.
+
+        Skills she keeps. You can teach her a procedure — "when I say wind down, do
+        this" — and it stays on the phone for good. Skills are listed in Memoria under
+        "Habilidades" and delete like anything else there.
+
+        Reddit and Discord, if you set them up. Nothing is sent to either until you
+        enter credentials in Settings, and every post is confirmed with you first.
+        Instagram, Facebook, X and Threads are not supported: posting as you needs a
+        business account and their review process, and no key you can enter changes
+        that.
+
         A voice, if you want one. Lain can now speak with a voice from Fish Audio
         instead of the phone's built-in one. It is off unless you enter a key, and it
         is a service on the internet, not something running on your phone: what she is
@@ -98,8 +114,9 @@ object LegalText {
         A log of actions she has taken: what the action was, what it was aimed at,
         whether it succeeded, and the request it was part of. Capped at the most
         recent few hundred, and it holds no message contents and no screen contents.
-        Your API key, and your Fish Audio key if you set one, both held in Android's
-        encrypted storage.
+        Your API key, your Fish Audio key, and any Reddit or Discord credentials you
+        enter — all held in Android's encrypted storage.
+        Skills you have taught her.
         Downloaded voice audio, if you asked for it — her fixed lines, as sound files.
 
         All of it lives in this app's private storage. Backup to the cloud and
@@ -133,6 +150,12 @@ object LegalText {
 
         Lain also contacts DuckDuckGo when you ask her to search the web, sending
         only the search terms.
+
+        If you set up Reddit or Discord, what she posts goes to that platform using
+        the credentials you gave, and only when you have confirmed the post. Your
+        calendar is read on the phone and its contents are only sent to your AI
+        provider if you ask her something that needs them — "am I free on Friday"
+        answers from the device.
 
         If you set up a Fish Audio voice, the text she is about to speak is sent to
         Fish Audio to be turned into audio, using the key you gave. That is her words,

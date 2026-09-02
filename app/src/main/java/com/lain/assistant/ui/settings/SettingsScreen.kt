@@ -429,6 +429,44 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             }
 
             Spacer(Modifier.height(24.dp))
+            SectionLabel("Channels")
+            Text(
+                "Reddit and Discord publish APIs an individual can actually get credentials for, " +
+                    "so Lain can post to them. Instagram, Facebook, X and Threads do not — posting " +
+                    "as you needs a business account and their app review, and there is no key that " +
+                    "changes that. She'll say so plainly rather than pretending.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = LainMuted
+            )
+            Spacer(Modifier.height(10.dp))
+            Text("Discord — a channel webhook is the easy way, no bot needed.",
+                style = MaterialTheme.typography.bodyMedium, color = LainCream)
+            Spacer(Modifier.height(6.dp))
+            PixelTextField(
+                state.discordWebhook,
+                viewModel::setDiscordWebhook,
+                "Discord webhook URL"
+            )
+            Spacer(Modifier.height(12.dp))
+            Text("Reddit — a \"script\" app at reddit.com/prefs/apps.",
+                style = MaterialTheme.typography.bodyMedium, color = LainCream)
+            Spacer(Modifier.height(6.dp))
+            PixelTextField(state.redditClientId, viewModel::setRedditClientId, "Reddit client ID")
+            Spacer(Modifier.height(6.dp))
+            PixelTextField(state.redditSecret, viewModel::setRedditSecret, "Reddit client secret")
+            Spacer(Modifier.height(6.dp))
+            PixelTextField(state.redditUser, viewModel::setRedditUser, "Reddit username")
+            Spacer(Modifier.height(6.dp))
+            PixelTextField(state.redditPassword, viewModel::setRedditPassword, "Reddit password")
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Stored encrypted on the phone and sent only to Reddit. Posting is public and " +
+                    "gets confirmed first, every time.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = LainMuted
+            )
+
+            Spacer(Modifier.height(24.dp))
             SectionLabel("The assistant key")
             // Read from the system every time this screen appears, never remembered.
             // The user can change their assistant in Settings without coming back

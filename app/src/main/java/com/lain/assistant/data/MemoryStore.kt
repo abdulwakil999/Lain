@@ -254,6 +254,47 @@ class MemoryStore(private val context: Context) {
         dao.weakest(total - MAX_MEMORIES).forEach { dao.deleteById(it.id) }
     }
 
+    /**
+     * What she has actually learned lately, newest first.
+     *
+     * The visible half of getting sharper. Memory that grows silently is memory
+     * nobody trusts — the user cannot tell the difference between an assistant that
+     * is learning and one that is quietly filling up with rubbish, and the only cure
+     * is being able to look. Everything here is deletable from the same screen.
+     */
+    suspend fun learnedSince(millis: Long, limit: Int = 20): List<MemoryEntity> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                dao.all()
+                    .filter { it.updatedAt >= millis }
+                    .sortedByDescending { it.updatedAt }
+                    .take(limit)
+            }.getOrDefault(emptyList())
+        }
+
+    /**
+     * Facts that have never once been useful, oldest first.
+     *
+     * The other half. A store that only grows gets slower and vaguer: every
+     * unretrieved fact is another candidate competing for a slot in the prompt, and
+     * a hundred of them make the retrieval worse for the ten that matter. These are
+     * offered for deletion rather than deleted — a fact that has not come up yet is
+     * not the same as a fact that is wrong, and only the user knows which.
+     *
+     * Recent ones are excluded regardless of use: something learned this week has
+     * not had a chance to prove itself.
+     */
+    suspend fun neverUsed(olderThanDays: Int = 30, limit: Int = 20): List<MemoryEntity> =
+        withContext(Dispatchers.IO) {
+            val cutoff = System.currentTimeMillis() - olderThanDays * 86_400_000L
+            runCatching {
+                dao.all()
+                    .filter { it.useCount == 0 && it.updatedAt < cutoff && it.importance < 5 }
+                    .sortedBy { it.updatedAt }
+                    .take(limit)
+            }.getOrDefault(emptyList())
+        }
+
     private fun tokens(text: String): Set<String> = TextIndex.tokens(text)
 
 

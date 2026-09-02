@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.update
 import com.lain.assistant.tts.FishAudioTtsEngine
 import com.lain.assistant.tts.VoicePack
 import kotlinx.coroutines.Job
+import com.lain.assistant.data.StoredChannelCredentials
 import kotlinx.coroutines.launch
 
 data class SettingsUiState(
@@ -34,6 +35,11 @@ data class SettingsUiState(
     val voiceDownload: VoicePack.Progress? = null,
     val voiceLinesHeld: Int = 0,
     val voiceBytesHeld: Long = 0,
+    val discordWebhook: String = "",
+    val redditClientId: String = "",
+    val redditSecret: String = "",
+    val redditUser: String = "",
+    val redditPassword: String = "",
     val overlayEnabled: Boolean = false,
     val loaded: Boolean = false,
     val justSaved: Boolean = false,
@@ -90,6 +96,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             val fishKey = container.secureKeyStore.getVoiceKey().orEmpty()
             val fishVoiceId = container.userPreferencesRepository.fishVoiceId.first()
             val pack = VoicePack(container.appContext)
+            val keys = container.secureKeyStore
             val overlayEnabled = container.userPreferencesRepository.isOverlayEnabled.first()
             val fallback = container.userPreferencesRepository.isModelFallbackEnabled.first()
             val broken = container.userPreferencesRepository.brokenModels.first()
@@ -107,6 +114,11 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
                     fishVoiceId = fishVoiceId,
                     voiceLinesHeld = pack.heldCount(),
                     voiceBytesHeld = pack.heldBytes(),
+                    discordWebhook = keys.channel(StoredChannelCredentials.DISCORD_WEBHOOK).orEmpty(),
+                    redditClientId = keys.channel(StoredChannelCredentials.REDDIT_ID).orEmpty(),
+                    redditSecret = keys.channel(StoredChannelCredentials.REDDIT_SECRET).orEmpty(),
+                    redditUser = keys.channel(StoredChannelCredentials.REDDIT_USER).orEmpty(),
+                    redditPassword = keys.channel(StoredChannelCredentials.REDDIT_PASSWORD).orEmpty(),
                     overlayEnabled = overlayEnabled,
                     modelFallback = fallback,
                     brokenModels = broken,
@@ -171,6 +183,32 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     fun setKokoroEndpoint(value: String) = _state.update { it.copy(kokoroEndpoint = value, justSaved = false) }
     fun setFishKey(value: String) = _state.update { it.copy(fishKey = value, justSaved = false) }
     fun setFishVoiceId(value: String) = _state.update { it.copy(fishVoiceId = value, justSaved = false) }
+    fun setDiscordWebhook(v: String) = _state.update { it.copy(discordWebhook = v, justSaved = false) }
+    fun setRedditClientId(v: String) = _state.update { it.copy(redditClientId = v, justSaved = false) }
+    fun setRedditSecret(v: String) = _state.update { it.copy(redditSecret = v, justSaved = false) }
+    fun setRedditUser(v: String) = _state.update { it.copy(redditUser = v, justSaved = false) }
+    fun setRedditPassword(v: String) = _state.update { it.copy(redditPassword = v, justSaved = false) }
+
+    /**
+     * Writes the channel credentials, clearing any slot the user emptied.
+     *
+     * Emptying a field has to actually revoke it. Leaving the old value in encrypted
+     * storage because the box now looks blank would mean Lain keeps posting with
+     * credentials the user believes they removed — a silent difference between what
+     * the screen says and what the app does.
+     */
+    private fun saveChannelCredentials(s: SettingsUiState) {
+        val keys = container.secureKeyStore
+        mapOf(
+            StoredChannelCredentials.DISCORD_WEBHOOK to s.discordWebhook,
+            StoredChannelCredentials.REDDIT_ID to s.redditClientId,
+            StoredChannelCredentials.REDDIT_SECRET to s.redditSecret,
+            StoredChannelCredentials.REDDIT_USER to s.redditUser,
+            StoredChannelCredentials.REDDIT_PASSWORD to s.redditPassword
+        ).forEach { (slot, value) ->
+            if (value.isBlank()) keys.clearChannel(slot) else keys.saveChannel(slot, value)
+        }
+    }
 
     /**
      * Renders every fixed line once, so the voice keeps working with no signal.
@@ -187,6 +225,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         voiceJob = viewModelScope.launch {
             container.secureKeyStore.saveVoiceKey(s.fishKey.trim())
             container.userPreferencesRepository.saveFishVoiceId(s.fishVoiceId.trim())
+            saveChannelCredentials(s)
 
             val pack = VoicePack(container.appContext)
             val engine = FishAudioTtsEngine(
@@ -300,6 +339,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             container.userPreferencesRepository.saveKokoroEndpoint(s.kokoroEndpoint.trim())
             container.secureKeyStore.saveVoiceKey(s.fishKey.trim())
             container.userPreferencesRepository.saveFishVoiceId(s.fishVoiceId.trim())
+            saveChannelCredentials(s)
             _state.update { it.copy(justSaved = true) }
         }
     }

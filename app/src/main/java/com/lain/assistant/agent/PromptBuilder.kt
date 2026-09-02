@@ -370,6 +370,30 @@ object PromptBuilder {
      */
     private const val MAX_NAMED_OMISSIONS = 12
 
+    /**
+     * A taught skill, appended for the one turn that asked for it.
+     *
+     * Appended rather than built into the prompt, because a skill is relevant to
+     * roughly one message in fifty and the other forty-nine should not carry it. That
+     * is the same argument as the study brief: the turns a thing does not apply to
+     * must not pay for it.
+     *
+     * The last line is load-bearing. A stored procedure is a recipe, not a licence —
+     * a skill whose steps say "text everyone I'm running late" still meets the
+     * confirmation gate before anything is sent, because the user taught the skill
+     * once and is not necessarily watching the twentieth time it runs.
+     */
+    fun skillRule(name: String, steps: String): String = "\n\n" + """
+        A SKILL THEY TAUGHT YOU
+        They said "$name", which is a procedure they taught you. Do this:
+        $steps
+
+        Follow it as written, adapting only what the moment obviously requires. If a
+        step can't be done, say which one and stop — don't improvise past it. The
+        usual rules still hold: anything that reaches another person or can't be
+        undone gets confirmed first, however routine the skill has become.
+    """.trimIndent()
+
     private fun memoryBlock(memories: List<MemoryEntity>): String = buildString {
         append("WHAT YOU KNOW ABOUT THEM\n")
         append("Retrieved because it looks relevant to what they just said. Use it naturally — don't ")

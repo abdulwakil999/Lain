@@ -41,8 +41,8 @@ import com.lain.assistant.ui.theme.LainNavy
 import com.lain.assistant.ui.theme.LainSalmon
 
 /**
- * What Lain is holding: everything scheduled, everything remembered, and
- * everything she did.
+ * What Lain is holding: what is scheduled, what she remembers, what she has been
+ * taught to do, and what she did.
  *
  * Both were only reachable by asking her, which is a poor way to audit anything —
  * a list you have to request one question at a time isn't a list. It matters more
@@ -137,6 +137,66 @@ fun KnowsScreen(viewModel: KnowsViewModel, onBack: () -> Unit) {
                     )
                 }
             }
+            item {
+                Spacer(Modifier.height(20.dp))
+                SectionHeader("Habilidades", "taught skills", state.skills.size)
+            }
+            if (state.skills.isEmpty()) {
+                item {
+                    Empty(
+                        "Nada. Teach her one: \"when I say wind down, put the phone on Do Not " +
+                            "Disturb and drop the brightness\"."
+                    )
+                }
+            }
+            items(state.skills, key = { it.id }) { skill ->
+                Entry(
+                    title = skill.name,
+                    // Uses first, because that is the answer to "is this earning its
+                    // place" — the question a list of a hundred skills makes you ask.
+                    subtitle = "${if (skill.uses == 0) "never used" else "used ${skill.uses}×"} · ${skill.steps}",
+                    onDelete = { viewModel.forgetSkill(skill.id) },
+                    deleteLabel = "Forget the ${skill.name} skill"
+                )
+            }
+
+            if (state.recentlyLearned.isNotEmpty()) {
+                item {
+                    Spacer(Modifier.height(20.dp))
+                    SectionHeader("Esta semana", "learned this week", state.recentlyLearned.size)
+                }
+                items(state.recentlyLearned, key = { "new-${it.id}" }) { memory ->
+                    Entry(
+                        title = memory.fact,
+                        subtitle = memory.subject,
+                        onDelete = { viewModel.forget(memory.id) },
+                        deleteLabel = "Forget ${memory.subject}"
+                    )
+                }
+            }
+
+            if (state.neverUsed.isNotEmpty()) {
+                item {
+                    Spacer(Modifier.height(20.dp))
+                    SectionHeader("Sin usar", "never come up", state.neverUsed.size)
+                }
+                item {
+                    Empty(
+                        "Held for a month and never once relevant. Deleting them makes the rest " +
+                            "easier for her to find — but a fact that hasn't come up isn't wrong, " +
+                            "so nothing goes without you saying so."
+                    )
+                }
+                items(state.neverUsed, key = { "cold-${it.id}" }) { memory ->
+                    Entry(
+                        title = memory.fact,
+                        subtitle = memory.subject,
+                        onDelete = { viewModel.forget(memory.id) },
+                        deleteLabel = "Forget ${memory.subject}"
+                    )
+                }
+            }
+
             item {
                 Spacer(Modifier.height(20.dp))
                 SectionHeader("Historial", "what she did", state.actions.size)

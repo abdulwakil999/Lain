@@ -84,6 +84,16 @@ data class PendingConfirmation(
 
                 "forget" -> "Forget everything matching \"${arg("key", "query")}\"?"
 
+                // Public, and a deleted post has still been read. Shown in full
+                // rather than summarised, because the words are the decision.
+                "post_to_reddit" ->
+                    "Post to r/${arg("subreddit").removePrefix("r/")} as \"${arg("title").take(100)}\"? " +
+                        "It'll be public."
+
+                "post_to_discord" -> "Send to Discord: \"${arg("message").take(140)}\"?"
+
+                "add_calendar_event" -> "Put \"${arg("title")}\" in your calendar for ${arg("when")}?"
+
                 else -> "Go ahead with ${call.name.replace('_', ' ')}?"
             }
         }

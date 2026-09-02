@@ -17,6 +17,15 @@
     <uses-permission android:name="android.permission.READ_SMS" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
 
+    <!--
+        The calendar already on the phone. Read and write are separate grants and are
+        asked for separately: "what's on today" is a much smaller thing to allow than
+        "put things in my diary", and demanding both to answer the first is how an app
+        gets declined.
+    -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
+
     <!-- Reminders + notifications -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Do Not Disturb. Not granted by install: the user allows it on a Settings

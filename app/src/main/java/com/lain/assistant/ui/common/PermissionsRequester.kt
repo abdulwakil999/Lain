@@ -58,6 +58,10 @@ private val corePermissions: Array<String> = buildList {
     // Coarse only, and only so "where am I" can be answered. Lain reads the last
     // known area and never transmits it.
     add(Manifest.permission.ACCESS_COARSE_LOCATION)
+    // Read only, in the launch prompt. Writing to the diary is asked for at the
+    // moment something is being written, because it is a far bigger thing to grant
+    // than reading and most people never need it.
+    add(Manifest.permission.READ_CALENDAR)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         add(Manifest.permission.POST_NOTIFICATIONS)
     }

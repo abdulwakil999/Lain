@@ -6,6 +6,7 @@ import com.lain.assistant.AppContainer
 import com.lain.assistant.data.ScheduledTask
 import com.lain.assistant.data.db.ActionLogEntity
 import com.lain.assistant.data.db.MemoryEntity
+import com.lain.assistant.data.db.SkillEntity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,7 +16,12 @@ import kotlinx.coroutines.launch
 data class KnowsState(
     val tasks: List<ScheduledTask> = emptyList(),
     val memories: List<MemoryEntity> = emptyList(),
-    val actions: List<ActionLogEntity> = emptyList()
+    val actions: List<ActionLogEntity> = emptyList(),
+    val skills: List<SkillEntity> = emptyList(),
+    /** Facts saved in the last week — the visible evidence she is learning. */
+    val recentlyLearned: List<MemoryEntity> = emptyList(),
+    /** Facts that have never been retrieved, offered for tidying. */
+    val neverUsed: List<MemoryEntity> = emptyList()
 )
 
 class KnowsViewModel(private val container: AppContainer) : ViewModel() {
@@ -36,7 +42,12 @@ class KnowsViewModel(private val container: AppContainer) : ViewModel() {
                 it.copy(
                     tasks = container.scheduler.all(),
                     memories = container.memory.all(),
-                    actions = container.actionLog.recent()
+                    actions = container.actionLog.recent(),
+                    skills = container.skills.all(),
+                    recentlyLearned = container.memory.learnedSince(
+                        System.currentTimeMillis() - 7 * 86_400_000L
+                    ),
+                    neverUsed = container.memory.neverUsed()
                 )
             }
         }
@@ -72,6 +83,13 @@ class KnowsViewModel(private val container: AppContainer) : ViewModel() {
      * user is entitled to make — removing the single entry they would rather not
      * have seen is not the same act.
      */
+    fun forgetSkill(id: String) {
+        viewModelScope.launch {
+            container.skills.delete(id)
+            refresh()
+        }
+    }
+
     fun clearActions() {
         viewModelScope.launch {
             container.actionLog.clear()

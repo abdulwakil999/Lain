@@ -166,6 +166,20 @@ object ToolRegistry {
             permissions = listOf("BIND_NOTIFICATION_LISTENER_SERVICE"),
             commonFailures = listOf("notification access not granted")),
         ToolMeta("edit_memory", "Correct a stored fact in place.", reversible = false),
+        ToolMeta("read_calendar", "Read upcoming events from the phone's calendar.",
+            permissions = listOf("READ_CALENDAR"),
+            commonFailures = listOf("calendar permission not granted")),
+        ToolMeta("add_calendar_event", "Add an event to the calendar.",
+            permissions = listOf("WRITE_CALENDAR"), reversible = false,
+            commonFailures = listOf("calendar permission not granted", "no writable calendar")),
+        ToolMeta("compose_email", "Open a written email for the user to send."),
+        // Public and effectively permanent — a deleted post has still been seen.
+        ToolMeta("post_to_reddit", "Submit a post to a subreddit.",
+            requiresConfirmation = true, reversible = false,
+            commonFailures = listOf("credentials not set", "subreddit rules refused it")),
+        ToolMeta("post_to_discord", "Send a message to a Discord channel.",
+            requiresConfirmation = true, reversible = false,
+            commonFailures = listOf("webhook or bot token not set", "bot not in that channel")),
     ).associateBy { it.name }
 
     fun needsAccessibility(tool: String) = meta[tool]?.needsAccessibility == true

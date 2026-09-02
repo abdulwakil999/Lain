@@ -169,6 +169,15 @@ sealed class Route {
      */
     object Study : Route()
 
+    /**
+     * Being taught a skill. Answered on the device, with no model.
+     *
+     * Only teaching is a route. *Matching* a skill needs a database read, which a
+     * router that must stay synchronous and allocation-light cannot do — so that
+     * happens a layer up, in the engine, once nothing local has claimed the message.
+     */
+    data class LearnSkill(val name: String, val steps: String) : Route()
+
     /** Needs the model, and probably tools. */
     object Model : Route()
 }
@@ -278,6 +287,11 @@ object FastRouter {
     fun route(message: String): Route {
         val normalised = normalise(message)
         if (normalised.isEmpty()) return Route.Chat
+
+        // Being taught is checked before anything else can claim the sentence. "When I
+        // say X, do Y" contains an instruction and would otherwise be read as one —
+        // she would do the thing instead of learning it.
+        SkillTeacher.parse(message)?.let { return Route.LearnSkill(it.name, it.steps) }
 
         // Ahead of everything, including the local matchers: a challenge is armed and
         // this message is the reply to it, whatever else it looks like. Routing "soft"

@@ -35,6 +35,7 @@ class AppContainer(context: Context) {
     val connectionTester = ConnectionTester(appContext)
     val scheduler = com.lain.assistant.automation.Scheduler(appContext)
     val actionLog = com.lain.assistant.data.ActionLog(appContext)
+    val skills = com.lain.assistant.data.SkillStore(appContext)
 
     /** Alias, so screens read as "what she remembers" rather than "the store". */
     val memory: MemoryStore get() = memoryStore

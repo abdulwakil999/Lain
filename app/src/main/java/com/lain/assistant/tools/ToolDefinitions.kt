@@ -498,6 +498,64 @@ object ToolDefinitions {
             },
             briefDescription = "Delete saved facts matching a query."
         ),
+        // ------------------------------------------------------- calendar
+        ToolDefinition(
+            name = "read_calendar",
+            description = "Read what's in the phone's calendar between two times. Reaches whatever the calendar app has already synced, so it works offline. days_ahead counts from now; use 1 for today and tomorrow.",
+            parameters = schema {
+                property("days_ahead", "number", "How many days forward to look. 1 = the next 24 hours.")
+            },
+            briefDescription = "Read upcoming calendar events."
+        ),
+        ToolDefinition(
+            name = "add_calendar_event",
+            description = "Put an event in the phone's calendar. Needs the calendar permission; without it the calendar app is opened with the event filled in for the user to save. Say which of the two happened.",
+            parameters = schema {
+                property("title", "string", "What the event is")
+                property("when", "string", "When it starts, in plain words: \"tomorrow at 3pm\", \"friday 09:00\"")
+                property("duration_minutes", "number", "How long, default 60")
+                property("location", "string", "Where, optional")
+                required("title", "when")
+            },
+            briefDescription = "Add an event to the calendar."
+        ),
+
+        // ---------------------------------------------------------- email
+        ToolDefinition(
+            name = "compose_email",
+            description = "Open the user's email app with a message written and ready. You cannot send mail — the user presses send. Never claim it was sent.",
+            parameters = schema {
+                property("to", "string", "Address, or several separated by commas")
+                property("subject", "string", "Subject line")
+                property("body", "string", "The message")
+                required("to", "body")
+            },
+            briefDescription = "Write an email and open it for the user to send."
+        ),
+
+        // ------------------------------------------------------- channels
+        ToolDefinition(
+            name = "post_to_reddit",
+            description = "Submit a text post to a subreddit using the user's own Reddit credentials from Settings. Public and hard to undo, so it is confirmed first.",
+            parameters = schema {
+                property("subreddit", "string", "Subreddit name, with or without r/")
+                property("title", "string", "Post title")
+                property("body", "string", "Post body")
+                required("subreddit", "title")
+            },
+            briefDescription = "Post to a subreddit."
+        ),
+        ToolDefinition(
+            name = "post_to_discord",
+            description = "Send a message to Discord through the user's webhook or bot token from Settings. Leave channel_id empty when a webhook is set — a webhook already names its channel.",
+            parameters = schema {
+                property("channel_id", "string", "Channel ID, only needed with a bot token")
+                property("message", "string", "What to send")
+                required("message")
+            },
+            briefDescription = "Send a message to Discord."
+        ),
+
         ToolDefinition(
             name = "recall",
             description = "Search everything you hold about the user: remembered facts, their saved notes, and what was said in earlier conversations. Matches on meaning, so \"the flat\" finds a note about the apartment. Relevant memories are already provided each turn, so use this when you need something specific that wasn't included.",
@@ -532,7 +590,9 @@ object ToolDefinitions {
         "lookup_contact", "device_status", "remember", "recall", "forget",
         "write_note", "list_notes", "open_url", "wait", "current_app",
         // Longer tail.
+        "read_calendar", "add_calendar_event", "compose_email",
         "read_notifications", "find_files", "edit_memory",
+        "post_to_reddit", "post_to_discord",
         "open_settings_page", "set_volume", "set_brightness", "clipboard", "fetch_page", "open_contacts",
         "tap_screen", "look_at_screen", "take_photo", "listen_microphone",
         "list_files", "read_file", "write_file", "rename_file", "make_folder", "delete_file",

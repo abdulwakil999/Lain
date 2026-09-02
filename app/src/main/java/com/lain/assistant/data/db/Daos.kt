@@ -140,3 +140,25 @@ interface ActionLogDao {
     @Query("DELETE FROM action_log")
     suspend fun clear()
 }
+
+@Dao
+interface SkillDao {
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(skill: SkillEntity)
+
+    @Query("SELECT * FROM skills ORDER BY uses DESC, lastUsedAt DESC")
+    suspend fun all(): List<SkillEntity>
+
+    @Query("SELECT * FROM skills WHERE name = :name LIMIT 1")
+    suspend fun byName(name: String): SkillEntity?
+
+    @Query("UPDATE skills SET uses = uses + 1, lastUsedAt = :at WHERE id = :id")
+    suspend fun markUsed(id: String, at: Long = System.currentTimeMillis())
+
+    @Query("DELETE FROM skills WHERE id = :id")
+    suspend fun deleteById(id: String)
+
+    @Query("SELECT COUNT(*) FROM skills")
+    suspend fun count(): Int
+}
