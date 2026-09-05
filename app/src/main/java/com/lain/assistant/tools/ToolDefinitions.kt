@@ -346,6 +346,12 @@ object ToolDefinitions {
             briefDescription = "Set an alarm, reminder or recurring task."
         ),
         ToolDefinition(
+            name = "unlock_device",
+            description = "Report whether the phone is locked and whether it can be used from the lock screen. On a phone with no PIN or pattern the lock screen is only a swipe and Lain works from it. Where a credential is set, only the user can answer it — say so, never claim to have unlocked it.",
+            parameters = schema { },
+            briefDescription = "Say whether the phone is locked and whether it needs the user."
+        ),
+        ToolDefinition(
             name = "show_alarms",
             description = "Open the phone's alarm list. Use this for \"what alarms have I got\" — Android publishes no way to read alarms, so showing the real list is the only honest answer. Do not recite an alarm list from memory.",
             parameters = schema { },
@@ -596,7 +602,7 @@ object ToolDefinitions {
         "lookup_contact", "device_status", "remember", "recall", "forget",
         "write_note", "list_notes", "open_url", "wait", "current_app",
         // Longer tail.
-        "read_calendar", "add_calendar_event", "compose_email", "show_alarms",
+        "read_calendar", "add_calendar_event", "compose_email", "show_alarms", "unlock_device",
         "read_notifications", "find_files", "edit_memory",
         "post_to_reddit", "post_to_discord",
         "open_settings_page", "set_volume", "set_brightness", "clipboard", "fetch_page", "open_contacts",

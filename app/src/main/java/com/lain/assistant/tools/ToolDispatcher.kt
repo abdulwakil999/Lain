@@ -414,6 +414,7 @@ class ToolDispatcher(context: Context) {
         "schedule_task" -> scheduleTask(args)
         "list_scheduled_tasks" -> listScheduled()
         "show_alarms" -> clockAlarms.showAll()
+        "unlock_device" -> com.lain.assistant.automation.LockScreenAccess(appContext).describe()
         "cancel_scheduled_task" -> cancelScheduled(args.str("which"))
 
         // ---------------------------------------------- device toggles

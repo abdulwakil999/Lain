@@ -49,7 +49,7 @@ import com.lain.assistant.ui.theme.LainSalmon
  */
 @Composable
 fun LegalUpdateScreen(onAccept: () -> Unit) {
-    var showing by remember { mutableStateOf(Doc.CHANGES) }
+    var showing by remember { mutableStateOf(Doc.PRIVACY) }
 
     Column(
         modifier = Modifier
@@ -72,12 +72,6 @@ fun LegalUpdateScreen(onAccept: () -> Unit) {
         Spacer(Modifier.height(14.dp))
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PixelChoiceChip(
-                "What changed",
-                showing == Doc.CHANGES,
-                { showing = Doc.CHANGES },
-                modifier = Modifier.weight(1f)
-            )
             PixelChoiceChip(
                 "Privacy",
                 showing == Doc.PRIVACY,
@@ -105,11 +99,7 @@ fun LegalUpdateScreen(onAccept: () -> Unit) {
         ) {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 Text(
-                    when (showing) {
-                        Doc.CHANGES -> LegalText.WHATS_CHANGED
-                        Doc.PRIVACY -> LegalText.PRIVACY
-                        Doc.TERMS -> LegalText.TERMS
-                    },
+                    if (showing == Doc.PRIVACY) LegalText.PRIVACY else LegalText.TERMS,
                     style = MaterialTheme.typography.bodyMedium,
                     color = LainCream
                 )
@@ -127,4 +117,4 @@ fun LegalUpdateScreen(onAccept: () -> Unit) {
     }
 }
 
-private enum class Doc { CHANGES, PRIVACY, TERMS }
+private enum class Doc { PRIVACY, TERMS }

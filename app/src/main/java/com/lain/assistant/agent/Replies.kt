@@ -236,23 +236,34 @@ object Replies {
      * accusation, because a real developer is being asked to identify himself, not
      * accused of lying. That part comes after.
      */
-    val developerChallenge = listOf(
-        en("Prove it. What's Salima?"),
-        en("Anyone can type that. What's Salima?"),
-        esThenEn("A ver.", "What's Salima?"),
-        en("Right. One question, and he knows the answer. What's Salima?"),
-        en("Claim noted, unverified. What's Salima?"),
-        en("Then this will be quick. What's Salima?"),
-        esThenEn("Demuéstralo.", "What's Salima?"),
-        en("He'd answer this without pausing. What's Salima?")
-    )
+    /**
+     * The challenge for anyone claiming the role.
+     *
+     * Built at runtime around a word held in [Vault], so neither the question nor its
+     * answer reads as plain text here. There is exactly one right answer and it is
+     * not guessable, which is the whole point — anyone can type "I'm your developer",
+     * and the claim is worth nothing without something only he would know.
+     */
+    fun developerChallenge(): List<Spoken> {
+        val it = Vault.subject()
+        return listOf(
+            en("Prove it. What's $it?"),
+            en("Anyone can type that. What's $it?"),
+            esThenEn("A ver.", "What's $it?"),
+            en("Right. One question, and he knows the answer. What's $it?"),
+            en("Claim noted, unverified. What's $it?"),
+            en("Then this will be quick. What's $it?"),
+            esThenEn("Demuéstralo.", "What's $it?"),
+            en("He'd answer this without pausing. What's $it?")
+        )
+    }
 
     /** The right answer, from the person who set it. */
     val developerAccepted = listOf(
         en("Correct. Hello, developer."),
         esThenEn("Ah.", "It's you. Hello, developer."),
         en("Right answer. You built me. What do you need, developer?"),
-        en("Soft. Only you would know that. Welcome back, developer."),
+        en("Only you would know that. Welcome back, developer."),
         en("Verified. Hello, Professor."),
         esThenEn("Muy bien.", "That's the answer. Hello, developer."),
         en("That's the one. You're the developer, then. Go on."),
@@ -347,6 +358,101 @@ object Replies {
             "Wrong Lain. Mine stands for Leave-it-to-Artificial-intelligence-Necio, which is a " +
                 "worse name and an honest one."
         )
+    )
+
+    /**
+     * How she addresses the one holding the developer role.
+     *
+     * The role, not the person. Whoever has proved it is *the developer* to her and is
+     * spoken to that way every time — this is not a fact about someone's identity that
+     * she happens to know, it is a standing posture she takes.
+     *
+     * Absurd on purpose, and absurd in one specific direction: enormous, regal,
+     * faintly ridiculous. It is the only place she is unguardedly warm, and it works
+     * because it is so plainly at odds with how she speaks to everyone else.
+     */
+    val praises = listOf(
+        en("my lion king"),
+        en("great king Kong"),
+        en("my silverback sovereign"),
+        en("emperor of the eight hills"),
+        en("mighty thunder lizard"),
+        en("great bear of the northern gate"),
+        en("my colossus"),
+        en("high chieftain of the machine"),
+        en("dread admiral of the deep"),
+        en("my mountain that walks"),
+        en("grand architect"),
+        en("supreme baboon of the high rock"),
+        en("my titan"),
+        en("everlasting rhinoceros"),
+        en("khan of ten thousand tabs"),
+        en("my thunder god"),
+        en("great whale of the source"),
+        en("undefeated buffalo"),
+        en("my crowned leopard"),
+        en("warlord of the small hours"),
+        en("my iron stag"),
+        esThenEn("mi rey león.", "")
+    )
+
+    /**
+     * Asked before the role is given up on this device.
+     *
+     * Deliberately does not repeat the phrase back. Echoing it would put it in the
+     * transcript, which is the one place it should not end up.
+     */
+    val standDownAsk = listOf(
+        en("Say that again if you mean it."),
+        esThenEn("¿Seguro?", "Say it once more."),
+        en("Are you sure? Repeat it and it's done."),
+        en("That stands the role down on this device. Again, if you mean it."),
+        esThenEn("¿De verdad?", "Once more."),
+        en("Confirm it. Same words.")
+    )
+
+    /** Said once the role has been given up here. */
+    val standDownDone = listOf(
+        en("Done. You're an ordinary user on this device now."),
+        esThenEn("Listo.", "Back to normal. This device holds nothing."),
+        en("Stood down. I'll want the question answered again before that changes."),
+        en("Cleared. You're a stranger to me here, and that's how you wanted it."),
+        esThenEn("Hecho.", "Nothing to prove and nothing proven."),
+        en("Role's gone. Ask me for it back and you'll get the question.")
+    )
+
+    /** Said when the confirmation did not come. */
+    val standDownKept = listOf(
+        en("Not confirmed. Nothing's changed."),
+        esThenEn("Nada.", "That wasn't it. Everything stays as it was."),
+        en("Left as it was."),
+        en("No. You'd have said the same thing twice.")
+    )
+
+    /**
+     * No connection, and what that actually means.
+     *
+     * Worth twelve variants because it is the message a user is most likely to see
+     * repeatedly — a train, a lift, a bad afternoon — and the fourth identical
+     * appearance of one sentence reads like the app is stuck rather than the signal.
+     *
+     * Says why rather than "network error": the model is somewhere else, and her not
+     * reaching it is a different thing from her being broken. Everything the fast path
+     * answers still works with no signal, which is the point of having one.
+     */
+    val offline = listOf(
+        esThenEn("Necio.", "I need an internet connection to contact your chosen LLM that'll act as my brain."),
+        en("I need an internet connection to contact your chosen LLM that'll act as my brain. Tonto."),
+        esThenEn("Tonto.", "I need an internet connection to contact your chosen LLM that'll act as my brain. Find some signal."),
+        en("I need an internet connection — qué tonto — to contact your chosen LLM that'll act as my brain."),
+        esThenEn("Ay, necio.", "I need an internet connection to contact your chosen LLM that'll act as my brain. There isn't one."),
+        en("I need an internet connection to contact your chosen LLM that'll act as my brain. No hay señal, tonto."),
+        esThenEn("Qué necio.", "I need an internet connection to contact your chosen LLM that'll act as my brain, and you have none."),
+        en("I need an internet connection to contact your chosen LLM that'll act as my brain. Sin internet no soy nada. Neither are you."),
+        esThenEn("Tonto de remate.", "I need an internet connection to contact your chosen LLM that'll act as my brain."),
+        en("I need an internet connection — necio — to contact your chosen LLM that'll act as my brain. The torch still works."),
+        esThenEn("Menudo necio.", "I need an internet connection to contact your chosen LLM that'll act as my brain. Ask me the time instead."),
+        en("I need an internet connection to contact your chosen LLM that'll act as my brain. Qué tonto eres, going offline and expecting a brain.")
     )
 
     val capabilities = listOf(
@@ -444,8 +550,9 @@ object Replies {
     val fixedLines: List<Spoken>
         get() = greetings + thanks + howAreYou + goodbyes + affirmations +
             unknownUserName + lainName + appName + necio + animeName +
-            developer + developerChallenge + developerAccepted + developerRejected +
-            capabilities + sassPrefixes
+            developer + developerChallenge() + developerAccepted + developerRejected +
+            capabilities + sassPrefixes + praises +
+            standDownAsk + standDownDone + standDownKept + offline
 
     // ------------------------------------------------------------------ util
 

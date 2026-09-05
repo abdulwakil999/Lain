@@ -23,16 +23,16 @@ class MemoryExtractionTest {
 
     @Test
     fun `a named relative is remembered, in either word order`() {
-        val forward = MemoryExtractor.extract("my mum's name is Salima")
+        val forward = MemoryExtractor.extract("my mum's name is Amina")
         assertEquals(1, forward.size)
         assertEquals("mum", forward.first().subject)
         assertEquals(MemoryCategory.PERSON, forward.first().category)
-        assertTrue(forward.first().fact.contains("Salima"))
+        assertTrue(forward.first().fact.contains("Amina"))
 
-        val backward = MemoryExtractor.extract("Salima is my mum")
+        val backward = MemoryExtractor.extract("Amina is my mum")
         assertEquals(1, backward.size)
         assertEquals("mum", backward.first().subject)
-        assertTrue(backward.first().fact.contains("Salima"))
+        assertTrue(backward.first().fact.contains("Amina"))
     }
 
     @Test
@@ -63,7 +63,7 @@ class MemoryExtractionTest {
     @Test
     fun `a question is someone asking, not someone telling`() {
         // The difference between storing a fact and storing a guess.
-        assertTrue(subjects("is my mum's name Salima?").isEmpty())
+        assertTrue(subjects("is my mum's name Amina?").isEmpty())
         assertTrue(subjects("what's my name?").isEmpty())
         assertTrue(subjects("do I live in Lagos?").isEmpty())
     }
@@ -95,7 +95,7 @@ class MemoryExtractionTest {
     fun `one message never writes two facts to the same subject`() {
         // Overlapping rules on one sentence would otherwise store the loose match and
         // the tight one as separate contradicting facts.
-        val found = MemoryExtractor.extract("my mum's name is Salima and I live in Lagos")
+        val found = MemoryExtractor.extract("my mum's name is Amina and I live in Lagos")
         assertEquals(found.map { it.subject }.size, found.map { it.subject }.toSet().size)
     }
 
@@ -105,7 +105,7 @@ class MemoryExtractionTest {
     fun `a fact is findable by a word the user did not use to store it`() {
         // The failure this replaces: "mum" and "mother" share no letters worth
         // matching, so the stored fact was invisible to the question that wanted it.
-        val stored = TextIndex.concepts("Their mother is called Salima")
+        val stored = TextIndex.concepts("Their mother is called Amina")
         assertTrue("mum doesn't reach mother", TextIndex.concepts("what's my mum's name").any { it in stored })
         assertTrue("mom doesn't reach mother", TextIndex.concepts("my mom").any { it in stored })
     }
@@ -143,11 +143,11 @@ class MemoryExtractionTest {
     @Test
     fun `near-misses are caught without a lexicon entry`() {
         assertTrue(TextIndex.similarity("whatsapp", "whats app") > 0.6)
-        assertTrue(TextIndex.similarity("Salima", "Salimas") > 0.6)
+        assertTrue(TextIndex.similarity("Amina", "Aminas") > 0.6)
         // And things that genuinely differ still score low.
         assertTrue(TextIndex.similarity("battery", "birthday") < 0.4)
         // The documented limit, pinned so it is not mistaken for a capability:
         // a letter changed inside a short word is not caught by trigrams.
-        assertTrue(TextIndex.similarity("Salima", "Saleema") < 0.45)
+        assertTrue(TextIndex.similarity("Amina", "Ameena") < 0.45)
     }
 }

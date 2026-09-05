@@ -86,6 +86,8 @@ class LocalActions(private val context: Context) {
                 is LocalIntent.Identity -> identity(intent.question)
                 is LocalIntent.DeveloperClaim -> developerClaim()
                 is LocalIntent.DeveloperAnswer -> developerAnswer(intent.text)
+                is LocalIntent.StandDownRequest -> standDownRequest()
+                is LocalIntent.StandDownAnswer -> standDownAnswer(intent.text)
                 is LocalIntent.Recite -> recite(intent)
                 is LocalIntent.WhereAmI -> whereAmI()
                 is LocalIntent.LockScreen -> lockScreen()
@@ -314,7 +316,7 @@ class LocalActions(private val context: Context) {
      */
     private fun developerClaim(): String {
         DeveloperGate.arm()
-        return say(Replies.developerChallenge)
+        return say(Replies.developerChallenge())
     }
 
     /**
@@ -328,6 +330,24 @@ class LocalActions(private val context: Context) {
         val correct = DeveloperGate.answer(text)
         if (correct) prefs.setDeveloperKnown(true)
         return say(if (correct) Replies.developerAccepted else Replies.developerRejected)
+    }
+
+    /**
+     * Asks whether the role really should be given up on this device.
+     *
+     * Confirmed rather than acted on, because the way back is answering the challenge,
+     * and on a device that is not his there is no way back at all. One unlucky
+     * sentence should not be able to do that.
+     */
+    private fun standDownRequest(): String {
+        DeveloperGate.askToStandDown()
+        return say(Replies.standDownAsk)
+    }
+
+    private suspend fun standDownAnswer(text: String): String {
+        val confirmed = DeveloperGate.confirmStandDown(text)
+        if (confirmed) prefs.setDeveloperKnown(false)
+        return say(if (confirmed) Replies.standDownDone else Replies.standDownKept)
     }
 
     // ----------------------------------------------------------- power state

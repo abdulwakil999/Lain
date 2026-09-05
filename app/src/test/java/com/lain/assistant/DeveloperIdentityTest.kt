@@ -130,17 +130,10 @@ class DeveloperIdentityTest {
     }
 
     @Test
-    fun `the answer is case-insensitive and survives punctuation`() {
-        listOf("soft", "Soft", "SOFT", "soft.", "Soft!", "she's soft", "the answer is soft")
-            .forEach { reply ->
-                DeveloperGate.arm()
-                assertTrue("\"$reply\" should have passed", DeveloperGate.answer(reply))
-            }
-    }
-
-    @Test
-    fun `anything else is a wrong answer`() {
-        listOf("hard", "salima", "i don't know", "", "softly", "software")
+    fun `a wrong answer never passes`() {
+        // The right answer is not written here on purpose — see the vault. What can be
+        // asserted without leaking it is that guessing does not work.
+        listOf("hard", "i don't know", "", "software", "the answer", "yes")
             .forEach { reply ->
                 DeveloperGate.arm()
                 assertFalse("\"$reply\" should not have passed", DeveloperGate.answer(reply))
@@ -152,7 +145,7 @@ class DeveloperIdentityTest {
     @Test
     fun `there are more than six of each reply, and none repeat`() {
         mapOf(
-            "challenge" to Replies.developerChallenge,
+            "challenge" to Replies.developerChallenge(),
             "accepted" to Replies.developerAccepted,
             "rejected" to Replies.developerRejected
         ).forEach { (label, bank) ->
@@ -162,9 +155,12 @@ class DeveloperIdentityTest {
     }
 
     @Test
-    fun `every challenge asks the question`() {
-        Replies.developerChallenge.forEach {
-            assertTrue("\"${it.text}\" doesn't ask it", it.text.contains("Salima", ignoreCase = true))
+    fun `every challenge actually asks something`() {
+        // Deliberately not asserting the word. The point of holding it in the vault is
+        // that it does not appear in the repository, and a test that spells it out
+        // would put it straight back.
+        Replies.developerChallenge().forEach {
+            assertTrue("\"${it.text}\" isn't a question", it.text.trimEnd().endsWith("?"))
         }
     }
 

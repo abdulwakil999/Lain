@@ -6,7 +6,7 @@ import java.util.Locale
  * How Lain decides that two pieces of text are about the same thing.
  *
  * Retrieval used to be term overlap over stemmed words, which is grep with extra
- * steps: a stored fact reading "his mother is called Salima" was invisible to
+ * steps: a stored fact reading "his mother is called Amina" was invisible to
  * "what's my mum's name", because the two share no word. The user experiences that
  * as memory that does not work, and there is no way to tell from inside the app —
  * nothing errors, the fact is simply never retrieved.
@@ -21,9 +21,9 @@ import java.util.Locale
  *     which is the honest trade: no model, no download, no inference cost, and a
  *     hard edge where the lexicon stops.
  *  3. **Trigram similarity**, for the near-misses a lexicon cannot enumerate:
- *     spacing ("whatsapp" / "whats app") and endings ("Salima" / "Salimas"). It is
- *     weak on short words with a letter changed in the middle — "Saleema" scores
- *     0.25 against "Salima" and will not be rescued — and that limit is left in
+ *     spacing ("whatsapp" / "whats app") and endings ("Amina" / "Aminas"). It is
+ *     weak on short words with a letter changed in the middle — "Ameena" scores
+ *     0.25 against "Amina" and will not be rescued — and that limit is left in
  *     place rather than lowering the bar, because a threshold loose enough to catch
  *     it also catches everything else.
  *

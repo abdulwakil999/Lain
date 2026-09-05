@@ -104,6 +104,18 @@ object WhenParser {
     private data class Clock(val hour: Int, val minute: Int)
 
     private fun clockTime(t: String): Clock? {
+        // "2 26 pm", "at 2 26" — a space where the colon should be. Speech recognition
+        // produces this constantly, and it used to parse as nothing.
+        Regex("\\b(?:at|for)\\s+(\\d{1,2})\\s+(\\d{2})\\b").find(t)?.let { m ->
+            val hour = m.groupValues[1].toIntOrNull() ?: return null
+            val minute = m.groupValues[2].toIntOrNull() ?: return null
+            if (hour <= 23 && minute <= 59) return Clock(applyMeridiem(hour, "", t), minute)
+        }
+        Regex("\\b(\\d{1,2})\\s+(\\d{2})\\s*(am|pm|a\\.m\\.|p\\.m\\.)\\b").find(t)?.let { m ->
+            val hour = m.groupValues[1].toIntOrNull() ?: return null
+            val minute = m.groupValues[2].toIntOrNull() ?: return null
+            if (hour <= 23 && minute <= 59) return Clock(applyMeridiem(hour, m.groupValues[3], t), minute)
+        }
         // 7:30, 07:30, 2.30, with optional am/pm.
         Regex("\\b(\\d{1,2})[:.](\\d{2})\\s*(am|pm|a\\.m\\.|p\\.m\\.)?").find(t)?.let { m ->
             val hour = m.groupValues[1].toIntOrNull() ?: return null
@@ -214,6 +226,8 @@ object WhenParser {
         var out = text.lowercase()
         out = out.replace(Regex("\\bin\\s+(a|an|\\d+)\\s*(second|sec|minute|min|hour|hr|day)s?\\b"), " ")
         out = out.replace(Regex("\\b\\d{1,2}[:.]\\d{2}\\s*(am|pm|a\\.m\\.|p\\.m\\.)?"), " ")
+        out = out.replace(Regex("\\b\\d{1,2}\\s+\\d{2}\\s*(am|pm|a\\.m\\.|p\\.m\\.)"), " ")
+        out = out.replace(Regex("\\b\\d{1,2}\\s*o'?\\s*clock\\b"), " ")
         out = out.replace(Regex("\\b\\d{1,2}\\s*(am|pm|a\\.m\\.|p\\.m\\.)\\b"), " ")
         for (day in DAY_NAMES.keys) out = out.replace(Regex("\\bevery\\s+$day\\b"), " ").replace(Regex("\\b$day\\b"), " ")
         for (noise in NOISE.sortedByDescending { it.length }) out = out.replace(Regex("\\b${Regex.escape(noise)}\\b"), " ")

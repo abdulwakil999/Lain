@@ -8,6 +8,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.lain.assistant.automation.LockScreenAccess
 import com.lain.assistant.ui.LainViewModelFactory
 import com.lain.assistant.ui.chat.ChatViewModel
 import com.lain.assistant.ui.mini.MiniChatScreen
@@ -41,6 +42,19 @@ class MiniActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Usable from the lock screen on phones that have no credential set.
+        //
+        // On those the keyguard is a swipe and dismissing it protects nothing, so
+        // asking someone to unlock before they can say "torch on" is a step that
+        // guards nothing. Where a PIN or pattern *is* set this asks Android to raise
+        // the user's own prompt and gets nowhere unless they answer it — there is no
+        // path here that goes around it, and there should not be.
+        val lock = LockScreenAccess(this)
+        if (lock.isLocked() && !lock.hasCredential()) {
+            lock.unlock(this) { }
+        }
+
         request = readRequest(intent)
         val container = (application as LainApplication).container
 

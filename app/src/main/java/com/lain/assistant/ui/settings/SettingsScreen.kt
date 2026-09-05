@@ -2,6 +2,8 @@ package com.lain.assistant.ui.settings
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -172,6 +174,20 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             Spacer(Modifier.height(24.dp))
             SectionLabel("${state.provider.displayName} API key")
             PixelTextField(state.apiKey, viewModel::setApiKey, "API key", isPassword = true)
+            Spacer(Modifier.height(6.dp))
+            // The step that otherwise stops people using the app: a field asking for a
+            // key, and nowhere to get one. Points at whichever provider is selected.
+            Text(
+                "Register your API key here",
+                style = MaterialTheme.typography.bodyMedium,
+                color = LainSalmon,
+                modifier = Modifier
+                    .clickable { openLink(context, state.provider.keyPageUrl) }
+                    .padding(vertical = 4.dp)
+                    .semantics {
+                        contentDescription = "Open ${state.provider.displayName}'s API key page"
+                    }
+            )
 
             Spacer(Modifier.height(16.dp))
             PixelButton(
@@ -191,11 +207,9 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             Spacer(Modifier.height(24.dp))
             SectionLabel("Lain's voice (Fish Audio)")
             Text(
-                "Fish Audio runs on their servers, not the phone — nothing about it can be " +
-                    "installed here. What can be downloaded is the audio: every line she says " +
-                    "without a model gets rendered once and kept, so all of it works with no " +
-                    "signal afterwards. Replies that came from a model still need the network " +
-                    "they needed anyway.",
+                "Fish Audio runs on their servers. Download her voice and every line she says " +
+                    "without a model is saved here, so it works with no signal. Model replies " +
+                    "still need the network.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = LainMuted
             )
@@ -205,9 +219,8 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             PixelTextField(state.fishVoiceId, viewModel::setFishVoiceId, "Voice ID (blank = default)")
             Spacer(Modifier.height(6.dp))
             Text(
-                "Pick a voice at fish.audio and paste its ID. No voice is chosen for you: the " +
-                    "library is theirs and its IDs change, so a hardcoded one would eventually " +
-                    "fail silently. Something low, dry and flat suits her.",
+                "Pick a voice at fish.audio and paste its ID. Leave blank for the default. " +
+                    "Something low and flat suits her.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = LainMuted
             )
@@ -431,10 +444,9 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             Spacer(Modifier.height(24.dp))
             SectionLabel("Channels")
             Text(
-                "Reddit and Discord publish APIs an individual can actually get credentials for, " +
-                    "so Lain can post to them. Instagram, Facebook, X and Threads do not — posting " +
-                    "as you needs a business account and their app review, and there is no key that " +
-                    "changes that. She'll say so plainly rather than pretending.",
+                "Reddit and Discord let her post with your own credentials. Instagram, Facebook, " +
+                    "X and Threads don't — they need a business account and app review, so no key " +
+                    "will unlock them.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = LainMuted
             )
@@ -460,8 +472,7 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             PixelTextField(state.redditPassword, viewModel::setRedditPassword, "Reddit password")
             Spacer(Modifier.height(6.dp))
             Text(
-                "Stored encrypted on the phone and sent only to Reddit. Posting is public and " +
-                    "gets confirmed first, every time.",
+                "Encrypted on your phone, sent only to Reddit. Every post is confirmed first.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = LainMuted
             )
@@ -476,12 +487,10 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
 
             Text(
                 if (isAssistant) {
-                    "Lain is your assistant. Hold the power button, or whatever gesture your phone " +
-                        "uses, and she opens listening."
+                    "She's your assistant. Hold the power button and she opens listening."
                 } else {
-                    "Android decides which app the power-button hold opens, and only you can change " +
-                        "it — an app is not allowed to make itself the assistant. Lain is in the list " +
-                        "now; pick her there."
+                    "Only you can choose your assistant — an app can't pick itself. Lain's in the " +
+                        "list; select her there."
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (isAssistant) LainCream else LainMuted
@@ -513,8 +522,7 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
                 if (exactAlarms) {
                     "Alarms fire on the minute."
                 } else {
-                    "Android is batching Lain's alarms to save power, so they can land a few minutes late. " +
-                        "Fine for a reminder, not for waking up."
+                    "Android is batching her alarms to save power, so they can be minutes late."
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (exactAlarms) LainCream else LainMuted
@@ -530,10 +538,10 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             Spacer(Modifier.height(12.dp))
             Text(
                 if (dndAccess) {
-                    "Lain can turn Do Not Disturb on and off without leaving the app."
+                    "She can switch Do Not Disturb without leaving the app."
                 } else {
-                    "Do Not Disturb and the silent/vibrate switch need Android's notification-policy access. " +
-                        "Until it's granted Lain will say so rather than pretending she changed it."
+                    "Do Not Disturb needs notification-policy access. Without it she'll tell you " +
+                        "rather than pretend."
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (dndAccess) LainCream else LainMuted
@@ -630,6 +638,22 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             PixelButton(text = if (state.justSaved) "Saved" else "Save", onClick = viewModel::save, enabled = state.loaded && state.canSave)
             Spacer(Modifier.height(40.dp))
         }
+    }
+}
+
+/**
+ * Opens a link in the browser.
+ *
+ * Wrapped rather than called inline because a phone with no browser at all is a
+ * real thing — a locked-down work device, a stripped ROM — and a crash there would
+ * be a worse outcome than a link that quietly does nothing.
+ */
+private fun openLink(context: android.content.Context, url: String) {
+    runCatching {
+        context.startActivity(
+            android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
     }
 }
 

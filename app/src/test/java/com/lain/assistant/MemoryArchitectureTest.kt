@@ -174,7 +174,14 @@ class PromptBudgetTest {
         val weak = build(free = true)
         println("system prompt: strong ${strong.length} chars, weak ${weak.length} chars")
 
-        assertTrue("strong-model prompt has grown to ${strong.length} chars", strong.length < 3500)
+        // Raised from 3500 once, deliberately and with a reason. What pushed it there
+        // was not guidance but *facts* a model cannot know and otherwise invents: who
+        // built her, that she is a woman, that the anime of the same name is not where
+        // the name came from. Each of those replaced a confident fabrication with one
+        // short true sentence, which is the opposite of the padding this budget exists
+        // to prevent. The rule still holds for behaviour: if the next increase is a
+        // paragraph telling her how to act, it does not get one.
+        assertTrue("strong-model prompt has grown to ${strong.length} chars", strong.length < 3600)
         assertTrue("weak-model prompt has grown to ${weak.length} chars", weak.length < 2700)
         assertTrue("the weak-model prompt should be the shorter one", weak.length < strong.length)
     }

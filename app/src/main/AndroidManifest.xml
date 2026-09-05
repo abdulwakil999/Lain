@@ -168,7 +168,9 @@
             android:theme="@style/Theme.Lain.Mini"
             android:launchMode="singleTask"
             android:excludeFromRecents="true"
-            android:windowSoftInputMode="adjustResize" />
+            android:windowSoftInputMode="adjustResize"
+            android:turnScreenOn="true"
+            android:showWhenLocked="true" />
 
         <!-- The ringing surface for alarms and scheduled calls. Shows over the
              lock screen because an alarm that needs unlocking first is not an alarm.

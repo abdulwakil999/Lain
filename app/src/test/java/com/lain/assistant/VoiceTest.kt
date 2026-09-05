@@ -80,7 +80,7 @@ class VoiceTest {
         listOf(
             Replies.greetings, Replies.thanks, Replies.howAreYou, Replies.goodbyes,
             Replies.affirmations, Replies.lainName, Replies.appName, Replies.necio,
-            Replies.animeName, Replies.developer, Replies.developerChallenge,
+            Replies.animeName, Replies.developer, Replies.developerChallenge(),
             Replies.developerAccepted, Replies.developerRejected, Replies.capabilities,
             Replies.sassPrefixes
         ).forEach { bank ->

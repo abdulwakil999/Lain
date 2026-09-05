@@ -46,8 +46,6 @@ class LegalTextTest {
         // The re-consent screen keys off this number; leaving it at 1 after editing
         // the text means nobody who already accepted is ever shown the change.
         assertTrue("VERSION was not bumped with the text", LegalText.VERSION >= 2)
-        assertTrue(LegalText.WHATS_CHANGED.isNotBlank())
-        assertTrue(LegalText.WHATS_CHANGED.contains("Location"))
     }
 
     @Test

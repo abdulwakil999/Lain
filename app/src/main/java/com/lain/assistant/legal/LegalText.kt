@@ -30,69 +30,9 @@ object LegalText {
      *     conversation are saved without being asked to remember them.
      * 4 — an optional voice service (Fish Audio), which receives the text she speaks.
      * 5 — the calendar, taught skills, and optional Reddit and Discord posting.
+     * 6 — alarms are set in the phone's clock app rather than inside Lain.
      */
-    const val VERSION = 5
-
-    /**
-     * What changed since the last version, shown above the documents on the re-consent
-     * screen.
-     *
-     * Present because "the policy has been updated, please re-accept" with three
-     * thousand words underneath is how nobody reads a policy twice. The list is short
-     * enough to actually be read, and every line names something that genuinely
-     * changed rather than restating what the app already did.
-     */
-    val WHATS_CHANGED = """
-        WHAT CHANGED
-
-        Location. Lain now asks for coarse location, once, and uses it for one thing:
-        answering "where am I". The previous policy said location was never requested.
-        That is no longer true, so this is being put back in front of you. Refusing it
-        costs you that one answer and nothing else.
-
-        Permissions are asked for once. Anything you decline is not asked for again on
-        the next launch. Where a feature needs something you refused, she says so.
-
-        Code and schoolwork. Lain will now write code and help with assignments. Those
-        questions go to your AI provider like any other, so treat anything you paste
-        into them the same way.
-
-        "Knows" is now called "Memoria". Same screen, same data, same delete buttons.
-
-        A record of what she did. Every action she takes on the phone is now logged
-        on the device — what it was, what it was aimed at, and whether it worked. It
-        holds no message contents and no screen contents. It exists so you can check
-        her account of a task against what actually happened, which is the one thing
-        you could not do before. It's in Memoria, under "Historial", with a button
-        that clears it.
-
-        Your calendar. Lain can read what's coming up, and add events if you let her.
-        It goes through the calendar already on your phone, so it works offline and no
-        calendar data is sent anywhere. Reading and adding are separate permissions
-        and either can be refused on its own.
-
-        Skills she keeps. You can teach her a procedure — "when I say wind down, do
-        this" — and it stays on the phone for good. Skills are listed in Memoria under
-        "Habilidades" and delete like anything else there.
-
-        Reddit and Discord, if you set them up. Nothing is sent to either until you
-        enter credentials in Settings, and every post is confirmed with you first.
-        Instagram, Facebook, X and Threads are not supported: posting as you needs a
-        business account and their review process, and no key you can enter changes
-        that.
-
-        A voice, if you want one. Lain can now speak with a voice from Fish Audio
-        instead of the phone's built-in one. It is off unless you enter a key, and it
-        is a service on the internet, not something running on your phone: what she is
-        about to say is sent to them to be turned into audio. Downloading her voice
-        renders her fixed lines once and keeps the audio here, so those work offline
-        afterwards and are not sent again.
-
-        Memory that saves itself. When you state something durable — a birthday, a
-        relative's name, where you work — she now files it without being asked to
-        remember it. It is listed in Memoria like everything else and can be deleted
-        the same way.
-    """.trimIndent()
+    const val VERSION = 6
 
     val PRIVACY = """
         PRIVACY POLICY
@@ -109,7 +49,8 @@ object LegalText {
         Your name, nickname, age and gender, entered during setup.
         Your conversations with Lain.
         What Lain remembers about you — facts she saves as you talk.
-        Your alarms, reminders and scheduled tasks.
+        Your reminders and scheduled tasks. Alarms are set in your phone's own clock
+        app, not stored here.
         Notes you ask her to keep.
         A log of actions she has taken: what the action was, what it was aimed at,
         whether it succeeded, and the request it was part of. Capped at the most

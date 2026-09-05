@@ -73,6 +73,10 @@ sealed class LocalIntent {
     /** Whatever they said next, read as their answer to the challenge. */
     data class DeveloperAnswer(val text: String) : LocalIntent()
 
+    /** The phrase that gives the role up on this device, and its confirmation. */
+    object StandDownRequest : LocalIntent()
+    data class StandDownAnswer(val text: String) : LocalIntent()
+
     /** "what alarms have I got", "list my reminders". */
     object ListSchedule : LocalIntent()
 
@@ -296,10 +300,12 @@ object FastRouter {
         // she would do the thing instead of learning it.
         SkillTeacher.parse(message)?.let { return Route.LearnSkill(it.name, it.steps) }
 
-        // Ahead of everything, including the local matchers: a challenge is armed and
-        // this message is the reply to it, whatever else it looks like. Routing "soft"
-        // anywhere else would send the one word that proves who he is to a model.
+        // Ahead of everything, including the local matchers: a gate is open and this
+        // message is the reply to it, whatever else it looks like. Sending the word
+        // that settles it to a model would be the one leak that matters.
         if (DeveloperGate.isArmed) return Route.Local(LocalIntent.DeveloperAnswer(message))
+        if (DeveloperGate.isStandingDown) return Route.Local(LocalIntent.StandDownAnswer(message))
+        if (DeveloperGate.looksLikeStandDown(message)) return Route.Local(LocalIntent.StandDownRequest)
 
         // Resolved once and reused: a local reading beats both of the checks below,
         // so "open Python" stays an app launch and "solve 12 x 4" stays arithmetic.
@@ -425,6 +431,8 @@ object FastRouter {
             // "set an alarm for 2:30" is a clock time and would otherwise fall
             // through to the model.
             ?: showAlarms(t) ?: listSchedule(t) ?: cancelSchedule(t) ?: schedule(t) ?: timer(t)
+            // Before the immediate commands below, or "open WhatsApp at 2:26" opens it now.
+            ?: scheduledCommand(t)
             // Search before the plain app launcher: "open chrome and search X" names an
             // app but is not an app launch, and going through the model for it cost
             // five round trips and stalled halfway.
@@ -605,6 +613,47 @@ object FastRouter {
 
         val alarm = t.contains("alarm") || t.contains("wake me")
         return LocalIntent.Schedule(phrase = t, alarm = alarm)
+    }
+
+    /**
+     * A command with a clock time in it is a command *for later*.
+     *
+     * "Open WhatsApp at 2:26 pm" opened WhatsApp immediately, because scheduling was
+     * only recognised by opener words — "remind me", "set an alarm" — and this has
+     * none of them. It reads as an app launch that happens to contain a number, and
+     * that is precisely how it behaved. The same held for "call Ade at 6" and
+     * "text mum at 9".
+     *
+     * The signal is the time, not the vocabulary. A future clock time attached to an
+     * actionable command means the command belongs to the scheduler; without one,
+     * nothing changes and the command runs now.
+     *
+     * Countdowns are excluded deliberately — "call her in five minutes" is a timer,
+     * and [timer] phrases it better. So are past times, which almost always means the
+     * number was never a time at all.
+     */
+    private fun scheduledCommand(t: String): LocalIntent? {
+        // Only commands that actually reach out. Toggling a torch at 3pm is not a
+        // thing people ask for, and treating every number as a schedule would be a
+        // much worse bug than the one this fixes.
+        val actionable = Regex(
+            "^(open|launch|start|call|ring|dial|text|message|whatsapp|sms|play)\\b"
+        ).containsMatchIn(t)
+        if (!actionable) return null
+
+        // A preposition of time has to be present. "Call 07700900123" is a phone
+        // number, not six minutes past seven.
+        if (!Regex("\\b(at|by|around|on)\\b").containsMatchIn(t)) return null
+
+        val parsed = WhenParser.parse(t) ?: return null
+        if (Regex("\\bin\\s+(a|an|\\d+)\\s*(second|sec|minute|min|hour|hr)s?\\b").containsMatchIn(t)) {
+            return null
+        }
+        // Resolved to the past means the parser latched onto something that was not a
+        // time. Scheduling it would fire instantly, which looks exactly like the bug.
+        if (parsed.triggerAtMillis <= System.currentTimeMillis() + 30_000) return null
+
+        return LocalIntent.Schedule(phrase = t, alarm = false)
     }
 
     private fun listSchedule(t: String): LocalIntent? = when {

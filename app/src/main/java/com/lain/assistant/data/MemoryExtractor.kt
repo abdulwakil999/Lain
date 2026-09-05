@@ -6,7 +6,7 @@ package com.lain.assistant.data
  * Memory used to depend on someone saying "remember that…", or on a housekeeping
  * request to the model that ran on roughly one turn in three, skipped short
  * messages, skipped anything that looked like a command, and never ran at all on
- * the local fast path. So "my mum's name is Salima" — the exact kind of thing an
+ * the local fast path. So "my mum's name is Amina" — the exact kind of thing an
  * assistant exists to hold on to — was usually answered and then dropped. The user
  * finds out weeks later, by being asked something they already said.
  *
@@ -21,7 +21,7 @@ package com.lain.assistant.data
  *
  * Two rules keep it from filling the store with rubbish. It reads only the user's
  * own words — never Lain's reply, or she learns her own inventions as fact. And it
- * ignores questions, because "is my mum's name Salima?" is someone asking, not
+ * ignores questions, because "is my mum's name Amina?" is someone asking, not
  * someone telling.
  */
 object MemoryExtractor {
@@ -182,7 +182,7 @@ object MemoryExtractor {
     /**
      * A rule whose sentence names its own subject.
      *
-     * "My mum's name is Salima" and "Salima is my mum" carry the same two pieces in
+     * "My mum's name is Amina" and "Amina is my mum" carry the same two pieces in
      * opposite orders, so the relative is whichever half is a relationship word.
      */
     private fun twoPart(rule: Rule, groups: List<String>): Candidate? {

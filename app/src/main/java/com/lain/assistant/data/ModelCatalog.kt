@@ -1,14 +1,30 @@
 package com.lain.assistant.data
 
-enum class Provider(val displayName: String, val apiBaseUrl: String) {
-    OPENROUTER("OpenRouter", "https://openrouter.ai/api/v1/"),
-    ANTHROPIC("Anthropic", "https://api.anthropic.com/v1/"),
-    OPENAI("OpenAI", "https://api.openai.com/v1/"),
+/**
+ * @param keyPageUrl where a person actually gets a key for this provider.
+ *
+ * Held here rather than in the settings screen because it belongs to the provider,
+ * not to the layout — and because "enter your API key" with nowhere to get one is
+ * the step that stops people using the app at all. Every provider's own key page,
+ * one tap from the field that wants it.
+ */
+enum class Provider(
+    val displayName: String,
+    val apiBaseUrl: String,
+    val keyPageUrl: String
+) {
+    OPENROUTER("OpenRouter", "https://openrouter.ai/api/v1/", "https://openrouter.ai/keys"),
+    ANTHROPIC("Anthropic", "https://api.anthropic.com/v1/", "https://console.anthropic.com/settings/keys"),
+    OPENAI("OpenAI", "https://api.openai.com/v1/", "https://platform.openai.com/api-keys"),
     // Uses Gemini's OpenAI-compatibility endpoint so it can share the same
     // chat-completions client as OpenRouter/OpenAI/Grok instead of needing a
     // fourth bespoke request/response schema.
-    GEMINI("Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai/"),
-    GROK("xAI Grok", "https://api.x.ai/v1/")
+    GEMINI(
+        "Google Gemini",
+        "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "https://aistudio.google.com/apikey"
+    ),
+    GROK("xAI Grok", "https://api.x.ai/v1/", "https://console.x.ai/")
 }
 
 data class ModelInfo(

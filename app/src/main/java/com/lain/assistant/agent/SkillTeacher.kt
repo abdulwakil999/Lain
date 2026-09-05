@@ -15,6 +15,9 @@ object SkillTeacher {
     /** @param name the handle; [steps] the procedure in the user's own words. */
     data class Taught(val name: String, val steps: String, val triggers: List<String>)
 
+    /** Words without which no lesson can be phrased. Checked before the patterns. */
+    private val CUES = listOf("i say", "skill", "teach", "means")
+
     private val PATTERNS = listOf(
         // "when I say wind down, do X"
         Regex(
@@ -50,6 +53,12 @@ object SkillTeacher {
     fun parse(message: String): Taught? {
         val text = message.trim().removeSuffix(".")
         if (text.length < 12 || text.length > 700) return null
+
+        // A cheap scan before four regexes. Teaching always contains one of these
+        // words, and the router runs this on every message — ordinary commands should
+        // not pay for pattern matching that cannot possibly match.
+        val lowered = text.lowercase()
+        if (CUES.none { lowered.contains(it) }) return null
 
         for (pattern in PATTERNS) {
             val match = pattern.find(text) ?: continue

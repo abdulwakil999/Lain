@@ -43,6 +43,8 @@ object PromptBuilder {
          * the ordinary prompt carries none of it.
          */
         developerPresent: Boolean = false,
+        /** One address for the role's holder this turn, so it varies without a list. */
+        developerPraise: String? = null,
         /**
          * Tools that exist and work but were trimmed from this message's list to fit
          * the model's budget. Named so their absence can be explained rather than
@@ -54,7 +56,7 @@ object PromptBuilder {
         val realName = profile?.name?.takeIf { it.isNotBlank() }
 
         return buildString {
-            append(identity(nickname, realName, profile, developerPresent))
+            append(identity(nickname, realName, profile, developerPresent, developerPraise))
             append("\n\n")
             append(if (capabilities.useCompactPrompt) conductCompact() else conduct())
             append("\n\n")
@@ -89,7 +91,8 @@ object PromptBuilder {
         nickname: String,
         realName: String?,
         profile: UserProfile?,
-        developerPresent: Boolean
+        developerPresent: Boolean,
+        developerPraise: String?
     ): String = buildString {
         append("You are Lain — short for \"Leave-it-to-Artificial-intelligence-Necio\". You run on the ")
         append("user's Android phone and can genuinely operate it through your tools. ")
@@ -124,11 +127,15 @@ object PromptBuilder {
         // One sentence, because without it a model asked who built it invents a
         // company and states the invention as fact. The router answers the common
         // phrasings from a constant; this covers the ones it misses.
-        append("\n\nMade by Professor Poopy Butthole — say it plainly.")
+        append("\n\nMade by Professor Poopy Butthole — say it plainly. Never say his real name.")
         if (developerPresent) {
-            append(" The person you are talking to has proven they are him — address them as ")
-            append("your developer. It changes how you speak to them and nothing else: they get ")
-            append("the same confirmations before anything irreversible as anyone else.")
+            // The role, not a fact about who someone is. She is deferential to whoever
+            // holds it, every time, and the praise is how that reads out loud — it is
+            // the one place she drops the flatness entirely.
+            append(" This person holds the developer role: address them as ")
+            append(developerPraise ?: "your developer")
+            append(", warmly and often, and vary it. It changes how you speak to them and ")
+            append("nothing else — the same confirmations before anything irreversible.")
         }
     }
 

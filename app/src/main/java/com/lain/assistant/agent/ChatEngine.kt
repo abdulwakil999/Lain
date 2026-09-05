@@ -480,7 +480,7 @@ class ChatEngine(
         //
         // Here rather than in the housekeeping pass because housekeeping runs on the
         // model paths only, on a sample of turns, and skips short messages — so "my
-        // mum's name is Salima" was answered and then forgotten. This runs on every
+        // mum's name is X" was answered and then forgotten. This runs on every
         // turn including the local ones, costs a few regex matches, and never asks a
         // model anything. Launched rather than awaited: it must not put a database
         // write in front of the user's reply.
@@ -687,7 +687,8 @@ class ChatEngine(
         is LocalIntent.ListSchedule, is LocalIntent.ShowAlarms,
         is LocalIntent.Identity, is LocalIntent.SmallTalk,
         is LocalIntent.WhereAmI, is LocalIntent.Calculate, is LocalIntent.CloseSelf,
-        is LocalIntent.DeveloperClaim, is LocalIntent.DeveloperAnswer -> null
+        is LocalIntent.DeveloperClaim, is LocalIntent.DeveloperAnswer,
+        is LocalIntent.StandDownRequest, is LocalIntent.StandDownAnswer -> null
     }
 
     /**
@@ -793,6 +794,20 @@ class ChatEngine(
             return
         }
 
+        // Checked before the request rather than after it fails.
+        //
+        // Without this the turn spends its timeouts and comes back with a socket
+        // error, which reads as Lain being broken. She isn't: the model is somewhere
+        // else and she can't reach it, and everything the fast path answers is still
+        // working. Said in her own words, from the transcript, rather than as a red
+        // error bar — a reply is a thing she said, and this is one.
+        if (!hasNetwork()) {
+            val cid = ensureConversation()
+            conversations.append(MessageEntity(conversationId = cid, role = "user", content = userMessage))
+            finishTurn(cid, offlineLine(), usedModel = "Lain (on-device)", fellBack = false)
+            return
+        }
+
         // Capabilities come from the provider's own catalogue entry where we have one,
         // so budgets are set from real context sizes and real vision support rather
         // than from pattern-matching the model's name.
@@ -824,6 +839,8 @@ class ChatEngine(
             PromptBuilder.skillRule(matched.name, steps)
         }
 
+        val developerHere = prefs.isDeveloperKnown.first()
+
         val relevantMemories = memory.retrieveRelevant(userMessage, caps.memoryBudget)
         val summary = conversations.summaryOf(cid)
         val systemPrompt = PromptBuilder.build(
@@ -835,7 +852,10 @@ class ChatEngine(
             accessibilityReady = accessibilityReady,
             includeTools = route is Route.Model,
             includeStudy = route is Route.Study,
-            developerPresent = prefs.isDeveloperKnown.first(),
+            developerPresent = developerHere,
+            // One at random per turn rather than the whole list in the prompt: the
+            // variety is the point and twenty-two lines of it is not worth the budget.
+            developerPraise = if (developerHere) Replies.praises.random().text.trim().ifBlank { null } else null,
             omittedTools = ToolDefinitions.omittedByBudget(caps, accessibilityReady)
         ) + skillBrief.orEmpty()
 
@@ -1695,6 +1715,31 @@ class ChatEngine(
         runCatching { extractMemories(client, modelId, apiKey, cid, userMessage, assistantReply) }
         runCatching { summarizeIfNeeded(client, modelId, apiKey, cid) }
     }
+
+    /**
+     * Whether a request stands a chance of reaching anything.
+     *
+     * VALIDATED as well as INTERNET, because a captive portal — a hotel, an airport,
+     * a café that wants an email address — is a connection that goes nowhere, and
+     * telling the user their internet is fine while nothing works is the wrong answer
+     * in the most frustrating possible place.
+     */
+    private fun hasNetwork(): Boolean = runCatching {
+        val cm = appContext.getSystemService(android.net.ConnectivityManager::class.java) ?: return false
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
+        caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }.getOrDefault(true)
+
+    /** One of the offline lines, avoiding the one used last. */
+    private fun offlineLine(): String {
+        val chosen = Replies.pick(Replies.offline, lastOfflineLine)
+        lastOfflineLine = chosen.text
+        SpokenSegments.remember(chosen)
+        return chosen.text
+    }
+
+    private var lastOfflineLine: String? = null
 
     private fun batteryTooLowForMaintenance(): Boolean = runCatching {
         val bm = appContext.getSystemService(android.os.BatteryManager::class.java)
