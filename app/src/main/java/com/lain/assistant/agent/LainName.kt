@@ -42,14 +42,31 @@ object LainName {
      */
     private val VOCATIVE_BEFORE = setOf(
         "hello", "hey", "hi", "yo", "ok", "okay", "hallo", "helo", "oi", "excuse me",
-        "thanks", "thank you", "please", "sorry", "morning", "goodnight", "night"
+        "thanks", "thank you", "please", "sorry", "morning", "goodnight", "night",
+        // The other half of how people actually open: agreeing, refusing, or calling
+        // out. All of these were reaching a model as a sentence addressed to a road.
+        "yes", "no", "nah", "yeah", "yep", "wait", "listen", "look", "alright",
+        "right", "cheers", "afternoon", "evening", "welcome", "bye", "goodbye"
     )
 
-    /** Words that only ever follow a name being addressed. */
+    /**
+     * Words that only ever follow a name being addressed.
+     *
+     * "is" used to be on this list and had to come off. "rain" is a homophone, so
+     * "rain is heavy today" matched the rule at position zero and was rewritten into
+     * "Lain is heavy today" — the exact failure this whole file exists to avoid,
+     * caused by the fix for it. A copula after a noun is ordinary English; a command
+     * or a question after a name is not.
+     */
     private val VOCATIVE_AFTER = setOf(
-        "can", "could", "would", "will", "please", "what", "whats", "why", "how", "when",
-        "where", "who", "are", "is", "do", "does", "did", "open", "call", "text",
-        "send", "play", "set", "turn", "stop", "tell", "show", "read", "find"
+        "can", "could", "would", "will", "should", "please", "what", "whats", "why",
+        "how", "when", "where", "who", "which", "are", "do", "does", "did",
+        "open", "call", "text", "send", "play", "set", "turn", "stop", "tell",
+        "show", "read", "find", "close", "search", "remind", "message", "ring",
+        "listen", "wake", "help", "give", "make", "put", "take", "let", "get",
+        "add", "start", "cancel", "repeat", "answer", "speak", "say",
+        // Addressed and then talked about: "Lain I need you", "Lain we're leaving".
+        "i", "im", "ive", "we", "you", "my"
     )
 
     /**
@@ -106,9 +123,18 @@ object LainName {
             val after = words.getOrNull(i + 1)?.let(::key)
             val opener = words.firstOrNull()?.let(::key)
 
+            // A comma against the word, at the very start, is somebody being spoken to:
+            // "Lane, the wifi's off". Restricted to the opening word on purpose — a
+            // comma mid-sentence is as likely to be a list ("the aisle, the lane, the
+            // window") and rewriting the user's own words there is the failure this
+            // whole file exists to prevent.
+            val punctuated = i == 0 && words[i].endsWith(",")
+
             val addressed = when {
                 // The whole message is the name.
                 words.size == 1 -> true
+
+                punctuated -> true
 
                 // An article or preposition in front means it is a thing, not a
                 // person — "the line", "about the line" — and that beats everything

@@ -41,7 +41,17 @@ enum class TaskAction {
     WHATSAPP,
 
     /** Brings an app to the front. */
-    OPEN_APP
+    OPEN_APP,
+
+    /**
+     * Says something at a time: "tell me goodnight every day at eleven".
+     *
+     * Distinct from REMIND because the words *are* the point. A reminder is a note
+     * about a thing to do later; this is the thing itself, so the notification reads
+     * "Goodnight." rather than "Reminder: tell me goodnight", and it is spoken aloud
+     * where the phone's ringer allows it.
+     */
+    SAY
 }
 
 /** How often a task comes back. */
@@ -96,6 +106,7 @@ data class ScheduledTask(
             TaskAction.SMS -> "text $target"
             TaskAction.WHATSAPP -> "message $target on WhatsApp"
             TaskAction.OPEN_APP -> "open $target"
+            TaskAction.SAY -> "say: $label"
         }
         return "$time$day — $what" + if (!enabled) " (off)" else ""
     }

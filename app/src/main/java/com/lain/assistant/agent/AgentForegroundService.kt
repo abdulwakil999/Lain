@@ -75,7 +75,14 @@ class AgentForegroundService : Service() {
         }
 
         val status = intent?.getStringExtra(EXTRA_STATUS) ?: "Working…"
-        startForeground(NOTIFICATION_ID, buildNotification(status))
+        // Guarded for the same reason [start] is: the promotion can be refused from
+        // the background, and the throw lands here rather than at the call site. A
+        // task that runs without the wake lock is a degradation; a crash is not.
+        val promoted = runCatching { startForeground(NOTIFICATION_ID, buildNotification(status)) }.isSuccess
+        if (!promoted) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         acquireWakeLock()
         return START_STICKY
     }

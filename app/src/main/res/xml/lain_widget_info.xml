@@ -22,4 +22,6 @@
     android:previewLayout="@layout/widget_lain"
     android:description="@string/widget_square_description"
     android:resizeMode="horizontal|vertical"
-    android:widgetCategory="home_screen|keyguard" />
+    android:widgetCategory="home_screen|keyguard"
+    android:configure="com.lain.assistant.WidgetConfigActivity"
+    android:widgetFeatures="reconfigurable|configuration_optional" />

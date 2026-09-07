@@ -22,6 +22,14 @@ object ToolDefinitions {
             briefDescription = "Open an installed app by name."
         ),
         ToolDefinition(
+            name = "list_apps",
+            description = "List the apps installed on this phone. Use it before telling the user an app isn't installed, and to find the real display name when a launch didn't match — \"WhatsApp Business\" and \"WhatsApp\" are different apps with the same nickname. Optionally filter by a word.",
+            parameters = schema {
+                property("contains", "string", "Only apps whose name contains this. Leave blank for all.")
+            },
+            briefDescription = "List installed apps, optionally filtered."
+        ),
+        ToolDefinition(
             name = "close_app",
             description = "Close an app. Dismisses it from Recents if it's on screen, or stops its background processes if it isn't. Leave app_name blank for whatever is in the foreground.",
             parameters = schema {
@@ -276,7 +284,7 @@ object ToolDefinitions {
             parameters = schema {
                 property("contact", "string", "Contact name or phone number")
                 property("message", "string", "What to say")
-                property("app", "string", "\"whatsapp\" or \"sms\". Leave empty for SMS, which sends without opening anything.")
+                property("app", "string", "\"whatsapp\", \"telegram\", \"signal\" or \"sms\". Leave empty for SMS, which sends without opening anything.")
                 required("contact", "message")
             },
             briefDescription = "Send someone a message end to end, in one call. Use this for any \"text/message X\" request."
@@ -336,8 +344,8 @@ object ToolDefinitions {
             description = "Set an alarm, a reminder, or a recurring task at a clock time. Handles \"every day\", \"every weekday\", \"tomorrow\" and delays like \"in 20 minutes\" — pass the user's own wording in `when` and Lain resolves it. Use this rather than opening the Clock app: tasks set this way can be listed and cancelled afterwards.",
             parameters = schema {
                 property("when", "string", "The timing in the user's words, e.g. \"7:30 am every weekday\", \"2:30\", \"in 20 minutes\"")
-                property("action", "string", "remind (notification), alarm (rings with snooze), call (rings with a Call button), sms (sends a text), whatsapp (opens the chat with the message typed), open_app")
-                property("label", "string", "What it's for, e.g. \"take the tablets\"")
+                property("action", "string", "remind (notification), say (Lain says the words out loud and notifies), alarm (rings with snooze), call (rings with a Call button), sms (sends a text), whatsapp (opens the chat with the message typed), open_app")
+                property("label", "string", "What it's for, e.g. \"take the tablets\" — for say, the exact words to speak")
                 property("target", "string", "Contact name or number for call/sms; app name for open_app")
                 property("message", "string", "The text body, for sms only")
                 property("repeat", "string", "once, daily, weekdays, weekends or weekly — only if `when` doesn't already say")
@@ -595,6 +603,7 @@ object ToolDefinitions {
     private val byImportance = listOf(
         // Things that finish a whole job in one call.
         "message_contact", "search_in_app", "open_app", "web_search", "make_call", "schedule_task",
+        "list_apps",
         "set_system_toggle", "close_app",
         // Driving a screen.
         "tap_text", "type_text", "read_screen", "press_key", "swipe_screen",

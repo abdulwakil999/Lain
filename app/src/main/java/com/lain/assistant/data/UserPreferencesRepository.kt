@@ -28,6 +28,7 @@ class UserPreferencesRepository(private val context: Context) {
         val FISH_VOICE_ID = stringPreferencesKey("fish_voice_id")
         val MUTED = booleanPreferencesKey("muted")
         val OVERLAY_ENABLED = booleanPreferencesKey("overlay_enabled")
+        val ALWAYS_ON = booleanPreferencesKey("always_on")
         val MODEL_FALLBACK = booleanPreferencesKey("model_fallback")
         val BROKEN_MODELS = stringSetPreferencesKey("broken_models")
         // A snapshot of the selected model's catalogue facts, so the capability layer
@@ -120,6 +121,20 @@ class UserPreferencesRepository(private val context: Context) {
 
     suspend fun setOverlayEnabled(enabled: Boolean) {
         context.dataStore.edit { it[Keys.OVERLAY_ENABLED] = enabled }
+    }
+
+    /**
+     * Whether Lain stays loaded between turns.
+     *
+     * Off by default and deliberately so: it is a foreground service and an ongoing
+     * notification, which costs battery. On, alarms fire on the minute and the wake
+     * word stops going deaf; off, the system is free to reap the process. Neither
+     * one is the right answer for everybody, which is why it is a switch.
+     */
+    val isAlwaysOn: Flow<Boolean> = context.dataStore.data.map { it[Keys.ALWAYS_ON] ?: false }
+
+    suspend fun setAlwaysOn(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.ALWAYS_ON] = enabled }
     }
 
     /**

@@ -45,6 +45,9 @@ sealed class LocalIntent {
     /** "what's on screen", used constantly in eyes-free operation */
     object ReadScreen : LocalIntent()
 
+    /** "tap the send button", "press Continue" — the other half of eyes-free use. */
+    data class TapText(val label: String) : LocalIntent()
+
     /** "wifi on/off" and friends, which Android only lets an app deep-link to. */
     data class ToggleRequest(val page: String, val what: String) : LocalIntent()
 
@@ -438,7 +441,7 @@ object FastRouter {
             // five round trips and stalled halfway.
             ?: searchIn(t)
             ?: clearRecents(t) ?: closeApp(t)
-            ?: navigate(t) ?: readScreen(t)
+            ?: navigate(t) ?: readScreen(t) ?: tapControl(t)
             // The real toggle first; the settings-page fallback only when it misses.
             ?: systemToggle(t) ?: settingsOrToggle(t) ?: call(t)
             // Music is checked before the generic app launcher so "play spotify" is
@@ -596,8 +599,13 @@ object FastRouter {
      */
     private fun schedule(t: String): LocalIntent? {
         val opener = scheduleOpeners.any { t.contains(it) }
+        // "everyday" as one word is how most people write it, and writing it that way
+        // meant nothing was recognised as recurring at all: "tell me goodnight everyday
+        // at 11 pm" fell past the scheduler entirely and was answered by a model, which
+        // said she could not schedule anything. WhenParser has always accepted both
+        // spellings; only this gate had not.
         val recurring = Regex(
-            "\\bevery (day|morning|night|weekday|weekend|week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\\b"
+            "\\bevery ?(day|morning|night|weekday|weekend|week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\\b|\\bdaily\\b|\\beach day\\b"
         ).containsMatchIn(t)
         if (!opener && !recurring) return null
         // Requires a resolvable time, so "remind me about this later" still reaches
@@ -636,8 +644,11 @@ object FastRouter {
         // Only commands that actually reach out. Toggling a torch at 3pm is not a
         // thing people ask for, and treating every number as a schedule would be a
         // much worse bug than the one this fixes.
+        // "tell"/"say"/"wish" are here for the same reason as the rest: they are things
+        // she is being asked to do at a time, and without them "tell me goodnight at 11"
+        // was conversation with a number in it.
         val actionable = Regex(
-            "^(open|launch|start|call|ring|dial|text|message|whatsapp|sms|play)\\b"
+            "^(open|launch|start|call|ring|dial|text|message|whatsapp|sms|play|tell|say|wish)\\b"
         ).containsMatchIn(t)
         if (!actionable) return null
 
@@ -703,12 +714,24 @@ object FastRouter {
             return LocalIntent.Recite("", "", stop = true)
         }
 
-        val m = Regex(
+        // Named as scripture, so whatever follows is meant as a surah even if the
+        // spelling is unusual.
+        val named = Regex(
             "^(?:recite|play|put on|read)\\s+(?:me\\s+)?(?:the\\s+)?" +
                 "(?:quran|qur'an|koran|surah|surat|sura|chapter)\\s*(.{0,40})$"
-        ).find(t) ?: Regex(
-            "^(?:recite|read)\\s+(?:me\\s+)?(.{2,40})$"
-        ).find(t) ?: return null
+        ).find(t)
+
+        // The bare form, where the only evidence is the verb. "Read X" is far more
+        // often a request to read something on the phone, so this one has to prove
+        // itself: "read the screen" used to become a recitation of a surah whose name
+        // scored weakly against "the screen", and the display was never read.
+        val bare = named ?: Regex("^(?:recite|read)\\s+(?:me\\s+)?(.{2,40})$").find(t)
+        val m = bare ?: return null
+        if (named == null) {
+            val candidate = m.groupValues[1].trim()
+                .substringBefore(" by ").substringBefore(" with ").trim()
+            if (com.lain.assistant.automation.QuranIndex.findCertain(candidate) == null) return null
+        }
 
         var target = m.groupValues[1].trim()
         var reciter = ""
@@ -965,11 +988,77 @@ object FastRouter {
         else -> null
     }
 
-    private fun readScreen(t: String): LocalIntent? = when (t) {
-        "what's on screen", "what is on screen", "what's on the screen", "read the screen",
-        "read screen", "what do you see", "what's on my screen" -> LocalIntent.ReadScreen
-        else -> null
+    /**
+     * "What's on screen", in the shapes people actually use.
+     *
+     * This was an exact-match list of seven strings, which meant "read this page to
+     * me", "what does this say" and "what am I looking at" all went to a model with
+     * the whole toolbox — several seconds and a network round trip to run a screen
+     * read the app can do in a millisecond. The keyword pre-check keeps the regexes
+     * off the hot path for every message that has nothing to do with the screen.
+     */
+    private fun readScreen(t: String): LocalIntent? {
+        if (t in exactScreenReads) return LocalIntent.ReadScreen
+        if (!SCREEN_CUES.any { t.contains(it) }) return null
+        return if (screenQuestion.matches(t) || screenCommand.matches(t)) LocalIntent.ReadScreen else null
     }
+
+    private val exactScreenReads = setOf(
+        "what's on screen", "what is on screen", "what's on the screen", "read the screen",
+        "read screen", "what do you see", "what's on my screen", "what am i looking at",
+        "what does this say", "what does it say", "look at the screen", "look at my screen",
+        "can you see the screen", "can you see my screen", "describe the screen"
+    )
+
+    /** A cheap containment test, so the two patterns never run on an ordinary message. */
+    private val SCREEN_CUES = listOf("screen", "say", "page", "showing")
+
+    /**
+     * Anchored with matches(), not containsMatchIn().
+     *
+     * A loose version of this caught "what is he saying", which is conversation about
+     * a person and not a request to read the display. Requiring the whole message to
+     * be the question is the difference between a shortcut and a misroute.
+     */
+    private val screenQuestion = Regex(
+        "^(what|what's|whats)( does| is| are)? (this|it|that|the screen|the page)( page| screen)? " +
+            "(say|says|saying|showing|show)( me)?\\??$"
+    )
+
+    private val screenCommand = Regex(
+        "^(read|read out|look at|describe|check)( me)?( the| this| my)? (screen|page|display)( to me| for me)?\\??$"
+    )
+
+    /**
+     * "Tap the send button", "press Continue for me".
+     *
+     * The point of the whole screen-control layer for somebody who cannot see the
+     * screen, and it was the one part with no local route: every tap went through a
+     * model, which had to read the screen, decide, and call tap_text — three round
+     * trips to press a button whose name the user had already said out loud.
+     *
+     * Only claimed when a label survives the trimming. Navigation words are excluded
+     * because [navigate] and press_key own those, and a "tap" with nothing after it
+     * is not a request this can serve.
+     */
+    private fun tapControl(t: String): LocalIntent? {
+        val m = tapPattern.find(t) ?: return null
+        val label = m.groupValues[1]
+            .replace(Regex("\\b(button|icon|option|link|for me|please|now)\\b"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        if (label.length < 2 || label.length > 40) return null
+        if (label in notALabel) return null
+        return LocalIntent.TapText(label)
+    }
+
+    private val tapPattern = Regex("^(?:tap|press|click|hit|select|choose)\\s+(?:on\\s+)?(?:the\\s+)?(.+)$")
+
+    /** Words that name a gesture or a key, not something drawn on the screen. */
+    private val notALabel = setOf(
+        "back", "home", "recents", "recent apps", "enter", "return", "escape",
+        "power", "volume up", "volume down", "screen", "it", "that", "this"
+    )
 
     /** Settings pages Lain can deep-link to, keyed by the words people actually use. */
     private val settingsPages = mapOf(

@@ -108,7 +108,18 @@
         <intent>
             <action android:name="android.intent.action.DIAL" />
         </intent>
+        <!--
+            Named explicitly as well as covered by QUERY_ALL_PACKAGES, because the
+            broad permission is the one a store is most likely to strip. WhatsApp
+            Business is a separate package from WhatsApp and speaks the same deep
+            links: leaving it out is what made Lain report WhatsApp as not installed
+            on a phone that had it.
+        -->
         <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
+        <package android:name="org.telegram.messenger" />
+        <package android:name="org.thoughtcrime.securesms" />
+        <package android:name="com.spotify.music" />
         <package android:name="com.android.chrome" />
     </queries>
 
@@ -131,6 +142,53 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!--
+                The share sheet. Without these Lain simply is not in the list when you
+                share a photo, a PDF or a link from another app — the only way to get a
+                file to her was her own attach button.
+
+                Wildcard MIME on purpose: she now reads images, PDFs, Office documents,
+                video frames and plain text, and says plainly what she can't make of
+                anything else. Being in the sheet and explaining the limit beats being
+                absent from it.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+
+            <!--
+                Long-pressing the Quick Settings tile. Without this filter Android has
+                nowhere to send the gesture and falls back to App Info, which is a
+                system settings page and not what someone holding Lain's tile wants.
+            -->
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!--
+            The target for a long-press on a widget. No UI: it answers the launcher and
+            opens Lain. configuration_optional (Android 12+) keeps it out of the way
+            when a widget is first placed, so it only runs when the gesture asks for it.
+        -->
+        <activity
+            android:name=".WidgetConfigActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoDisplay"
+            android:excludeFromRecents="true"
+            android:noHistory="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
             </intent-filter>
         </activity>
 
@@ -232,6 +290,18 @@
             android:name=".agent.AgentForegroundService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- The "always on" switch in Settings. Holds no wake lock: it exists so the
+             process is not reaped, which is what makes alarms land on the minute and
+             keeps the wake word from going deaf. -->
+        <service
+            android:name=".agent.AlwaysOnService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Persistent assistant the user explicitly switches on, so scheduled tasks and the wake word keep working when the app is not in the foreground." />
+        </service>
 
         <service
             android:name=".automation.OverlayBubbleService"

@@ -87,6 +87,7 @@ object ToolRegistry {
     val meta: Map<String, ToolMeta> = listOf(
         ToolMeta("open_app", "Launch an installed app by display name.",
             commonFailures = listOf("app not installed", "no launchable activity")),
+        ToolMeta("list_apps", "List what is actually installed, so absence is checked rather than assumed."),
         // No longer accessibility-only: a background app is reaped through
         // ActivityManager, which needs no service at all.
         ToolMeta("close_app", "Close an app, from the foreground or the background.",

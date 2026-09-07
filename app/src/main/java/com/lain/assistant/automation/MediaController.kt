@@ -18,9 +18,11 @@ import android.view.KeyEvent
  *    which the OS routes to whichever app currently owns the media session. That
  *    needs no permission, no knowledge of which player is running, and no network —
  *    so "pause" works in a tunnel, which is exactly when you want it.
- *  - **Starting something** uses the platform's play-from-search intent. Spotify,
- *    YouTube Music and the rest implement it precisely so an assistant can say
- *    "play this" without knowing anything about their catalogue or API.
+ *  - **Starting something** goes to a running player's media session where there is
+ *    one, so the music starts without the player coming to the foreground; where
+ *    there isn't, it falls back to the platform's play-from-search intent, which
+ *    every player implements and which does open the app. [startPlayback] says which
+ *    of the two happened.
  *
  * The alternative — asking a model to reason its way to opening an app, reading the
  * screen, finding the search box and tapping a result — is a dozen round trips to
@@ -77,6 +79,30 @@ class MediaController(private val context: Context) {
     }.getOrDefault(false)
 
     // ----------------------------------------------------- starting playback
+
+    /** Where playback ended up, so the reply can say whether the screen changed. */
+    enum class PlayOutcome { IN_PLACE, APP_OPENED, FAILED }
+
+    /**
+     * Starts something, preferring not to leave Lain.
+     *
+     * The session route comes first because it is the one that keeps the user where
+     * they are: a running player accepts `playFromSearch` over its media session and
+     * the music simply starts, with nothing coming to the foreground. The intent is
+     * the fallback, and it *does* open the app — so the two outcomes are reported
+     * separately rather than both as "playing", because "you're now in Spotify" is
+     * exactly the thing the user wanted to be told about.
+     *
+     * The session route needs the player to already be running and notification
+     * access to be granted. Neither can be arranged from here, and neither is
+     * pretended.
+     */
+    fun startPlayback(query: String, preferredPackage: String?): PlayOutcome = when {
+        query.isNotBlank() && MediaSessions.playFromSearch(context, preferredPackage, query) ->
+            PlayOutcome.IN_PLACE
+        playFromSearch(query, preferredPackage) -> PlayOutcome.APP_OPENED
+        else -> PlayOutcome.FAILED
+    }
 
     /**
      * Asks a player to start something.

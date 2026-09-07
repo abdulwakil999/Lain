@@ -297,20 +297,30 @@ class PhoneController(private val context: Context) {
      * still requires tapping Send — which Lain can now do herself via the
      * Accessibility Service, but it has to be an explicit follow-up step.
      */
+    /**
+     * Opens a WhatsApp chat with the text already in the composer.
+     *
+     * The package comes from [Messengers] rather than being written here, which is
+     * the fix for a real failure: this used to name `com.whatsapp` outright, so a
+     * phone running WhatsApp Business (`com.whatsapp.w4b`) got an
+     * ActivityNotFoundException, and the user was told WhatsApp was not installed
+     * while looking at its icon.
+     */
     fun openWhatsAppChat(phoneNumber: String, message: String): AutomationResult {
+        val app = Messengers.byKey("whatsapp")
+            ?: return AutomationResult.Failure("WhatsApp isn't configured in this build")
+        val intent = Messengers.composeIntent(context, app, phoneNumber, message)
+            ?: return AutomationResult.Failure(
+                "WhatsApp isn't installed on this phone — neither the normal one nor Business."
+            )
         return try {
-            val uri = Uri.parse("https://wa.me/${Uri.encode(phoneNumber)}?text=${Uri.encode(message)}")
-            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                setPackage("com.whatsapp")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
             context.startActivity(intent)
             AutomationResult.Success(
                 "WhatsApp chat with $phoneNumber is open with the message drafted. It is NOT sent yet — " +
                     "call read_screen, then tap_text(\"Send\") to send it."
             )
         } catch (t: Throwable) {
-            AutomationResult.Failure(t.message ?: "WhatsApp isn't installed or couldn't be opened")
+            AutomationResult.Failure(t.message ?: "WhatsApp is installed but refused to open the chat")
         }
     }
 

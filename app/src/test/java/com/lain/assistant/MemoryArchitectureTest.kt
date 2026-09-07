@@ -174,15 +174,18 @@ class PromptBudgetTest {
         val weak = build(free = true)
         println("system prompt: strong ${strong.length} chars, weak ${weak.length} chars")
 
-        // Raised from 3500 once, deliberately and with a reason. What pushed it there
-        // was not guidance but *facts* a model cannot know and otherwise invents: who
-        // built her, that she is a woman, that the anime of the same name is not where
-        // the name came from. Each of those replaced a confident fabrication with one
-        // short true sentence, which is the opposite of the padding this budget exists
-        // to prevent. The rule still holds for behaviour: if the next increase is a
+        // Raised twice, both times for *facts* a model cannot know and otherwise
+        // invents — never for guidance. First: who built her, that she is a woman,
+        // that the anime of the same name is not where the name came from. Second:
+        // WHAT YOU ARE, after a free model told the user it could not schedule
+        // anything, had no clock of its own, and could neither hear nor speak. All
+        // four claims are false about this app and all four were stated with total
+        // confidence, because nothing in the prompt had ever said what she is. Four
+        // lines of fact for four fabrications is the trade this budget exists to
+        // make. The rule still holds for behaviour: if the next increase is a
         // paragraph telling her how to act, it does not get one.
-        assertTrue("strong-model prompt has grown to ${strong.length} chars", strong.length < 3600)
-        assertTrue("weak-model prompt has grown to ${weak.length} chars", weak.length < 2700)
+        assertTrue("strong-model prompt has grown to ${strong.length} chars", strong.length < 3800)
+        assertTrue("weak-model prompt has grown to ${weak.length} chars", weak.length < 2900)
         assertTrue("the weak-model prompt should be the shorter one", weak.length < strong.length)
     }
 
@@ -218,7 +221,7 @@ class PromptBudgetTest {
         )
         assertFalse(full.contains("left out of this message"))
         println("weak prompt with omissions: ${prompt.length} chars")
-        assertTrue("the weak prompt has grown to ${prompt.length} chars", prompt.length < 2900)
+        assertTrue("the weak prompt has grown to ${prompt.length} chars", prompt.length < 3250)
     }
 
     @Test
@@ -251,7 +254,7 @@ class PromptBudgetTest {
         assertFalse("study guidance leaked into the default prompt", ordinary.contains("CODE AND SCHOOLWORK"))
         assertTrue(study.contains("CODE AND SCHOOLWORK"))
         println("study prompt: ${study.length} chars")
-        assertTrue("the study prompt has grown to ${study.length} chars", study.length < 4200)
+        assertTrue("the study prompt has grown to ${study.length} chars", study.length < 4400)
         // No tools on this path, so their description is dead weight.
         assertFalse(study.contains("YOUR TOOLS"))
     }

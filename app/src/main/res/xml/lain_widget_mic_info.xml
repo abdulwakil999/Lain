@@ -13,4 +13,6 @@
     android:previewLayout="@layout/widget_lain_mic"
     android:description="@string/widget_mic_description"
     android:resizeMode="none"
-    android:widgetCategory="home_screen|keyguard" />
+    android:widgetCategory="home_screen|keyguard"
+    android:configure="com.lain.assistant.WidgetConfigActivity"
+    android:widgetFeatures="reconfigurable|configuration_optional" />

@@ -172,4 +172,31 @@ object QuranIndex {
         // Below certain, the name match is still the better guess of the two.
         return (byName as? FuzzyMatch.Result.Found)?.hit?.value
     }
+
+    /**
+     * The same lookup, but only when it is sure.
+     *
+     * [find] ends on its best guess, which is right once the user has said "surah"
+     * — they mean one of the 114 and the only question is which. It is wrong when
+     * the sole evidence is the verb: "read the screen" came back as a surah with a
+     * weak name score, and Lain started a recitation instead of reading the display.
+     * Callers with no other evidence use this one.
+     */
+    fun findCertain(spoken: String): Surah? {
+        val query = spoken.trim().lowercase()
+            .removePrefix("surah ").removePrefix("surat ").removePrefix("sura ")
+            .removePrefix("chapter ").trim()
+        if (query.isEmpty()) return null
+        query.toIntOrNull()?.let { return byNumber(it) }
+
+        val byName = FuzzyMatch.best(query, all) { it.name }
+        if (byName is FuzzyMatch.Result.Found && byName.hit.score >= FuzzyMatch.CERTAIN) {
+            return byName.hit.value
+        }
+        val byMeaning = FuzzyMatch.best(query, all) { it.meaning }
+        if (byMeaning is FuzzyMatch.Result.Found && byMeaning.hit.score >= FuzzyMatch.CERTAIN) {
+            return byMeaning.hit.value
+        }
+        return null
+    }
 }

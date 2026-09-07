@@ -82,7 +82,13 @@ class WakeWordService : Service() {
          */
         fun matchesWakePhrase(heard: String): Boolean {
             val corrected = LainName.normaliseHeard(heard).lowercase()
-            return GREETINGS.any { corrected.contains("$it ${LainName.CANONICAL.lowercase()}") }
+            val name = LainName.CANONICAL.lowercase()
+            if (GREETINGS.any { corrected.contains("$it $name") }) return true
+            // Her name on its own, or opening an instruction. Safe to accept because
+            // the rewrite above is what decided this was an address in the first
+            // place — a road or a queue never reaches this branch, since a homophone
+            // used as a noun is left as the user said it and never becomes "lain".
+            return corrected == name || corrected.startsWith("$name ")
         }
     }
 
@@ -111,7 +117,14 @@ class WakeWordService : Service() {
     override fun onCreate() {
         super.onCreate()
         isRunning = true
-        startForeground(NOTIFICATION_ID, buildNotification())
+        // A refused promotion throws here rather than at the caller — from the tile,
+        // from a boot, from anywhere the app is not already on screen. Stopping is a
+        // wake word that isn't listening; not stopping is a crash.
+        if (!runCatching { startForeground(NOTIFICATION_ID, buildNotification()) }.isSuccess) {
+            isRunning = false
+            stopSelf()
+            return
+        }
         // Explicitly not exported. These are protected system broadcasts so the flag
         // isn't strictly required, but being implicit here is what trips apps up on
         // Android 14, and an unexported receiver is what we actually want.

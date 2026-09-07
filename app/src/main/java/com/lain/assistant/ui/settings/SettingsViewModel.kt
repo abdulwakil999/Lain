@@ -41,6 +41,7 @@ data class SettingsUiState(
     val redditUser: String = "",
     val redditPassword: String = "",
     val overlayEnabled: Boolean = false,
+    val alwaysOn: Boolean = false,
     val loaded: Boolean = false,
     val justSaved: Boolean = false,
     val testResult: String? = null,
@@ -98,6 +99,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             val pack = VoicePack(container.appContext)
             val keys = container.secureKeyStore
             val overlayEnabled = container.userPreferencesRepository.isOverlayEnabled.first()
+            val alwaysOn = container.userPreferencesRepository.isAlwaysOn.first()
             val fallback = container.userPreferencesRepository.isModelFallbackEnabled.first()
             val broken = container.userPreferencesRepository.brokenModels.first()
             _state.update {
@@ -120,6 +122,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
                     redditUser = keys.channel(StoredChannelCredentials.REDDIT_USER).orEmpty(),
                     redditPassword = keys.channel(StoredChannelCredentials.REDDIT_PASSWORD).orEmpty(),
                     overlayEnabled = overlayEnabled,
+                    alwaysOn = alwaysOn,
                     modelFallback = fallback,
                     brokenModels = broken,
                     loaded = true
@@ -278,6 +281,11 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
      * Applied immediately rather than on Save — the bubble is a visible, running
      * thing, so the toggle should reflect reality the moment it's flipped.
      */
+    fun setAlwaysOn(enabled: Boolean) {
+        _state.update { it.copy(alwaysOn = enabled) }
+        viewModelScope.launch { container.userPreferencesRepository.setAlwaysOn(enabled) }
+    }
+
     fun setOverlayEnabled(enabled: Boolean) {
         _state.update { it.copy(overlayEnabled = enabled) }
         viewModelScope.launch { container.userPreferencesRepository.setOverlayEnabled(enabled) }

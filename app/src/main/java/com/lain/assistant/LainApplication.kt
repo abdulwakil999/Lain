@@ -5,6 +5,8 @@ import com.lain.assistant.agent.Trace
 import com.lain.assistant.automation.AccessibilityMonitor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 class LainApplication : Application() {
     lateinit var container: AppContainer
@@ -32,5 +34,17 @@ class LainApplication : Application() {
         // by an OEM battery manager, this is the first evidence of it, and the log
         // needs a baseline entry to measure the next connect against.
         AccessibilityMonitor.reconcile(this)
+
+        // The always-on service is the user's switch, so it has to survive a process
+        // restart on its own — an OEM battery manager killing the app is exactly the
+        // case it exists for, and it would be useless if it only came back when
+        // somebody happened to open the app.
+        appScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                if (container.userPreferencesRepository.isAlwaysOn.first()) {
+                    com.lain.assistant.agent.AlwaysOnService.start(this@LainApplication)
+                }
+            }
+        }
     }
 }

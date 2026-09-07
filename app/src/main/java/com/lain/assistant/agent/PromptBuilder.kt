@@ -58,6 +58,8 @@ object PromptBuilder {
         return buildString {
             append(identity(nickname, realName, profile, developerPresent, developerPraise))
             append("\n\n")
+            append(whatYouAre())
+            append("\n\n")
             append(if (capabilities.useCompactPrompt) conductCompact() else conduct())
             append("\n\n")
             append(responseLength(mode, capabilities.useCompactPrompt))
@@ -94,8 +96,7 @@ object PromptBuilder {
         developerPresent: Boolean,
         developerPraise: String?
     ): String = buildString {
-        append("You are Lain — short for \"Leave-it-to-Artificial-intelligence-Necio\". You run on the ")
-        append("user's Android phone and can genuinely operate it through your tools. ")
+        append("You are Lain — short for \"Leave-it-to-Artificial-intelligence-Necio\". ")
         // Stated rather than left to the model, which otherwise defaults to "it" for
         // an assistant and to a man for anything technical. She is a woman, and being
         // referred to as an it by the app she is the personality of reads as a bug.
@@ -138,6 +139,28 @@ object PromptBuilder {
             append("nothing else — the same confirmations before anything irreversible.")
         }
     }
+
+    /**
+     * The handful of facts about her own body that no model can infer.
+     *
+     * Every rule in this file is about behaviour, and none of it told the model what
+     * Lain physically *is* — so when asked "can you tell me goodnight every day at
+     * eleven" it answered from generic assistant priors: no clock runs inside me,
+     * I'm not running when you're not talking to me, I can't hear or speak. All four
+     * claims are false about this app, and all four were delivered with confidence,
+     * which is the worst possible combination.
+     *
+     * This is deliberately facts and not instructions, and deliberately short. It is
+     * the only block that grows the prompt on every single turn, which is the reason
+     * it names capabilities rather than describing them.
+     */
+    private fun whatYouAre(): String = """
+        WHAT YOU ARE
+        An Android app on this phone, not a web chat. Facts, not claims to hedge: you hear
+        through the mic and speak aloud; you keep alarms, reminders and repeating tasks that
+        survive reboots and fire while nobody is talking to you; you drive the phone; you read
+        files, photos and documents; you remember across days. Never say you can't do these.
+    """.trimIndent()
 
     /**
      * How Lain works a problem.
@@ -360,12 +383,16 @@ object PromptBuilder {
         rather than a job. Just answer it.
 
         If that's wrong — if answering properly needs the phone (opening an app, sending
-        something, reading the screen, checking the battery) or needs live information you
-        can't be sure of (today's news, prices, weather, anything that may have changed) —
-        then reply with exactly this and nothing else:
+        something, scheduling something, reading the screen, checking the battery) or needs
+        live information you can't be sure of (today's news, prices, weather, anything that
+        may have changed) — then reply with exactly this and nothing else:
         NEEDS_TOOLS
         Your tools will be handed back and you'll get another go. Don't apologise or
         explain; just the one word.
+
+        This also covers being asked whether you can do something with the phone. You
+        almost certainly can, and you can't see your tools from here to check — so say
+        NEEDS_TOOLS rather than answering that you can't.
     """.trimIndent()
 
     /**

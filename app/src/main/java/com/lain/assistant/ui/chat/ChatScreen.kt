@@ -427,7 +427,7 @@ private fun StreamingBubble(text: String, maxWidth: Dp) {
  */
 @Composable
 private fun AttachmentChip(attachment: Attachment, onRemove: () -> Unit) {
-    val unreadable = attachment.imageBase64 == null && attachment.extractedText == null
+    val unreadable = !attachment.isReadable
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(6.dp))
@@ -443,7 +443,9 @@ private fun AttachmentChip(attachment: Attachment, onRemove: () -> Unit) {
                 maxLines = 1
             )
             val note = when {
-                attachment.imageBase64 != null -> "image · ${attachment.prettySize()}"
+                attachment.isImage -> "image · ${attachment.prettySize()}"
+                attachment.images.size > 1 -> "${attachment.images.size} pages · ${attachment.prettySize()}"
+                attachment.images.isNotEmpty() -> "page · ${attachment.prettySize()}"
                 attachment.extractedText != null -> "text · ${attachment.prettySize()}"
                 else -> attachment.limitation ?: "can't be read"
             }

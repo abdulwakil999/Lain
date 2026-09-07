@@ -39,6 +39,7 @@ import com.lain.assistant.automation.AccessibilityMonitor
 import com.lain.assistant.automation.AccessibilityState
 import com.lain.assistant.automation.LainAccessibilityService
 import com.lain.assistant.automation.LainNotificationListener
+import com.lain.assistant.agent.AlwaysOnService
 import com.lain.assistant.automation.OverlayBubbleService
 import com.lain.assistant.data.Gender
 import com.lain.assistant.data.Provider
@@ -477,6 +478,51 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
                 color = LainMuted
             )
 
+            // Save sits here, immediately under the last field that needs it, rather
+            // than at the very bottom of the screen. Everything below this point acts
+            // the moment it is tapped — permissions, the assistant picker, the
+            // diagnostic log — so a Save button down there was several screens of
+            // scrolling away from the typing it applied to, and looked like it applied
+            // to the switches next to it instead.
+            Spacer(Modifier.height(20.dp))
+            PixelButton(
+                text = if (state.justSaved) "Saved" else "Save",
+                onClick = viewModel::save,
+                enabled = state.loaded && state.canSave
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Everything below takes effect as you tap it — no saving needed.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = LainMuted
+            )
+
+            Spacer(Modifier.height(24.dp))
+            SectionLabel("Always on")
+            Text(
+                if (state.alwaysOn) {
+                    "Lain stays loaded, so alarms land on the minute and the wake word keeps " +
+                        "listening. She isn't thinking while you're away — just not being shut down."
+                } else {
+                    "Android shuts Lain down when she's not in front of you, which is why an alarm " +
+                        "can arrive late or the wake word goes quiet. Keeping her loaded fixes that " +
+                        "and costs battery."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (state.alwaysOn) LainCream else LainMuted
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                PixelChoiceChip("On", state.alwaysOn, {
+                    viewModel.setAlwaysOn(true)
+                    AlwaysOnService.start(context)
+                }, modifier = Modifier.weight(1f))
+                PixelChoiceChip("Off", !state.alwaysOn, {
+                    viewModel.setAlwaysOn(false)
+                    AlwaysOnService.stop(context)
+                }, modifier = Modifier.weight(1f))
+            }
+
             Spacer(Modifier.height(24.dp))
             SectionLabel("The assistant key")
             // Read from the system every time this screen appears, never remembered.
@@ -634,8 +680,6 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
                 )
             }
 
-            Spacer(Modifier.height(28.dp))
-            PixelButton(text = if (state.justSaved) "Saved" else "Save", onClick = viewModel::save, enabled = state.loaded && state.canSave)
             Spacer(Modifier.height(40.dp))
         }
     }

@@ -57,6 +57,15 @@ class ToolDispatcher(context: Context) {
         private const val MAX_RESULT_CHARS = 3500
 
         /**
+         * App names printed by list_apps before the rest are counted rather than named.
+         *
+         * A phone with two hundred apps would otherwise spend the whole context window
+         * on a list, which defeats the purpose — the tool exists so a specific absence
+         * can be checked, and that is what the `contains` filter is for.
+         */
+        private const val MAX_LISTED_APPS = 60
+
+        /**
          * How long to wait between attempts to find an element on screen.
          *
          * Three tries over about a second: enough to cover a screen transition and a
@@ -159,6 +168,34 @@ class ToolDispatcher(context: Context) {
     private suspend fun dispatch(name: String, args: JsonObject): ToolResult = when (name) {
 
         // ---------------------------------------------------------- apps
+        // Answers "is X installed" with the phone's own list instead of a guess.
+        //
+        // The failure text for open_app has told the model to "call list_apps" for
+        // months, and there was no such tool — so a launch that missed left it with
+        // an instruction it could not follow, and it filled the gap by asserting the
+        // app was not installed. On a phone that had it.
+        "list_apps" -> {
+            val filter = args.str("contains").trim().lowercase()
+            val installed = apps.installedApps()
+                .map { it.second }
+                .filter { filter.isEmpty() || it.lowercase().contains(filter) }
+                .sorted()
+            when {
+                installed.isEmpty() && filter.isNotEmpty() -> ToolResult.ok(
+                    "No installed app has \"$filter\" in its name."
+                )
+                installed.isEmpty() -> ToolResult.fail(
+                    FailureKind.TOOL_FAILURE,
+                    "Android returned no launchable apps, which means the list couldn't be read rather " +
+                        "than that the phone is empty."
+                )
+                else -> ToolResult.ok(
+                    "${installed.size} app(s): " + installed.take(MAX_LISTED_APPS).joinToString(", ") +
+                        if (installed.size > MAX_LISTED_APPS) ", and ${installed.size - MAX_LISTED_APPS} more" else ""
+                )
+            }
+        }
+
         "open_app" -> {
             val target = args.str("app_name")
             val launch = apps.openApp(target)
@@ -336,6 +373,8 @@ class ToolDispatcher(context: Context) {
             message = args.str("message"),
             channel = when (args.str("app").lowercase()) {
                 "whatsapp" -> MessageFlow.Channel.WHATSAPP
+                "telegram" -> MessageFlow.Channel.TELEGRAM
+                "signal" -> MessageFlow.Channel.SIGNAL
                 "sms", "text" -> MessageFlow.Channel.SMS
                 else -> MessageFlow.Channel.AUTO
             }
@@ -738,7 +777,7 @@ class ToolDispatcher(context: Context) {
         val action = runCatching { TaskAction.valueOf(actionName) }.getOrNull()
             ?: return ToolResult.fail(
                 FailureKind.INVALID_INPUT,
-                "action must be one of remind, alarm, call, sms, open_app."
+                "action must be one of remind, alarm, say, call, sms, whatsapp, open_app."
             )
 
         val parsed = WhenParser.parse(phrase)

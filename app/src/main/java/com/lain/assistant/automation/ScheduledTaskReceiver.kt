@@ -15,6 +15,7 @@ import com.lain.assistant.data.TaskAction
 import com.lain.assistant.ui.alarm.AlarmActivity
 import com.lain.assistant.LainApplication
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -30,6 +31,9 @@ class ScheduledTaskReceiver : BroadcastReceiver() {
     companion object {
         const val EXTRA_ID = "task_id"
         const val CHANNEL_REMINDERS = "lain_reminders"
+
+        /** A spoken line is a few seconds; anything longer is a stuck network call. */
+        private const val SPEAK_TIMEOUT_MS = 20_000L
 
         fun ensureChannels(context: Context) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -77,6 +81,15 @@ class ScheduledTaskReceiver : BroadcastReceiver() {
 
             TaskAction.REMIND -> notify(context, task, task.label)
 
+            // The words are the point, so they are the notification, and she reads
+            // them out where the phone's profile allows sound. A silent phone gets the
+            // notification alone rather than a voice in a cinema.
+            TaskAction.SAY -> {
+                val line = task.label.replaceFirstChar { it.uppercase() }
+                notify(context, task, line)
+                if (audible(context)) speak(context, line)
+            }
+
             TaskAction.SMS -> {
                 // The target is whatever the user called them — "mama", not a number.
                 // This used to hand that straight to SmsManager, which needs digits, so
@@ -105,6 +118,41 @@ class ScheduledTaskReceiver : BroadcastReceiver() {
                 AlarmActivity.raise(context, task)
             }
         }
+    }
+
+    /**
+     * Whether saying something out loud is appropriate right now.
+     *
+     * Ringer mode is the user's own statement about that, and it is the one signal
+     * that is right in every case a scheduled line could fire in — a meeting, a
+     * cinema, a bedroom at eleven at night with the phone on silent.
+     */
+    private fun audible(context: Context): Boolean = runCatching {
+        context.getSystemService(android.media.AudioManager::class.java)
+            ?.ringerMode == android.media.AudioManager.RINGER_MODE_NORMAL
+    }.getOrDefault(false)
+
+    /**
+     * Reads a line aloud with the voice the user chose.
+     *
+     * Built here rather than borrowed from ChatEngine because this runs from a
+     * broadcast with no chat session alive — that is the whole point of a schedule.
+     * Bounded by a timeout: a network voice on a dead connection must not hold the
+     * receiver's coroutine open indefinitely, and the notification has already
+     * delivered the words either way.
+     */
+    private suspend fun speak(context: Context, line: String) {
+        val prefs = com.lain.assistant.data.UserPreferencesRepository(context)
+        val engine = com.lain.assistant.tts.TtsEngineProvider.create(
+            context,
+            kokoroEndpoint = prefs.kokoroEndpoint.first(),
+            fishKey = com.lain.assistant.data.SecureKeyStore(context).getVoiceKey(),
+            fishVoiceId = prefs.fishVoiceId.first()
+        )
+        runCatching {
+            kotlinx.coroutines.withTimeout(SPEAK_TIMEOUT_MS) { engine.speak(line) }
+        }
+        runCatching { engine.stop() }
     }
 
     private fun notify(context: Context, task: ScheduledTask, text: String) {

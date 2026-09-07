@@ -69,6 +69,7 @@ class LocalActions(private val context: Context) {
                 is LocalIntent.Brightness -> brightness(intent.percent, intent.direction, intent.auto)
                 is LocalIntent.Torch -> torch(intent.on)
                 is LocalIntent.ReadScreen -> readScreen()
+                is LocalIntent.TapText -> tapControl(intent.label)
                 is LocalIntent.ToggleRequest -> toggleRequest(intent.page, intent.what)
                 is LocalIntent.Transport -> transport(intent.action)
                 is LocalIntent.PlayMusic -> playMusic(intent.query, intent.app)
@@ -164,6 +165,21 @@ class LocalActions(private val context: Context) {
         val service = LainAccessibilityService.instance ?: return null
         val text = service.readScreenText()
         return text.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * Presses a control by the words on it, and says whether it was actually pressed.
+     *
+     * Returns null when the service is off or the label is not on the screen, which
+     * hands the turn to the model — it can read the screen, see what is really there,
+     * and say "there's no Send here, there's a Post" rather than this reporting a tap
+     * that never landed.
+     */
+    private suspend fun tapControl(label: String): String? {
+        val service = LainAccessibilityService.instance ?: return null
+        if (!service.tapByText(label)) return null
+        service.awaitSettle(maxWait = 1200L)
+        return sass("Tapped $label.")
     }
 
     // -------------------------------------------------------------- timers
@@ -463,9 +479,11 @@ class LocalActions(private val context: Context) {
         // on themselves, which is precisely the work they asked to be rid of. When a
         // person is named, it becomes a task that rings with a Call button.
         val outward = outwardTarget(parsed.remainder)
+        val words = spokenLine(parsed.remainder)
         val action = when {
             outward != null -> TaskAction.CALL
             alarm -> TaskAction.ALARM
+            words != null -> TaskAction.SAY
             else -> TaskAction.REMIND
         }
 
@@ -475,7 +493,7 @@ class LocalActions(private val context: Context) {
             return null
         }
 
-        val label = parsed.remainder.ifBlank { if (alarm) "Alarm" else "Reminder" }
+        val label = words ?: parsed.remainder.ifBlank { if (alarm) "Alarm" else "Reminder" }
         val task = ScheduledTask(
             label = label,
             action = action,
@@ -498,6 +516,7 @@ class LocalActions(private val context: Context) {
                         "Set. I'll ring you at $when_$repeat to call ${outcome.task.target} — one tap and " +
                             "it dials.$drift"
                     TaskAction.ALARM -> "Alarm set for $when_$repeat.$drift"
+                    TaskAction.SAY -> "Done. $when_$repeat, I'll say it: \"$label\".$drift"
                     else -> "I'll remind you at $when_$repeat — $label.$drift"
                 }
             }
@@ -505,6 +524,28 @@ class LocalActions(private val context: Context) {
             // they meant rather than leaving them with nothing.
             is SchedulingOutcome.Failed -> null
         }
+    }
+
+    /**
+     * The words of a "tell me X at Y", when that is what the phrase is.
+     *
+     * "Tell me goodnight every day at eleven" is not a note to self about telling
+     * somebody goodnight — the sentence *is* the thing to be delivered. Read as a
+     * reminder it produced a notification captioned "tell me goodnight", which is
+     * the request read back rather than answered.
+     *
+     * Deliberately narrow. It only fires on an explicit verb of speech aimed at the
+     * user, and refuses anything that continues into an instruction ("tell me to
+     * leave at six" is a reminder), so nothing that was already working changes.
+     */
+    private fun spokenLine(remainder: String): String? {
+        val m = Regex("^(?:tell|say|wish)\\s+me\\s+(.{2,80})$")
+            .find(remainder.trim().lowercase()) ?: return null
+        val words = m.groupValues[1].trim().trim('.', ',')
+        // "tell me to take the tablets" is a reminder about an action, not a line to
+        // read out. So is "tell me when the timer's done".
+        if (Regex("^(to|when|if|whether|what|why|how|where|who)\\b").containsMatchIn(words)) return null
+        return words.takeIf { it.isNotBlank() }
     }
 
     /**
@@ -656,6 +697,12 @@ class LocalActions(private val context: Context) {
 
         // No search terms: resume whatever was last playing, or open the named player.
         if (query.isBlank()) {
+            // A session resume is silent and stays here; the media key is the fallback
+            // for players that publish no session Lain can see.
+            if (MediaSessions.play(context, target)) {
+                kotlinx.coroutines.delay(350)
+                if (media.isPlaying()) return "Playing."
+            }
             if (media.play()) {
                 kotlinx.coroutines.delay(350)
                 if (media.isPlaying()) return "Playing."
@@ -667,17 +714,24 @@ class LocalActions(private val context: Context) {
             return null
         }
 
-        if (!media.playFromSearch(query, target)) return null
+        val outcome = media.startPlayback(query, target)
+        if (outcome == MediaController.PlayOutcome.FAILED) return null
 
-        // The intent was accepted; whether audio starts is up to the player and how
-        // well it matched. Report what was asked for rather than claiming a result
-        // that hasn't been verified.
+        // Whether audio actually starts is up to the player and how well it matched,
+        // so this waits and then reports what the device says — not what was asked
+        // for. The two outcomes are worded differently on purpose: one of them left
+        // the user looking at another app.
         kotlinx.coroutines.delay(900)
         val where = app?.replaceFirstChar { it.uppercase() }
-        return if (media.isPlaying()) {
-            if (where != null) "Playing $query on $where." else "Playing $query."
-        } else {
-            if (where != null) "Asked $where for $query." else "Asked your music app for $query."
+        val playing = media.isPlaying()
+        return when {
+            outcome == MediaController.PlayOutcome.IN_PLACE && playing ->
+                if (where != null) "Playing $query on $where — no need to leave." else "Playing $query."
+            outcome == MediaController.PlayOutcome.IN_PLACE ->
+                if (where != null) "Asked $where for $query without opening it; nothing's audible yet."
+                else "Asked your music app for $query; nothing's audible yet."
+            playing -> if (where != null) "Playing $query on $where." else "Playing $query."
+            else -> if (where != null) "Asked $where for $query." else "Asked your music app for $query."
         }
     }
 

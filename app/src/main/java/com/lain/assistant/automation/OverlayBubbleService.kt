@@ -82,7 +82,11 @@ class OverlayBubbleService : LifecycleService() {
         }
         engine = (application as LainApplication).container.chatEngine
         isRunning = true
-        startForeground(NOTIFICATION_ID, buildNotification())
+        if (!runCatching { startForeground(NOTIFICATION_ID, buildNotification()) }.isSuccess) {
+            isRunning = false
+            stopSelf()
+            return
+        }
         windowManager = getSystemService(WindowManager::class.java)
         showBubble()
         observeEngine()

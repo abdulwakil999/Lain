@@ -18,11 +18,11 @@ import com.lain.assistant.tools.ToolResult
  * call and gets back one verified answer. Each step still checks what actually
  * happened, so a failure reports where it stopped rather than claiming success.
  */
-class MessageFlow(context: Context) {
+class MessageFlow(private val context: Context) {
 
     private val phone = PhoneController(context)
 
-    enum class Channel { AUTO, WHATSAPP, SMS }
+    enum class Channel { AUTO, WHATSAPP, TELEGRAM, SIGNAL, SMS }
 
     /**
      * @param recipient a contact name or a phone number
@@ -57,7 +57,9 @@ class MessageFlow(context: Context) {
 
         return when (channel) {
             Channel.SMS -> sendSms(number, message)
-            Channel.WHATSAPP -> sendWhatsApp(number, message)
+            Channel.WHATSAPP -> sendThrough("whatsapp", number, message)
+            Channel.TELEGRAM -> sendThrough("telegram", number, message)
+            Channel.SIGNAL -> sendThrough("signal", number, message)
             // SMS is the one channel that completes without touching the UI at all,
             // so it's the default when the user didn't name an app.
             Channel.AUTO -> sendSms(number, message)
@@ -102,32 +104,73 @@ class MessageFlow(context: Context) {
         }
 
     /**
-     * WhatsApp exposes no send API, so this drives its UI — but drives all of it in
-     * one go rather than handing each tap back to the model.
+     * Sends through a chat app by driving its UI, in one go rather than a tap at a time.
+     *
+     * None of these expose a send API, so the sequence is: open the conversation,
+     * put the text in, find Send, press it, then check whether the text left the
+     * composer. Every step reports what actually happened — the point of doing it
+     * here rather than through the model is that the checks are not optional.
+     *
+     * [Messengers] supplies the package and the link, which is where the WhatsApp
+     * bug lived: the package was a constant, so a phone with WhatsApp Business and
+     * no consumer WhatsApp was told the app was not installed.
      */
-    private suspend fun sendWhatsApp(number: String, message: String): ToolResult {
-        val opened = phone.openWhatsAppChat(number, message)
-        if (opened !is AutomationResult.Success) {
-            val reason = (opened as? AutomationResult.Failure)?.reason ?: "WhatsApp couldn't be opened"
-            return ToolResult.fail(FailureKind.APP_UNAVAILABLE, reason)
+    private suspend fun sendThrough(key: String, number: String, message: String): ToolResult {
+        val app = Messengers.byKey(key)
+            ?: return ToolResult.fail(FailureKind.INVALID_INPUT, "Lain doesn't send through \"$key\".")
+
+        val intent = Messengers.composeIntent(context, app, number, message)
+            ?: return ToolResult.fail(
+                FailureKind.APP_UNAVAILABLE,
+                other(app)?.let {
+                    "${app.label} isn't installed on this phone. $it is — offer that, or SMS."
+                } ?: "${app.label} isn't installed on this phone. SMS will work."
+            )
+
+        val opened = runCatching { context.startActivity(intent) }.isSuccess
+        if (!opened) {
+            return ToolResult.fail(
+                FailureKind.APP_UNAVAILABLE,
+                "${app.label} is installed but refused to open the chat with $number."
+            )
         }
 
         val service = LainAccessibilityService.instance
             ?: return ToolResult.ok(
-                "WhatsApp is open with the message drafted to $number, but Lain can't tap Send — the Accessibility " +
-                    "Service isn't connected. The user needs to tap Send themselves, or switch the service on."
+                if (app.compose == Messengers.Compose.PREFILLED) {
+                    "${app.label} is open with the message drafted to $number, but Lain can't tap Send — " +
+                        "the Accessibility Service isn't connected. The user needs to tap Send themselves, " +
+                        "or switch the service on."
+                } else {
+                    "${app.label} is open on the chat with $number, but nothing has been typed — ${app.label} " +
+                        "has no way to prefill a message, and typing it needs the Accessibility Service, " +
+                        "which isn't connected. The user needs to type and send it themselves."
+                }
             )
 
-        // The deep link has to resolve, load the thread and fill the composer.
+        // The deep link has to resolve and load the thread before anything is there
+        // to type into or tap.
         service.awaitSettle(maxWait = 4000L)
 
-        // "Send" is the content-description on WhatsApp's send button; the composer's
-        // IME action is the fallback for builds that don't expose it.
-        val tapped = service.tapByText("Send") || service.pressImeAction()
+        if (app.compose == Messengers.Compose.TYPED) {
+            if (!service.typeText(message)) {
+                return ToolResult.fail(
+                    FailureKind.TOOL_FAILURE,
+                    "${app.label} is open on the chat with $number but the message couldn't be typed — " +
+                        "no editable field was found. Nothing has been sent.",
+                    data = mapOf("screen" to service.readScreenCompact())
+                )
+            }
+            service.awaitSettle(maxWait = 1500L)
+        }
+
+        // Send is a content-description on every one of these; the composer's IME
+        // action is the fallback for builds that don't expose it.
+        val tapped = app.sendLabels.any { service.tapByText(it) } || service.pressImeAction()
         if (!tapped) {
             return ToolResult.fail(
                 FailureKind.TOOL_FAILURE,
-                "The message to $number is typed into WhatsApp but the Send control couldn't be found. " +
+                "The message to $number is typed into ${app.label} but the Send control couldn't be found. " +
                     "Call read_screen to see what's there and tap it directly.",
                 data = mapOf("screen" to service.readScreenCompact())
             )
@@ -135,10 +178,10 @@ class MessageFlow(context: Context) {
 
         service.awaitSettle(maxWait = 2500L)
 
-        // Verify rather than assume — but verify the right thing. A sent message stays
-        // visible in the thread, so "is the text still on screen" would report failure
-        // for every successful send. What actually distinguishes the two is whether the
-        // text is still sitting in the *composer*, so only [INPUT] lines are examined.
+        // Verify the right thing. A sent message stays visible in the thread, so "is
+        // the text still on screen" would report failure for every successful send.
+        // What distinguishes the two is whether it is still in the *composer*, so
+        // only [INPUT] lines are examined.
         val screen = service.readScreenCompact()
         val needle = message.take(30).lowercase()
         val stillInComposer = screen.lineSequence()
@@ -148,11 +191,17 @@ class MessageFlow(context: Context) {
         return if (stillInComposer) {
             ToolResult.fail(
                 FailureKind.TOOL_FAILURE,
-                "Tapped Send but the message is still sitting in the WhatsApp composer for $number — it did not go.",
+                "Tapped Send but the message is still sitting in the ${app.label} composer for $number — " +
+                    "it did not go.",
                 data = mapOf("screen" to screen)
             )
         } else {
-            ToolResult.ok("Sent to $number on WhatsApp: \"$message\"")
+            ToolResult.ok("Sent to $number on ${app.label}: \"$message\"")
         }
     }
+
+    /** Another chat app that is installed, for suggesting when the asked-for one isn't. */
+    private fun other(missing: Messengers.Messenger): String? =
+        Messengers.installed(context).firstOrNull { it.key != missing.key }?.label
+
 }

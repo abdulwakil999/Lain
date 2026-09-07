@@ -133,8 +133,15 @@ class ChatEngine(
         private const val MAX_SPEECH_WAIT_MS = 60_000L
 
         /** How many past tool results are replayed as context, and how much of each. */
-        /** Ceiling on pictures sent in one turn; each is a large slice of the window. */
-        private const val MAX_ATTACHED_IMAGES = 3
+        /**
+         * Ceiling on pictures sent in one turn; each is a large slice of the window.
+         *
+         * Matches the per-file page and frame caps in AttachmentReader on purpose, so
+         * a single document is never trimmed twice — once where the user is told, and
+         * again here where they are not. When several files together exceed it, the
+         * drop is stated in the message rather than left silent.
+         */
+        private const val MAX_ATTACHED_IMAGES = 4
         /** Said when a model narrates twice instead of acting. */
         private const val STALLED_MESSAGE =
             "That model kept describing what it was going to do instead of doing it, so nothing has " +
@@ -681,6 +688,7 @@ class ChatEngine(
         is LocalIntent.SettingsPage -> "open_settings_page" to intent.page
         is LocalIntent.ToggleRequest -> "open_settings_page" to intent.what
         is LocalIntent.Navigate -> "navigate" to intent.key
+        is LocalIntent.TapText -> "tap_text" to intent.label
 
         // Answered a question or said something back. Nothing changed.
         is LocalIntent.Clock, is LocalIntent.Battery, is LocalIntent.ReadScreen,
@@ -865,22 +873,39 @@ class ChatEngine(
         // are described in text where it can't. Silently dropping them on a text-only
         // model is how an assistant ends up answering a question about a photo it
         // never received.
-        val pictures = attached.mapNotNull { it.imageBase64 }
+        val pictures = attached.flatMap { it.images }
         if (pictures.isNotEmpty()) {
             if (caps.supportsVision) {
+                val sent = pictures.take(MAX_ATTACHED_IMAGES)
+                val dropped = pictures.size - sent.size
                 history.add(
                     LlmMessage(
                         role = LlmMessage.Role.USER,
-                        text = "(the file the user just attached)",
-                        images = pictures.takeLast(MAX_ATTACHED_IMAGES)
+                        text = buildString {
+                            append("(the file the user just attached")
+                            // Never silent. A model shown four pages of a nine-page
+                            // contract must not answer as though it read the contract.
+                            if (dropped > 0) {
+                                append(" — only the first ${sent.size} of ${pictures.size} pictures fit ")
+                                append("in one message, so $dropped weren't sent; say so if it matters")
+                            }
+                            append(")")
+                        },
+                        images = sent
                     )
                 )
             } else {
+                // Names what it actually is. A PDF and a video now arrive as pictures
+                // too, and telling someone who attached a contract that "the model
+                // can't see images" reads as the wrong file having been sent.
+                val what = attached.filter { it.images.isNotEmpty() }
+                    .joinToString(", ") { it.displayName }
                 history.add(
                     LlmMessage(
                         role = LlmMessage.Role.USER,
-                        text = "(The user attached ${pictures.size} image(s), but the selected model can't see " +
-                            "images. Say so plainly and suggest switching to a vision model in Settings.)"
+                        text = "(The user attached $what, which Lain turned into ${pictures.size} " +
+                            "picture(s) — but the selected model can't see. Say so plainly, name the file, " +
+                            "and suggest switching to a vision model in Settings.)"
                     )
                 )
             }

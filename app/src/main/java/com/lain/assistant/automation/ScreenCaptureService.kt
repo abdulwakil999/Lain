@@ -60,7 +60,10 @@ class ScreenCaptureService : Service() {
             return START_NOT_STICKY
         }
 
-        startForeground(1, buildNotification())
+        if (!runCatching { startForeground(1, buildNotification()) }.isSuccess) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
         val projectionManager = getSystemService(MediaProjectionManager::class.java)
         val projection = projectionManager.getMediaProjection(resultCode, resultData)
