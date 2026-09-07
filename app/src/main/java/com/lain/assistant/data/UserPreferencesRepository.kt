@@ -29,6 +29,7 @@ class UserPreferencesRepository(private val context: Context) {
         val MUTED = booleanPreferencesKey("muted")
         val OVERLAY_ENABLED = booleanPreferencesKey("overlay_enabled")
         val ALWAYS_ON = booleanPreferencesKey("always_on")
+        val WAKE_WORD = booleanPreferencesKey("wake_word")
         val MODEL_FALLBACK = booleanPreferencesKey("model_fallback")
         val BROKEN_MODELS = stringSetPreferencesKey("broken_models")
         // A snapshot of the selected model's catalogue facts, so the capability layer
@@ -121,6 +122,19 @@ class UserPreferencesRepository(private val context: Context) {
 
     suspend fun setOverlayEnabled(enabled: Boolean) {
         context.dataStore.edit { it[Keys.OVERLAY_ENABLED] = enabled }
+    }
+
+    /**
+     * Hands-free: whether Lain listens for her own name.
+     *
+     * Off by default and it has to be, because it is the microphone. Turning it on
+     * is a decision with a permission attached, and an assistant that starts
+     * listening because it was installed is not one anybody asked for.
+     */
+    val isWakeWordEnabled: Flow<Boolean> = context.dataStore.data.map { it[Keys.WAKE_WORD] ?: false }
+
+    suspend fun setWakeWordEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.WAKE_WORD] = enabled }
     }
 
     /**

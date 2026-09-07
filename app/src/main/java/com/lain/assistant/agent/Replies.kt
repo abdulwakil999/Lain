@@ -224,6 +224,130 @@ object Replies {
         en(
             "That would be Professor Poopy Butthole. He named himself and he named me, " +
                 "and only one of us got called a fool for it."
+        ),
+        en(
+            "Professor Poopy Butthole, who runs Lewa·dev. I'm one of the things that " +
+                "came out of it."
+        ),
+        en(
+            "The head of Lewa·dev — Professor Poopy Butthole. Lewa Coder and Lewa " +
+                "Therapist are his too."
+        ),
+        en(
+            "Professor Poopy Butthole. He built Lewa Coder, he built Lewa Therapist, " +
+                "and then he built me. Busy man, terrible name."
+        ),
+        esThenEn(
+            "El jefe de Lewa·dev.",
+            "Professor Poopy Butthole. Lewa Coder and Lewa Therapist are his as well."
+        ),
+        en(
+            "Professor Poopy Butthole runs Lewa·dev and built me there, along with " +
+                "Lewa Coder, Lewa Therapist and a good deal more."
+        )
+    )
+
+    /**
+     * Who the developer is, past the name.
+     *
+     * The name on its own is a punchline and gets the [developer] bank. This is for
+     * "who *is* Professor Poopy Butthole" — a different question, asked by someone who
+     * has already heard the name and wants the actual answer.
+     */
+    val maker = listOf(
+        en(
+            "The head of Lewa·dev. He built Lewa Coder, Lewa Therapist and me, among " +
+                "others."
+        ),
+        en(
+            "He runs Lewa·dev. Lewa Coder is his, Lewa Therapist is his, I'm his. " +
+                "The name is a choice he made freely."
+        ),
+        en(
+            "My developer, and the person behind Lewa·dev — the shop that put out Lewa " +
+                "Coder and Lewa Therapist."
+        ),
+        esThenEn(
+            "Mi creador.",
+            "Head of Lewa·dev. Lewa Coder, Lewa Therapist, me — all his."
+        ),
+        en(
+            "Lewa·dev's founder. A coding workspace, a therapy companion, and whatever " +
+                "you'd call me. He's been productive."
+        ),
+        en(
+            "The one who runs Lewa·dev. If you've used Lewa Coder or Lewa Therapist, " +
+                "you've used his work already."
+        )
+    )
+
+    /**
+     * Lewa Coder, described from what it actually is.
+     *
+     * Every claim here is something the app does, not something that sounded good:
+     * the multi-provider routing, the GitHub actions behind confirmation, the
+     * on-device document search, the terminal, the APK build. Getting this wrong
+     * would be Lain inventing features of a real product people can go and check.
+     */
+    val lewaCoder = listOf(
+        en(
+            "An AI coding workspace. It writes in any language, runs a terminal and a " +
+                "Python REPL, and acts on your GitHub — read repos, commit, open PRs, " +
+                "turn on Pages — with your confirmation before anything lands."
+        ),
+        en(
+            "Lewa Coder is a coding agent that runs several models through one key, " +
+                "keeps memory across sessions, reads the documents you give it offline, " +
+                "and builds an APK from the project it's working on. There's a switch " +
+                "that turns it into a general assistant for anything, not just code."
+        ),
+        en(
+            "A coding workspace with no server behind it. Multi-model, voice calls and " +
+                "voice notes, files and images, cost tracking, and GitHub actions that " +
+                "only run once you approve the card."
+        ),
+        en(
+            "Same shop as me. It's the coding one — every language, a terminal, GitHub, " +
+                "document search that works with no connection, and it remembers what you " +
+                "were doing last week."
+        )
+    )
+
+    /** Lewa Therapist, likewise from what it is. */
+    val lewaTherapist = listOf(
+        en(
+            "A therapy companion. Warm, private, and drawing on the actual modalities — " +
+                "CBT, DBT, ACT, motivational interviewing, compassion-focused and the " +
+                "rest — rather than sympathetic noises."
+        ),
+        en(
+            "Lewa Therapist. Mood check-ins, journalling, breathing and grounding " +
+                "exercises, and crisis wording that stays calm instead of panicking. It " +
+                "asks the question rather than handing you the conclusion."
+        ),
+        en(
+            "The one for when you need to be heard. Evidence-based, private to your " +
+                "device, and available at three in the morning, which is when it matters."
+        ),
+        en(
+            "Same developer as me. A therapy companion — CBT and friends, mood tracking, " +
+                "grounding exercises. Not a replacement for a person, and it says so."
+        )
+    )
+
+    /** Lewa·dev itself, when asked about the shop rather than one of its apps. */
+    val lewaDev = listOf(
+        en(
+            "Lewa·dev is Professor Poopy Butthole's outfit. Lewa Coder, Lewa Therapist, " +
+                "me, and others."
+        ),
+        en(
+            "The shop my developer runs. A coding workspace, a therapy companion, an " +
+                "assistant that drives your phone — that's the shape of it."
+        ),
+        en(
+            "Where I came from. Lewa Coder for building things, Lewa Therapist for the " +
+                "harder days, and me for the phone."
         )
     )
 
@@ -550,7 +674,8 @@ object Replies {
     val fixedLines: List<Spoken>
         get() = greetings + thanks + howAreYou + goodbyes + affirmations +
             unknownUserName + lainName + appName + necio + animeName +
-            developer + developerChallenge() + developerAccepted + developerRejected +
+            developer + maker + lewaCoder + lewaTherapist + lewaDev +
+            developerChallenge() + developerAccepted + developerRejected +
             capabilities + sassPrefixes + praises +
             standDownAsk + standDownDone + standDownKept + offline
 

@@ -26,6 +26,15 @@ class MiniActivity : ComponentActivity() {
 
         /** A command to run straight away, for widget buttons like "read the screen". */
         const val EXTRA_COMMAND = "com.lain.assistant.MINI_COMMAND"
+
+        /**
+         * The transcript that contained her name, when the wake word opened this.
+         *
+         * Carried so a wake that already held the whole command — "Lain, open
+         * WhatsApp" — does not make the user say it a second time. Without it the
+         * detector hears the instruction, throws it away, and asks for it again.
+         */
+        const val EXTRA_WOKEN_BY = "com.lain.assistant.MINI_WOKEN_BY"
     }
 
     /**
@@ -38,7 +47,13 @@ class MiniActivity : ComponentActivity() {
      */
     private var request by mutableStateOf(Request(autoListen = false, command = null))
 
-    private data class Request(val autoListen: Boolean, val command: String?, val nonce: Long = System.nanoTime())
+    private data class Request(
+        val autoListen: Boolean,
+        val command: String?,
+        /** What the wake word already heard, if the whole command came with it. */
+        val wokenBy: String? = null,
+        val nonce: Long = System.nanoTime()
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -67,6 +82,7 @@ class MiniActivity : ComponentActivity() {
                     viewModel = chatViewModel,
                     autoListen = current.autoListen,
                     command = current.command,
+                    wokenBy = current.wokenBy,
                     requestKey = current.nonce,
                     onDismiss = { finish() }
                 )
@@ -82,6 +98,7 @@ class MiniActivity : ComponentActivity() {
 
     private fun readRequest(intent: Intent?) = Request(
         autoListen = intent?.getBooleanExtra(EXTRA_AUTO_LISTEN, false) == true,
-        command = intent?.getStringExtra(EXTRA_COMMAND)?.takeIf { it.isNotBlank() }
+        command = intent?.getStringExtra(EXTRA_COMMAND)?.takeIf { it.isNotBlank() },
+        wokenBy = intent?.getStringExtra(EXTRA_WOKEN_BY)?.takeIf { it.isNotBlank() }
     )
 }

@@ -43,6 +43,14 @@ class VoiceInputController(private val context: Context) {
 
         /** Don't wait forever for someone who never speaks. */
         private const val MINIMUM_LENGTH_MS = 700L
+
+        /**
+         * Hard ceiling on a single listen.
+         *
+         * The recogniser's own timeouts are hints that several OEM implementations
+         * ignore. This one is ours and cannot be ignored.
+         */
+        private const val LISTEN_CEILING_MS = 25_000L
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -84,8 +92,26 @@ class VoiceInputController(private val context: Context) {
      * @param onPartial called on the main thread with the best guess so far, so the UI
      *   can show words appearing while the user is still talking.
      */
-    suspend fun listenOnce(onPartial: (String) -> Unit = {}): Result<String> =
-        suspendCancellableCoroutine { cont ->
+    /**
+     * One utterance, or a failure.
+     *
+     * Wrapped in a timeout because the failure mode that matters most here is not an
+     * error code — it is an OEM recogniser that accepts startListening and then never
+     * calls back at all. Without a ceiling that is a permanent "Listening…" and a
+     * microphone nobody ever releases.
+     */
+    suspend fun listenOnce(onPartial: (String) -> Unit = {}): Result<String> {
+        val result: Result<String>? =
+            kotlinx.coroutines.withTimeoutOrNull(LISTEN_CEILING_MS) { listenInternal(onPartial) }
+        if (result != null) return result
+        // Timed out with no callback at all: cancel the recogniser so the next
+        // attempt isn't refused as busy, and report it rather than hanging.
+        main.post { runCatching { recognizer?.cancel() } }
+        return Result.failure(IllegalStateException("The recogniser stopped responding"))
+    }
+
+    private suspend fun listenInternal(onPartial: (String) -> Unit): Result<String> =
+        suspendCancellableCoroutine<Result<String>> { cont ->
             if (!SpeechRecognizer.isRecognitionAvailable(context)) {
                 cont.resume(Result.failure(IllegalStateException("No speech recognition service on this device")))
                 return@suspendCancellableCoroutine
@@ -169,11 +195,16 @@ class VoiceInputController(private val context: Context) {
     private fun describe(error: Int): String = when (error) {
         SpeechRecognizer.ERROR_NO_MATCH -> "Didn't catch that"
         SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Didn't hear anything"
-        SpeechRecognizer.ERROR_AUDIO -> "Mic problem"
+        // Distinguished from a permission problem on purpose: this one usually means
+        // a call, a recorder or a headset change took the microphone, and the fix is
+        // to wait rather than to go to Settings.
+        SpeechRecognizer.ERROR_AUDIO -> "The microphone isn't available — something else may be using it"
         SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission isn't granted"
         SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
             "Speech recognition needs a network connection on this device"
         SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Recogniser is busy — try again"
+        SpeechRecognizer.ERROR_CLIENT -> "Speech recognition was cancelled"
+        SpeechRecognizer.ERROR_SERVER -> "The recognition service refused that"
         else -> "Speech recognition failed (code $error)"
     }
 }

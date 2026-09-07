@@ -39,7 +39,10 @@ import com.lain.assistant.automation.AccessibilityMonitor
 import com.lain.assistant.automation.AccessibilityState
 import com.lain.assistant.automation.LainAccessibilityService
 import com.lain.assistant.automation.LainNotificationListener
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import com.lain.assistant.agent.AlwaysOnService
+import com.lain.assistant.automation.WakeWordService
 import com.lain.assistant.automation.OverlayBubbleService
 import com.lain.assistant.data.Gender
 import com.lain.assistant.data.Provider
@@ -496,6 +499,43 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = LainMuted
             )
+
+            Spacer(Modifier.height(24.dp))
+            SectionLabel("Hands-free")
+            Text(
+                if (state.wakeWordEnabled) {
+                    "Say \"Lain\" — or \"hey Lain\", \"sup Lain\" — and she starts listening. " +
+                        "Until she hears her name the microphone is only measuring loudness on this " +
+                        "phone: nothing is transcribed, stored or sent. Pauses while the screen is off."
+                } else {
+                    "Off. With it on she answers to her name without you touching the phone. " +
+                        "Nothing leaves the device until she's actually been called."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (state.wakeWordEnabled) LainCream else LainMuted
+            )
+            Spacer(Modifier.height(8.dp))
+            // Asked at the point of use, not at install, so the reason for the prompt
+            // is on screen while it appears.
+            val micPermission = rememberLauncherForActivityResult(
+                ActivityResultContracts.RequestPermission()
+            ) { granted ->
+                if (granted) {
+                    viewModel.setWakeWordEnabled(true)
+                    WakeWordService.start(context)
+                } else {
+                    viewModel.setWakeWordEnabled(false)
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                PixelChoiceChip("On", state.wakeWordEnabled, {
+                    micPermission.launch(android.Manifest.permission.RECORD_AUDIO)
+                }, modifier = Modifier.weight(1f))
+                PixelChoiceChip("Off", !state.wakeWordEnabled, {
+                    viewModel.setWakeWordEnabled(false)
+                    WakeWordService.stop(context)
+                }, modifier = Modifier.weight(1f))
+            }
 
             Spacer(Modifier.height(24.dp))
             SectionLabel("Always on")

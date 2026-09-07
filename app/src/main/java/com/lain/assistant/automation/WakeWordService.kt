@@ -1,5 +1,6 @@
 package com.lain.assistant.automation
 
+import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -8,18 +9,21 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.os.Build
-import android.os.Bundle
 import android.os.IBinder
 import android.os.PowerManager
-import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import com.lain.assistant.agent.LainName
 import com.lain.assistant.MiniActivity
 import com.lain.assistant.R
+import com.lain.assistant.agent.LainName
+import com.lain.assistant.voice.VoiceState
+import com.lain.assistant.voice.WakeWordDetector
+import com.lain.assistant.voice.WakeWordManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -28,25 +32,32 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * Best-effort "Hello Lain" hotword listener.
+ * The foreground service that owns wake-word listening, and nothing else.
  *
- * This is NOT a low-power keyword-spotting engine like Porcupine — those need a
- * licensed model. It loops Android's own SpeechRecognizer: listen, check the
- * transcript (partials included) for the wake phrase, restart if not, hand off
- * if so.
+ * It used to *be* the detector — a SpeechRecognizer loop transcribing the room
+ * continuously. The detection now lives in [WakeWordDetector], which listens on raw
+ * audio energy and only runs a recogniser once somebody has actually spoken. What
+ * is left here is the part that genuinely belongs to a service: the foreground
+ * notification Android requires before an app may touch the microphone from the
+ * background, and the four ways the microphone can be taken away.
  *
- * Idle listening runs only while the screen is on. That is not a setting and not
- * a compromise the user is asked to make — it is the only correct behaviour.
- * Active audio capture holds the audio HAL's wake lock, so a recognizer looping
- * with the screen off stops the device suspending at all; the phone then discharges
- * overnight in a pocket while hearing nothing useful. Nothing is lost that matters:
- * a task already running is driven by AgentForegroundService and is never cut off
- * by the screen going dark, and the Quick Settings tile, the home-screen widget and
- * the floating bubble all reach Lain in one tap regardless.
+ *  - **Another app takes it.** A call, a voice note, a recording app. Detected
+ *    through [AudioManager.AudioRecordingCallback] on Android 10+, and by the
+ *    recorder simply failing to open below that. Either way she waits and retries
+ *    rather than fighting for a device she cannot have.
+ *  - **The permission is revoked.** Checked on every loop, not once at start —
+ *    the user can revoke it from Settings while this is running, and on Android 12+
+ *    that kills the app's recording without telling it why.
+ *  - **The headset changes.** A Bluetooth microphone disconnecting invalidates the
+ *    open recorder. [AudioDeviceCallback] restarts detection on the new route.
+ *  - **The screen goes off.** Not a failure but a deliberate pause: an open
+ *    microphone holds the audio path awake, so idle listening with the screen off
+ *    is a flat overnight battery in exchange for hearing nothing useful. Nothing is
+ *    lost — the tile, the widgets and the bubble all reach Lain in one tap.
  *
- * Where the platform has an on-device recogniser (Android 13+) it is used in
- * preference to the default one, which keeps every listen cycle off the network.
- * Repeated recognizer errors back off exponentially rather than hot-looping.
+ * Android's own restrictions are respected rather than worked around. There is no
+ * path here that records without the permission, and none that runs a microphone
+ * foreground service without the notification.
  */
 class WakeWordService : Service() {
 
@@ -55,11 +66,8 @@ class WakeWordService : Service() {
         private const val NOTIFICATION_ID = 42
         const val ACTION_STOP = "com.lain.assistant.action.STOP_WAKE_WORD"
 
-        private const val BASE_RETRY_MS = 400L
-        private const val MAX_RETRY_MS = 15_000L
-
-        /** Greetings that count as the wake phrase, before homophone correction. */
-        private val GREETINGS = listOf("hello", "hey", "hi", "hallo", "yo", "ok", "okay")
+        /** Grace period after the mic is freed by another app before retrying. */
+        private const val MIC_RETURN_DELAY_MS = 1_200L
 
         var isRunning: Boolean = false
             private set
@@ -73,43 +81,62 @@ class WakeWordService : Service() {
         }
 
         /**
-         * Whether the wake phrase was said.
+         * Whether Lain was addressed by name.
          *
-         * Runs the transcript through the same homophone correction the rest of the
-         * app uses rather than keeping a private list of spellings. The two lists had
-         * already drifted: the wake matcher tolerated "hello lane" so listening
-         * started, while the message that reached the model still said "lane".
+         * Deliberately not a fixed phrase. The requirement is her *name*, so
+         * "hello Lain", "hi Lain", "sup Lain", "Lain, open WhatsApp" and the bare
+         * name all count. [LainName] already knows the difference between the name
+         * and the road it sounds like, and asking it keeps one list rather than two
+         * that drift apart — which they had.
          */
-        fun matchesWakePhrase(heard: String): Boolean {
-            val corrected = LainName.normaliseHeard(heard).lowercase()
-            val name = LainName.CANONICAL.lowercase()
-            if (GREETINGS.any { corrected.contains("$it $name") }) return true
-            // Her name on its own, or opening an instruction. Safe to accept because
-            // the rewrite above is what decided this was an address in the first
-            // place — a road or a queue never reaches this branch, since a homophone
-            // used as a noun is left as the user said it and never becomes "lain".
-            return corrected == name || corrected.startsWith("$name ")
-        }
+        fun matchesWakePhrase(heard: String): Boolean = LainName.isAddressed(heard)
     }
 
-    private val scope = CoroutineScope(Dispatchers.Main + Job())
-    private var recognizer: SpeechRecognizer? = null
-    private var stopping = false
-    private var retryDelay = BASE_RETRY_MS
-    private var listening = false
+    private val scope = CoroutineScope(Dispatchers.Default + Job())
+    private var detector: WakeWordDetector? = null
+    private var micTakenByOther = false
 
-    /**
-     * Screen state gates *idle wake-word listening only*. A task already running is
-     * driven by AgentForegroundService and is never interrupted by the screen
-     * going off.
-     */
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
-                Intent.ACTION_SCREEN_ON -> resumeListening()
-                Intent.ACTION_SCREEN_OFF -> pauseListening()
+                Intent.ACTION_SCREEN_ON -> resume()
+                Intent.ACTION_SCREEN_OFF -> pause()
             }
         }
+    }
+
+    /**
+     * Notices when Android silences Lain's own recording.
+     *
+     * This is the *documented* way to find out that something else has taken the
+     * microphone, and it is worth being precise about why. From Android 10 an app
+     * is only told about its own recordings — you cannot enumerate other apps' use
+     * of the mic, and an implementation that claims to is reading its own
+     * configuration back. What Android does tell you is that a higher-priority
+     * client (a phone call, the system assistant) has taken over and your stream is
+     * now being fed silence: `isClientSilenced`.
+     *
+     * That is exactly the condition worth reacting to. Lain stands down rather than
+     * sitting there processing a silent stream and concluding the room is quiet, and
+     * comes back when the flag clears.
+     */
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.Q)
+    private val recordingCallback = object : AudioManager.AudioRecordingCallback() {
+        override fun onRecordingConfigChanged(configs: MutableList<android.media.AudioRecordingConfiguration>?) {
+            val silenced = configs.orEmpty().any { it.isClientSilenced }
+            // Only act on the transition, so this doesn't thrash on every update.
+            if (silenced == micTakenByOther) return
+            micTakenByOther = silenced
+            if (silenced) pause() else scope.launch {
+                delay(MIC_RETURN_DELAY_MS)
+                resume()
+            }
+        }
+    }
+
+    private val deviceCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(added: Array<out AudioDeviceInfo>?) = restartRoute()
+        override fun onAudioDevicesRemoved(removed: Array<out AudioDeviceInfo>?) = restartRoute()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -117,17 +144,32 @@ class WakeWordService : Service() {
     override fun onCreate() {
         super.onCreate()
         isRunning = true
-        // A refused promotion throws here rather than at the caller — from the tile,
-        // from a boot, from anywhere the app is not already on screen. Stopping is a
-        // wake word that isn't listening; not stopping is a crash.
+
         if (!runCatching { startForeground(NOTIFICATION_ID, buildNotification()) }.isSuccess) {
             isRunning = false
             stopSelf()
             return
         }
-        // Explicitly not exported. These are protected system broadcasts so the flag
-        // isn't strictly required, but being implicit here is what trips apps up on
-        // Android 14, and an unexported receiver is what we actually want.
+
+        // Never silently. Without the permission there is nothing to run, and the
+        // state says so rather than the service sitting there doing nothing.
+        if (!hasMicPermission()) {
+            WakeWordManager.enter(VoiceState.ERROR, "Microphone permission isn't granted")
+            stopSelf()
+            return
+        }
+
+        detector = WakeWordDetector(
+            context = applicationContext,
+            scope = scope,
+            onWake = { heard -> onWakeWord(heard) },
+            onError = { reason -> WakeWordManager.enter(VoiceState.ERROR, reason) }
+        )
+
+        // The watchdog's way back: whatever went wrong, this is what "recovered"
+        // means, and it is the same path a normal turn ends on.
+        WakeWordManager.onRecover = { returnToWakeListening() }
+
         ContextCompat.registerReceiver(
             this,
             screenReceiver,
@@ -138,131 +180,143 @@ class WakeWordService : Service() {
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
 
-        if (isScreenOn()) resumeListening()
+        val audio = getSystemService(AudioManager::class.java)
+        runCatching { audio?.registerAudioDeviceCallback(deviceCallback, null) }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            runCatching { audio?.registerAudioRecordingCallback(recordingCallback, null) }
+        }
+
+        // Stage one keeps running while she is thinking, working and talking, so
+        // saying her name over the top of a reply interrupts it. It only stands down
+        // for LISTENING_FOR_COMMAND, where the command recogniser owns the mic.
+        scope.launch {
+            WakeWordManager.state.collect { state ->
+                when (state) {
+                    VoiceState.LISTENING_FOR_COMMAND -> detector?.suspendDetection()
+                    VoiceState.PROCESSING, VoiceState.EXECUTING, VoiceState.SPEAKING ->
+                        if (isScreenOn() && !micTakenByOther) detector?.resumeDetection()
+                    else -> Unit
+                }
+            }
+        }
+
+        if (isScreenOn()) resume() else WakeWordManager.enter(VoiceState.IDLE)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) stopSelf()
+        if (intent?.action == ACTION_STOP) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        // STICKY so a service killed under memory pressure comes back listening,
+        // which is the entire promise of leaving it on.
         return START_STICKY
     }
 
     override fun onDestroy() {
-        stopping = true
         isRunning = false
         runCatching { unregisterReceiver(screenReceiver) }
-        teardownRecognizer()
+        val audio = getSystemService(AudioManager::class.java)
+        runCatching { audio?.unregisterAudioDeviceCallback(deviceCallback) }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            runCatching { audio?.unregisterAudioRecordingCallback(recordingCallback) }
+        }
+        detector?.stop()
+        detector = null
+        WakeWordManager.shutDown()
         scope.cancel()
         super.onDestroy()
     }
 
+    // ------------------------------------------------------------ transitions
+
+    private fun hasMicPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+
     private fun isScreenOn(): Boolean =
         getSystemService(PowerManager::class.java)?.isInteractive == true
 
-    private fun resumeListening() {
-        if (listening || stopping) return
-        listening = true
-        retryDelay = BASE_RETRY_MS
-        startListenLoop()
-    }
-
-    private fun pauseListening() {
-        listening = false
-        teardownRecognizer()
-    }
-
-    private fun teardownRecognizer() {
-        recognizer?.let { r ->
-            runCatching { r.cancel() }
-            runCatching { r.destroy() }
+    private fun resume() {
+        val d = detector ?: return
+        if (!hasMicPermission()) {
+            WakeWordManager.enter(VoiceState.ERROR, "Microphone permission isn't granted")
+            return
         }
-        recognizer = null
+        if (micTakenByOther) return
+        d.start()
+        d.resumeDetection()
+        WakeWordManager.enter(VoiceState.LISTENING_FOR_WAKE_WORD)
     }
 
-    private fun startListenLoop() {
-        if (stopping || !listening) return
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) return
-
-        teardownRecognizer()
-        // On-device where the platform has it: every listen cycle then costs no
-        // network, no radio wake-up and no round trip, which on a loop like this is
-        // the difference between a background drain and a negligible one.
-        val r = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            SpeechRecognizer.isOnDeviceRecognitionAvailable(this)
-        ) {
-            SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
-        } else {
-            SpeechRecognizer.createSpeechRecognizer(this)
+    private fun pause() {
+        detector?.suspendDetection()
+        if (WakeWordManager.state.value == VoiceState.LISTENING_FOR_WAKE_WORD) {
+            WakeWordManager.enter(VoiceState.IDLE)
         }
-        recognizer = r
-
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-        }
-
-        r.setRecognitionListener(object : RecognitionListener {
-            override fun onPartialResults(partialResults: Bundle) = checkForWakeWord(partialResults)
-
-            override fun onResults(results: Bundle) {
-                checkForWakeWord(results)
-                retryDelay = BASE_RETRY_MS
-                scheduleRestart()
-            }
-
-            override fun onError(error: Int) {
-                // Exponential backoff: a recognizer that's erroring (no network, busy mic,
-                // no match) would otherwise spin as fast as the CPU allows.
-                retryDelay = (retryDelay * 2).coerceAtMost(MAX_RETRY_MS)
-                scheduleRestart()
-            }
-
-            override fun onEndOfSpeech() = Unit
-            override fun onReadyForSpeech(params: Bundle?) = Unit
-            override fun onBeginningOfSpeech() = Unit
-            override fun onRmsChanged(rmsdB: Float) = Unit
-            override fun onBufferReceived(buffer: ByteArray?) = Unit
-            override fun onEvent(eventType: Int, params: Bundle?) = Unit
-        })
-
-        runCatching { r.startListening(intent) }
     }
 
-    private fun scheduleRestart() {
-        if (stopping || !listening) return
+    /**
+     * A headset arriving or leaving invalidates an open recorder, so detection is
+     * bounced onto whatever route now exists rather than left holding a dead one.
+     */
+    private fun restartRoute() {
+        if (WakeWordManager.state.value != VoiceState.LISTENING_FOR_WAKE_WORD) return
         scope.launch {
-            delay(retryDelay)
-            if (!stopping && listening) startListenLoop()
+            detector?.suspendDetection()
+            delay(300)
+            if (isScreenOn() && !micTakenByOther) detector?.resumeDetection()
         }
     }
 
-    private fun checkForWakeWord(bundle: Bundle) {
-        val heard = bundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
-        if (heard.any { matchesWakePhrase(it) }) {
-            teardownRecognizer()
-            launchMiniListening()
-            scope.launch {
-                delay(2000) // don't immediately re-trigger on our own greeting
-                if (!stopping && listening) startListenLoop()
-            }
+    /**
+     * Her name was heard: hand over to the command surface.
+     *
+     * The detector has already suspended itself, so the microphone is free before
+     * MiniActivity's recogniser asks for it. Everything from here is the existing
+     * pipeline — the same one a typed message uses — which is the point.
+     */
+    private fun onWakeWord(heard: String) {
+        // Barge-in. Saying her name while she is mid-sentence stops the sentence:
+        // anything else means the old reply talks over the new one, which is the
+        // single most irritating way for a voice assistant to behave.
+        val was = WakeWordManager.state.value
+        if (was == VoiceState.SPEAKING || was == VoiceState.PROCESSING || was == VoiceState.EXECUTING) {
+            com.lain.assistant.agent.ChatEngine.activeInstance?.silence()
         }
-    }
-
-    /** Opens the compact surface, not the whole app. */
-    private fun launchMiniListening() {
+        WakeWordManager.enter(VoiceState.WAKE_WORD_DETECTED)
         startActivity(
             Intent(this, MiniActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 putExtra(MiniActivity.EXTRA_AUTO_LISTEN, true)
+                putExtra(MiniActivity.EXTRA_WOKEN_BY, heard)
             }
         )
+    }
+
+    /**
+     * Back to waiting for her name.
+     *
+     * Called when a turn finishes, and by the watchdog when one doesn't. The
+     * cooldown keeps her own last words from waking her again.
+     */
+    fun returnToWakeListening() {
+        scope.launch {
+            detector?.cooldown()
+            if (isScreenOn() && hasMicPermission() && !micTakenByOther) {
+                detector?.resumeDetection()
+                WakeWordManager.enter(VoiceState.LISTENING_FOR_WAKE_WORD)
+            } else {
+                WakeWordManager.enter(VoiceState.IDLE)
+            }
+        }
     }
 
     private fun buildNotification(): android.app.Notification {
         val manager = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             manager.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "\"Hello Lain\" listening", NotificationManager.IMPORTANCE_LOW)
+                NotificationChannel(CHANNEL_ID, "Listening for \"Lain\"", NotificationManager.IMPORTANCE_LOW)
             )
         }
         val stopIntent = PendingIntent.getService(
@@ -270,10 +324,25 @@ class WakeWordService : Service() {
             Intent(this, WakeWordService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+        val open = PendingIntent.getActivity(
+            this, 1,
+            Intent(this, MiniActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("Listening for \"Hello Lain\"")
-            .setContentText("Pauses while the screen is off")
+            .setContentTitle("Listening for your voice")
+            // States exactly what is happening, because a microphone notification
+            // that is vague about it is worse than none.
+            .setContentText("Say \"Lain\". Nothing is recorded or sent until she hears her name. Pauses when the screen is off.")
+            .setStyle(
+                NotificationCompat.BigTextStyle().bigText(
+                    "Say \"Lain\" — \"hey Lain\", \"sup Lain\", or just her name. Until she hears it, " +
+                        "the microphone is only measuring loudness on this phone: no transcription, " +
+                        "nothing stored, nothing sent anywhere. Pauses while the screen is off."
+                )
+            )
+            .setContentIntent(open)
             .addAction(0, "Stop", stopIntent)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)

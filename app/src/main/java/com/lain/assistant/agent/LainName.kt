@@ -46,7 +46,10 @@ object LainName {
         // The other half of how people actually open: agreeing, refusing, or calling
         // out. All of these were reaching a model as a sentence addressed to a road.
         "yes", "no", "nah", "yeah", "yep", "wait", "listen", "look", "alright",
-        "right", "cheers", "afternoon", "evening", "welcome", "bye", "goodbye"
+        "right", "cheers", "afternoon", "evening", "welcome", "bye", "goodbye",
+        // How people actually greet her out loud. The wake word is her name, so every
+        // way of putting a word in front of it has to reach the same place.
+        "sup", "wassup", "whatsup", "hiya", "howdy", "hola", "oye", "salam", "yow"
     )
 
     /**
@@ -168,23 +171,95 @@ object LainName {
     private fun key(word: String): String =
         word.filter { it.isLetter() }.lowercase()
 
+    /** How the name is spelled for a synthesiser so it comes out right. */
+    private const val SPOKEN = "Line"
+
     /**
-     * What the synthesiser should be handed. The text, unchanged.
+     * The name as the assistant's name, capitalised, and not part of a longer word.
      *
-     * Kept as a function rather than deleted from the two engines that call it,
-     * because the name is exactly the kind of thing a later voice or a non-English
-     * locale will need respelling again — and the place to do it is here, once,
-     * rather than rediscovered in whichever engine noticed.
+     * The capital is load-bearing and is the whole safety mechanism. "Lain" the
+     * assistant is always written with one; "lain" the past participle of *lie*
+     * ("he had lain there for hours") never is. Matching case-sensitively means
+     * ordinary English in a quoted message, a search result or a file the user
+     * attached passes through untouched, which is the one thing a global replace
+     * would get wrong.
      *
-     * It does nothing today on purpose: "Lain" is pronounced Lane, and an English
-     * voice reading the letters produces Lane already. The respelling that used to
-     * live here turned the name into two syllables it does not have.
+     * The negative lookbehind covers the remaining case: a sentence that opens with
+     * the word, capitalised only because it opens the sentence, after an auxiliary
+     * verb. Rare, but "Had Lain there" is not her.
      */
-    fun forSpeech(text: String): String = text
+    private val ASSISTANT_NAME = Regex("(?<!\\b(?:have|has|had|having)\\s)\\b$CANONICAL\\b")
+
+    /**
+     * What the synthesiser should be handed.
+     *
+     * English text-to-speech reads the letters L-A-I-N as "Lane", and that is not
+     * how the name is meant to sound — it is "Line". The UI is untouched: every
+     * screen, every message bubble and the app's own label still say "Lain". Only
+     * the string on its way into the synthesiser is respelled, and only where the
+     * word is her name.
+     *
+     * Applied centrally, in the one place every engine already calls, so a new voice
+     * cannot forget it. Possessives come along for free — "Lain's" becomes "Line's",
+     * which is what it should sound like.
+     */
+    fun forSpeech(text: String): String {
+        if (text.isEmpty() || !text.contains(CANONICAL)) return text
+        return ASSISTANT_NAME.replace(text, SPOKEN)
+    }
 
     /** Whether a transcript is Lain being addressed by name at all. */
     fun isAddressed(transcript: String): Boolean {
         val normalised = normaliseHeard(transcript)
         return Regex("\\b$CANONICAL\\b", RegexOption.IGNORE_CASE).containsMatchIn(normalised)
+    }
+
+    /**
+     * Greetings that can sit in front of the name without being part of the command.
+     *
+     * Deliberately the same shape as [VOCATIVE_BEFORE] but not that set: "sorry" and
+     * "thanks" are evidence she is being addressed, and are also things somebody
+     * might genuinely be asking her to say.
+     */
+    private val WAKE_OPENERS = setOf(
+        "hello", "hey", "hi", "hiya", "yo", "ok", "okay", "hallo", "helo", "oi",
+        "sup", "wassup", "excuse me", "morning", "good morning", "evening",
+        "good evening", "afternoon", "good afternoon", "listen", "wait"
+    )
+
+    /**
+     * The instruction inside a wake phrase, when there is one.
+     *
+     * "Lain" and "hey Lain" are somebody getting her attention and nothing more.
+     * "Lain, open WhatsApp" is one sentence, and answering it with "yes?" makes her
+     * feel deaf — the person already said the thing. This pulls off the greeting and
+     * the name and hands back whatever is left.
+     *
+     * @return the command, or null when the phrase was only an address.
+     */
+    fun commandAfterName(transcript: String): String? {
+        val normalised = normaliseHeard(transcript).trim()
+        val nameAt = Regex("\\b$CANONICAL\\b", RegexOption.IGNORE_CASE).find(normalised) ?: return null
+
+        // Only trailing text counts. A name at the end ("open whatsapp, Lain") is the
+        // command already, and is handled by the branch below.
+        val before = normalised.take(nameAt.range.first).trim().trim(',', '.', '!')
+        val after = normalised.drop(nameAt.range.last + 1).trim().trimStart(',', '.', '!', '?').trim()
+
+        val leading = before.lowercase().trim()
+        val openerOnly = leading.isEmpty() || leading in WAKE_OPENERS
+
+        val candidate = when {
+            // "hey Lain open whatsapp" — everything after the name.
+            openerOnly && after.isNotEmpty() -> after
+            // "open whatsapp Lain" — everything before it, with the address removed.
+            after.isEmpty() && before.isNotEmpty() && leading !in WAKE_OPENERS -> before
+            else -> return null
+        }
+
+        // Two words is the floor. A single stray token after the name is far more
+        // often a mis-hearing than an instruction, and acting on one is worse than
+        // asking.
+        return candidate.takeIf { it.split(Regex("\\s+")).size >= 2 }
     }
 }

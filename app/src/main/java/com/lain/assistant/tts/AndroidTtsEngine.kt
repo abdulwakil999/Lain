@@ -20,17 +20,48 @@ import kotlin.coroutines.resume
  */
 class AndroidTtsEngine(context: Context) : TtsEngine {
 
+    private companion object {
+        /** Long enough for a cold engine, short enough not to strand a voice turn. */
+        const val INIT_TIMEOUT_MS = 5_000L
+    }
+
     private var tts: TextToSpeech? = null
-    private var ready = false
+
+    /**
+     * Completed when the engine reports its init result, successful or not.
+     *
+     * This replaces a plain boolean that [speak] checked and, if unset, returned
+     * from. TextToSpeech signals readiness through a callback that lands tens to
+     * hundreds of milliseconds after construction, so the first line Lain tried to
+     * say after a cold start — the greeting, or the answer to the command that woke
+     * her — was reliably dropped with no error anywhere. Waiting is the fix; a flag
+     * you can lose a race against is the bug.
+     */
+    private val initialised = kotlinx.coroutines.CompletableDeferred<Boolean>()
 
     init {
         tts = TextToSpeech(context.applicationContext) { status ->
-            if (status == TextToSpeech.SUCCESS) {
+            val ok = status == TextToSpeech.SUCCESS
+            if (ok) {
                 tts?.language = Locale.US
                 selectSingleFemaleVoice()
-                ready = true
             }
+            initialised.complete(ok)
         }
+    }
+
+    /**
+     * Blocks until the engine is up, or gives up.
+     *
+     * Bounded because a missing or broken TTS service never calls back at all, and a
+     * caller waiting on that forever is a hands-free session that never hands the
+     * microphone back.
+     */
+    private suspend fun awaitReady(): Boolean =
+        kotlinx.coroutines.withTimeoutOrNull(INIT_TIMEOUT_MS) { initialised.await() } == true
+
+    override suspend fun warmUp() {
+        awaitReady()
     }
 
     /**
@@ -83,7 +114,8 @@ class AndroidTtsEngine(context: Context) : TtsEngine {
 
     override suspend fun speak(text: String) {
         val engine = tts ?: return
-        if (!ready) return
+        // The engine may still be starting: wait for it rather than dropping the line.
+        if (!awaitReady()) return
         suspendCancellableCoroutine<Unit> { cont ->
             val id = UUID.randomUUID().toString()
             engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {

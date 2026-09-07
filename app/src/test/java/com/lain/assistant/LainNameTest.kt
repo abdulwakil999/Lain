@@ -60,13 +60,23 @@ class LainNameTest {
     }
 
     @Test
-    fun `the name reaches the synthesiser spelled the way it is written`() {
-        // Lain is pronounced Lane, which is what an English voice does with the
-        // letters unaided. The respelling that used to happen here produced
-        // "Lah-een" — two syllables the name does not have.
-        assertEquals("Hello, I'm Lain.", LainName.forSpeech("Hello, I'm Lain."))
-        assertEquals("That's Lain's job.", LainName.forSpeech("That's Lain's job."))
+    fun `the name is respelled for the synthesiser and nowhere else`() {
+        // An English voice reads L-A-I-N as "Lane". The name is meant to sound like
+        // "Line", so the string on its way into the synthesiser is respelled — and
+        // only that string. Every screen still says Lain.
+        assertEquals("Hello, I'm Line.", LainName.forSpeech("Hello, I'm Lain."))
+        assertEquals("That's Line's job.", LainName.forSpeech("That's Lain's job."))
+    }
+
+    @Test
+    fun `the respelling never touches ordinary English`() {
+        // "lain" is also the past participle of "lie", and a global replace would
+        // turn somebody's own words into nonsense on its way to being read aloud.
         assertEquals("Plainly obvious", LainName.forSpeech("Plainly obvious"))
+        assertEquals("it had lain there for years", LainName.forSpeech("it had lain there for years"))
+        assertEquals("he has lain low", LainName.forSpeech("he has lain low"))
+        assertEquals("The blame lain elsewhere", LainName.forSpeech("The blame lain elsewhere"))
+        assertEquals("Chamberlain", LainName.forSpeech("Chamberlain"))
     }
 
     @Test

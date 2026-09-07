@@ -42,6 +42,7 @@ data class SettingsUiState(
     val redditPassword: String = "",
     val overlayEnabled: Boolean = false,
     val alwaysOn: Boolean = false,
+    val wakeWordEnabled: Boolean = false,
     val loaded: Boolean = false,
     val justSaved: Boolean = false,
     val testResult: String? = null,
@@ -100,6 +101,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             val keys = container.secureKeyStore
             val overlayEnabled = container.userPreferencesRepository.isOverlayEnabled.first()
             val alwaysOn = container.userPreferencesRepository.isAlwaysOn.first()
+            val wakeWord = container.userPreferencesRepository.isWakeWordEnabled.first()
             val fallback = container.userPreferencesRepository.isModelFallbackEnabled.first()
             val broken = container.userPreferencesRepository.brokenModels.first()
             _state.update {
@@ -123,6 +125,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
                     redditPassword = keys.channel(StoredChannelCredentials.REDDIT_PASSWORD).orEmpty(),
                     overlayEnabled = overlayEnabled,
                     alwaysOn = alwaysOn,
+                    wakeWordEnabled = wakeWord,
                     modelFallback = fallback,
                     brokenModels = broken,
                     loaded = true
@@ -281,6 +284,11 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
      * Applied immediately rather than on Save — the bubble is a visible, running
      * thing, so the toggle should reflect reality the moment it's flipped.
      */
+    fun setWakeWordEnabled(enabled: Boolean) {
+        _state.update { it.copy(wakeWordEnabled = enabled) }
+        viewModelScope.launch { container.userPreferencesRepository.setWakeWordEnabled(enabled) }
+    }
+
     fun setAlwaysOn(enabled: Boolean) {
         _state.update { it.copy(alwaysOn = enabled) }
         viewModelScope.launch { container.userPreferencesRepository.setAlwaysOn(enabled) }

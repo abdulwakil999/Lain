@@ -279,6 +279,14 @@
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
 
+        <!--
+             Hands-free listening. foregroundServiceType="microphone" plus
+             FOREGROUND_SERVICE_MICROPHONE is what Android 14 requires before an app
+             may hold the microphone outside the foreground, and the ongoing
+             notification the service posts is the other half of that contract. There
+             is no path here that records without RECORD_AUDIO: the service checks it
+             on start and on every loop, and stops itself when it is missing.
+        -->
         <service
             android:name=".automation.WakeWordService"
             android:exported="false"

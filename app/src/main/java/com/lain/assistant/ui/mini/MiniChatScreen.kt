@@ -60,6 +60,8 @@ fun MiniChatScreen(
     onDismiss: () -> Unit,
     /** A command to run immediately, from a widget button. */
     command: String? = null,
+    /** What the wake word heard, when it already carried the whole instruction. */
+    wokenBy: String? = null,
     /** Changes on every fresh launch, so a repeat tap re-fires the same request. */
     requestKey: Long = 0L
 ) {
@@ -73,8 +75,13 @@ fun MiniChatScreen(
     // Keyed on the launch nonce rather than Unit: the activity is singleTask, so the
     // composition survives a second widget tap and a Unit key would ignore it.
     LaunchedEffect(requestKey) {
+        // A wake that already carried the command runs it rather than asking again.
+        // "Lain, open WhatsApp" is one sentence to the person saying it, and making
+        // them repeat the second half is the thing that makes an assistant feel deaf.
+        val spokenCommand = wokenBy?.let { viewModel.commandInsideWakePhrase(it) }
         when {
             !command.isNullOrBlank() -> viewModel.send(command)
+            !spokenCommand.isNullOrBlank() -> viewModel.sendFromVoice(spokenCommand)
             autoListen -> viewModel.startVoiceInput()
         }
     }
@@ -152,6 +159,17 @@ fun MiniChatScreen(
             state.pendingConfirmation?.let { question ->
                 Spacer(Modifier.height(6.dp))
                 Text(question, color = LainCream, style = MaterialTheme.typography.bodyMedium)
+            }
+
+            // The voice state, on the surface the wake word actually opens.
+            val voiceState by com.lain.assistant.voice.WakeWordManager.state.collectAsState()
+            if (voiceState != com.lain.assistant.voice.VoiceState.IDLE) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    voiceState.label,
+                    color = LainSalmon,
+                    style = MaterialTheme.typography.labelLarge
+                )
             }
 
             state.statusLine?.let {

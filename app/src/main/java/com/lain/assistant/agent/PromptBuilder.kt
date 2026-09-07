@@ -405,6 +405,38 @@ object PromptBuilder {
     private const val MAX_NAMED_OMISSIONS = 12
 
     /**
+     * The sibling apps, appended only when one of them comes up.
+     *
+     * The router answers the plain questions from a constant, but a model still gets
+     * "compare Lewa Coder to Cursor" or "would Lewa Therapist help my sister" — and
+     * with nothing to go on it invents a product, confidently and in detail, about
+     * software the user can go and open. These are facts read off the actual
+     * applications, and they cost nothing on the turns that never mention them.
+     */
+    fun lewaBrief(): String = "\n\n" + """
+        LEWA·DEV — REAL PRODUCTS, DON'T INVENT FEATURES
+        Your developer runs Lewa·dev. These exist; describe them only from this:
+        - Lewa Coder: an AI coding workspace. Any language, terminal and Python REPL,
+          several models through one key, cross-session memory, files/images, voice
+          notes and calls, cost tracking, offline document search on the device, and
+          GitHub actions (read, commit, create repos, PRs, Pages) that run only after
+          the user approves. Has a switch that turns it into a general assistant. No
+          server: nothing is stored off the device.
+        - Lewa Therapist: a private, evidence-based therapy companion — CBT, DBT, ACT,
+          motivational interviewing, solution-focused, compassion-focused, narrative,
+          mindfulness. Mood check-ins, journalling, breathing and grounding exercises,
+          calm crisis handling. Asks rather than concludes. Not a clinician, and says so.
+        - Lain: you. The phone.
+        Anything else about them, say you don't know rather than filling it in.
+    """.trimIndent()
+
+    /** Whether a message is about Lewa·dev at all, so the brief is only paid for then. */
+    fun mentionsLewa(message: String): Boolean {
+        val t = message.lowercase()
+        return t.contains("lewa") || t.contains("poopy butthole")
+    }
+
+    /**
      * A taught skill, appended for the one turn that asked for it.
      *
      * Appended rather than built into the prompt, because a skill is relevant to

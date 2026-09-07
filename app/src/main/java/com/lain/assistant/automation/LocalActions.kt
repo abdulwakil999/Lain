@@ -316,6 +316,10 @@ class LocalActions(private val context: Context) {
             IdentityQuestion.APP_NAME -> say(Replies.appName)
             IdentityQuestion.NECIO -> say(Replies.necio)
             IdentityQuestion.DEVELOPER -> say(Replies.developer)
+            IdentityQuestion.MAKER -> say(Replies.maker)
+            IdentityQuestion.LEWA_CODER -> say(Replies.lewaCoder)
+            IdentityQuestion.LEWA_THERAPIST -> say(Replies.lewaTherapist)
+            IdentityQuestion.LEWA_DEV -> say(Replies.lewaDev)
             IdentityQuestion.ANIME -> say(Replies.animeName)
             IdentityQuestion.CAPABILITIES -> say(Replies.capabilities)
         }

@@ -156,6 +156,19 @@ enum class IdentityQuestion {
     /** "who made you" — a fact about the world that no model has, so it is answered here. */
     DEVELOPER,
 
+    /**
+     * "Who is Professor Poopy Butthole" — the follow-up, not the name.
+     *
+     * A different question from [DEVELOPER] and it wants a different answer: someone
+     * asking this has already been told the name and wants to know what it means.
+     */
+    MAKER,
+
+    /** The sibling apps. Real products, so a model must not invent their features. */
+    LEWA_CODER,
+    LEWA_THERAPIST,
+    LEWA_DEV,
+
     /** "are you named after the anime" — she isn't, and a model will say she is. */
     ANIME
 }
@@ -846,6 +859,24 @@ object FastRouter {
         t == "what can you do" || t == "what are you able to do" || t == "help" ||
             t == "what can i ask you" || t == "what do you do" ->
             LocalIntent.Identity(IdentityQuestion.CAPABILITIES)
+
+        // Everything below is a fact about real software that a model has never seen
+        // and will therefore invent, in detail, with total confidence. Lewa Coder and
+        // Lewa Therapist exist and people can go and check what they do, which makes a
+        // fabricated feature list worse than no answer.
+        t.contains("poopy butthole") &&
+            Regex("\\b(who|what|tell me about|know about)\\b").containsMatchIn(t) ->
+            LocalIntent.Identity(IdentityQuestion.MAKER)
+
+        t.contains("lewa coder") -> LocalIntent.Identity(IdentityQuestion.LEWA_CODER)
+
+        (t.contains("lewa therapist") || t.contains("lewa therapy")) ->
+            LocalIntent.Identity(IdentityQuestion.LEWA_THERAPIST)
+
+        // The shop, but only when it is plainly the subject — "lewa" alone is too
+        // short a word to claim on sight.
+        Regex("\\blewa\\s*(\\u00b7|\\.|-)?\\s*dev\\b").containsMatchIn(t) ->
+            LocalIntent.Identity(IdentityQuestion.LEWA_DEV)
 
         else -> null
     }

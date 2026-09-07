@@ -283,6 +283,19 @@ fun ChatScreen(viewModel: ChatViewModel, container: AppContainer, autoListenToke
                 }
             }
 
+            // Where voice is, when voice is on. Read from the one state machine the
+            // whole pipeline shares, so this line and the microphone can't disagree —
+            // which is what made "Listening…" outlive the listening.
+            val voiceState by com.lain.assistant.voice.WakeWordManager.state.collectAsState()
+            AnimatedVisibility(visible = voiceState != com.lain.assistant.voice.VoiceState.IDLE) {
+                Text(
+                    text = voiceState.label,
+                    color = if (voiceState == com.lain.assistant.voice.VoiceState.ERROR) LainSalmon else LainSalmon,
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+            }
+
             // Live status so a long automation run never looks frozen.
             AnimatedVisibility(visible = state.statusLine != null) {
                 Text(
