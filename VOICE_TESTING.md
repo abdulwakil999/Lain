@@ -18,7 +18,7 @@ open.
 | 5 | Screen off | Detection **pauses** by design (see *Known limitations*). Screen on resumes it |
 | 6 | Speak a command after waking | State goes Listening… → Thinking… → Working… → Speaking… |
 | 7 | Lain speaks the reply | Audible, and the same reply appears in the transcript |
-| 8 | Immediately say another command | Second turn runs; she returns to wake listening afterwards |
+| 8 | Immediately say another command **without** her name | Nothing happens — one wake is one command. Saying "Lain, …" again runs the second turn |
 | 9 | Say "Lain" while she is speaking | Speech **stops mid-sentence**, she starts listening for the new command |
 | 10 | Tap the mic button while she is speaking | Same barge-in, from touch |
 | 11 | Deny the microphone permission at the prompt | Hands-free stays **Off**; nothing pretends to be listening |
@@ -32,7 +32,7 @@ open.
 | 19 | Rotate the phone during a turn | Turn continues; the engine is application-scoped, not tied to the activity |
 | 20 | Force-stop, relaunch | Hands-free comes back on if it was on; watchdog leaves no stuck state |
 | 21 | Reboot | Same — the switch survives |
-| 22 | Five consecutive interactions | All five work; she returns to wake listening after each |
+| 22 | Five consecutive interactions, each opened with her name | All five work; she returns to wake listening after each, including after a failed one |
 | 23 | Noisy room (music, TV, traffic) | Noise floor adapts; stage two runs sometimes but does **not** wake her without the name |
 | 24 | Talk near the phone for a minute without saying her name | No wake. Nothing is sent anywhere |
 | 25 | Reply containing the word "Lain" | She does **not** wake herself up (echo cancellation + spoken-text check) |

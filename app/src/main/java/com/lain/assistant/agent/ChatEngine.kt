@@ -202,6 +202,11 @@ class ChatEngine(
     /** Set when the current turn came from speech, so the reply is kept speakable. */
     private var deliveryMode = DeliveryMode.TEXT
 
+    // Whether this turn has already handed the microphone back. A turn can reach its
+    // end down several paths — the fast local answer, the quick model answer, the
+    // full loop, or a thrown request — and the handback must happen exactly once.
+    private var turnClosed = false
+
     init {
         activeInstance = this
         scope.launch {
@@ -513,6 +518,7 @@ class ChatEngine(
         if ((message.isBlank() && attached.isEmpty()) || _state.value.isSending) return
 
         deliveryMode = if (fromVoice) DeliveryMode.VOICE else DeliveryMode.TEXT
+        turnClosed = false
 
         // A reply to a pending confirmation is an answer, not a new request — it must
         // not be re-routed, re-planned, or treated as a fresh objective.
@@ -676,6 +682,7 @@ class ChatEngine(
 
         if (!PendingConfirmation.isApproval(reply)) {
             finishTurn(cid, "Left it. Nothing was sent.", usedModel = "Lain (on-device)", fellBack = false)
+            endOfSpokenTurn()
             return
         }
 
@@ -693,6 +700,7 @@ class ChatEngine(
                 "That didn't go through. " + outcome.substringAfter(": ").trim()
             }
             finishTurn(cid, spoken, usedModel = "Lain (on-device)", fellBack = false)
+            endOfSpokenTurn()
         } catch (_: CancellationException) {
             _state.update { it.copy(isSending = false, statusLine = null) }
         } catch (t: Throwable) {
@@ -700,6 +708,8 @@ class ChatEngine(
         } finally {
             approvedThisTurn.remove(pending.call.id)
             if (_state.value.isSending) _state.update { it.copy(isSending = false, statusLine = null) }
+            // A spoken "yes" is still a spoken turn: it owes the microphone back too.
+            closeSpokenTurnIfStillOpen()
         }
     }
 
@@ -858,7 +868,7 @@ class ChatEngine(
             val cid = ensureConversation()
             conversations.append(MessageEntity(conversationId = cid, role = "user", content = message))
             finishTurn(cid, reply, usedModel = "Lain (on-device)", fellBack = false)
-            resumeListeningIfHandsFree()
+            endOfSpokenTurn()
         } catch (_: CancellationException) {
             _state.update { it.copy(isSending = false, statusLine = null) }
         } catch (t: Throwable) {
@@ -866,6 +876,11 @@ class ChatEngine(
         } finally {
             if (_state.value.isSending) _state.update { it.copy(isSending = false, statusLine = null) }
             trace.finish()
+            // Every other exit — a missing API key, a request that threw, a turn that
+            // was cancelled — still owes the microphone back, or she stops answering
+            // to her name after one failure. Deliberately not suspending: this runs
+            // while the coroutine may already be cancelling.
+            closeSpokenTurnIfStillOpen()
         }
     }
 
@@ -1014,7 +1029,7 @@ class ChatEngine(
                     monologue = directAnswerWorking
                 )
                 scope.launch { maintainContext(cid, client, provider, modelId, apiKey, userMessage, quick) }
-                resumeListeningIfHandsFree()
+                endOfSpokenTurn()
                 return
             }
         }
@@ -1211,7 +1226,7 @@ class ChatEngine(
         // Housekeeping runs after the reply so the user never waits on it.
         scope.launch { maintainContext(cid, client, provider, usedModel, apiKey, userMessage, replyText) }
 
-        resumeListeningIfHandsFree()
+        endOfSpokenTurn()
     }
 
     /**
@@ -1449,11 +1464,16 @@ class ChatEngine(
     }
 
     /**
-     * Hands the mic back in hands-free mode — but not while Lain is still talking,
-     * or she transcribes her own voice and answers herself.
+     * Closes out a spoken turn: either back to the wake word, or straight into the
+     * next command if hands-free is on.
+     *
+     * Either way it waits for her to stop talking first, or she transcribes her own
+     * voice and answers herself. A turn that was typed is left alone — nothing about
+     * it touched the microphone, so nothing about it should reshuffle who holds it.
      */
-    private suspend fun resumeListeningIfHandsFree() {
-        if (!_state.value.conversationMode) return
+    private suspend fun endOfSpokenTurn() {
+        if (deliveryMode != DeliveryMode.VOICE || turnClosed) return
+        turnClosed = true
 
         // Wait out the reply rather than a fixed guess. Streamed speech finishes when
         // the last queued utterance does, which is not knowable up front.
@@ -1465,8 +1485,27 @@ class ChatEngine(
         if (!_state.value.isBusy && !_state.value.isSpeaking && _state.value.conversationMode) {
             startVoiceInput()
         } else {
+            // One wake, one command. Going back through returnToWakeWord is what
+            // applies the detector's cooldown — so the tail of her own reply cannot
+            // wake her — and what puts the voice state back to
+            // LISTENING_FOR_WAKE_WORD rather than leaving it reading idle while she
+            // is in fact still listening.
             returnToWakeWord()
         }
+    }
+
+    /**
+     * The handback for turns that ended badly rather than finishing.
+     *
+     * [endOfSpokenTurn] waits for speech to stop before it lets go, which is right
+     * when there was a reply to wait for; here there may be nothing left of the turn
+     * at all and the coroutine may already be cancelling, so this suspends on
+     * nothing and simply gives the microphone back.
+     */
+    private fun closeSpokenTurnIfStillOpen() {
+        if (deliveryMode != DeliveryMode.VOICE || turnClosed) return
+        turnClosed = true
+        returnToWakeWord()
     }
 
     /**
