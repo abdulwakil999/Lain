@@ -291,7 +291,7 @@ fun ChatScreen(viewModel: ChatViewModel, container: AppContainer, autoListenToke
             // Where voice is, when voice is on. Read from the one state machine the
             // whole pipeline shares, so this line and the microphone can't disagree —
             // which is what made "Listening…" outlive the listening.
-            val voiceState by com.lain.assistant.voice.WakeWordManager.state.collectAsState()
+            val voiceState by com.lain.assistant.voice.VoiceSession.state.collectAsState()
             AnimatedVisibility(visible = voiceState != com.lain.assistant.voice.VoiceState.IDLE) {
                 Text(
                     text = voiceState.label,

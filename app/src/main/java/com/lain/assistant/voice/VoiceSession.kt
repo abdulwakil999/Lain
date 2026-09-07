@@ -15,12 +15,10 @@ import java.util.concurrent.atomic.AtomicReference
  *
  * Two problems this exists to solve, both of which were real.
  *
- * **Two listeners at once.** The wake-word service held a recogniser and the chat
- * engine held another. Nothing coordinated them, so the handover after a wake word
- * was a race: on a slow phone the command recogniser started before the wake-word
- * one had let go, and Android gave the second one ERROR_RECOGNIZER_BUSY. From the
- * outside that is Lain waking up and then ignoring you. [claimMicrophone] makes the
- * contention explicit and always resolvable.
+ * **Two listeners at once.** The chat engine holds a recogniser and the music
+ * identifier holds a recorder. Nothing coordinated them, so starting one while the
+ * other was live got ERROR_RECOGNIZER_BUSY — from the outside, Lain simply ignoring
+ * you. [claimMicrophone] makes the contention explicit and always resolvable.
  *
  * **Nothing could get unstuck.** With the state spread across three classes there
  * was no place to notice that "Listening…" had been true for four minutes. There is
@@ -29,10 +27,9 @@ import java.util.concurrent.atomic.AtomicReference
  * An object rather than an injected instance because the microphone is a device
  * singleton — a second arbiter would arbitrate nothing.
  */
-object WakeWordManager {
+object VoiceSession {
 
     /** Names used when claiming the mic, so a leak says who leaked it. */
-    const val OWNER_WAKE_WORD = "wake-word"
     const val OWNER_COMMAND = "command"
 
     private val _state = MutableStateFlow(VoiceState.IDLE)
@@ -45,7 +42,7 @@ object WakeWordManager {
 
     private val owner = AtomicReference<String?>(null)
 
-    /** Who holds the microphone, or null. Read by the detector before it opens one. */
+    /** Who holds the microphone, or null. */
     val microphoneOwner: String? get() = owner.get()
 
     /**
@@ -71,65 +68,6 @@ object WakeWordManager {
         owner.set(null)
     }
 
-    /**
-     * What Lain is reading aloud right now, or empty.
-     *
-     * Lives here rather than on the detector because the two are in different
-     * components with no reference to each other, and the detector needs it for one
-     * specific reason: a phone's speaker is the loudest thing its own microphone
-     * hears, so without knowing her own words she wakes herself up on any reply that
-     * happens to contain her name. Echo cancellation gets most of it and not all.
-     */
-    @Volatile
-    var spokenAloud: String = ""
-
-    // ------------------------------------------------------------ diagnostics
-
-    /**
-     * Enough to tell a working detector from a broken one, from the Settings screen.
-     *
-     * This exists because the last two attempts at hands-free shipped broken and the
-     * only report available was "it doesn't work" — which is true, and cannot be
-     * acted on. A count of checks, a count of wakes and the last thing the recogniser
-     * said turns the next round into reading rather than guessing.
-     *
-     * Nothing here is stored or sent. It is in memory and dies with the process.
-     */
-    private val _checks = MutableStateFlow(0)
-    val checks: StateFlow<Int> = _checks.asStateFlow()
-
-    private val _wakes = MutableStateFlow(0)
-    val wakes: StateFlow<Int> = _wakes.asStateFlow()
-
-    private val _diagnostic = MutableStateFlow<String?>(null)
-    val diagnostic: StateFlow<String?> = _diagnostic.asStateFlow()
-
-    /** One candidate utterance was sent for checking. */
-    fun recordCheck() {
-        _checks.value = _checks.value + 1
-    }
-
-    /** Her name was actually found. */
-    fun recordWake() {
-        _wakes.value = _wakes.value + 1
-    }
-
-    fun recordDiagnostic(note: String) {
-        _diagnostic.value = note
-    }
-
-    /** A one-line summary for the Settings screen. */
-    fun diagnosticSummary(): String {
-        val c = _checks.value
-        val w = _wakes.value
-        val base = when {
-            c == 0 -> "Nothing has sounded like speech yet."
-            w == 0 -> "$c candidate(s) checked, none were her name."
-            else -> "$c checked, $w wake(s)."
-        }
-        return _diagnostic.value?.let { "$base Last: $it" } ?: base
-    }
-
     // ------------------------------------------------------------------ state
 
     fun enter(next: VoiceState, error: String? = null) {
@@ -141,14 +79,6 @@ object WakeWordManager {
 
     /** True when voice is doing anything the user would notice. */
     val isActive: Boolean get() = _state.value != VoiceState.IDLE
-
-    /**
-     * Callbacks the hosting service registers so the watchdog can actually recover
-     * rather than only report. Null when no service is running, which is itself the
-     * correct answer — there is nothing to recover to.
-     */
-    @Volatile
-    var onRecover: (() -> Unit)? = null
 
     // -------------------------------------------------------------- watchdog
 
@@ -163,7 +93,6 @@ object WakeWordManager {
      * genuinely takes a while to read out.
      */
     private fun timeoutFor(state: VoiceState): Long = when (state) {
-        VoiceState.WAKE_WORD_DETECTED -> 5_000L
         VoiceState.LISTENING_FOR_COMMAND -> 20_000L
         VoiceState.PROCESSING -> 90_000L
         VoiceState.EXECUTING -> 180_000L
@@ -178,25 +107,20 @@ object WakeWordManager {
         watchdog = LainApplication.appScope.launch {
             delay(limit)
             // Still here, still the same state: whatever we were waiting on is not
-            // coming. Let go of the microphone before recovering, or the next attempt
+            // coming. Let go of the microphone before going idle, or the next attempt
             // fails on a token nobody owns any more.
             if (_state.value == state) {
                 forceReleaseMicrophone()
                 _lastError.value = "Voice timed out in ${state.name.lowercase().replace('_', ' ')}"
-                val recover = onRecover
-                if (recover != null) recover() else _state.value = VoiceState.IDLE
+                _state.value = VoiceState.IDLE
             }
         }
     }
 
     /** Called when voice is switched off, so nothing is left armed. */
     fun shutDown() {
-        _checks.value = 0
-        _wakes.value = 0
-        _diagnostic.value = null
         watchdog?.cancel()
         watchdog = null
-        onRecover = null
         forceReleaseMicrophone()
         _state.value = VoiceState.IDLE
     }

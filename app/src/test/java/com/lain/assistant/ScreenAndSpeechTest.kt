@@ -6,7 +6,6 @@ import com.lain.assistant.agent.LocalIntent
 import com.lain.assistant.agent.Route
 import com.lain.assistant.agent.WhenParser
 import com.lain.assistant.automation.Messengers
-import com.lain.assistant.automation.WakeWordService
 import com.lain.assistant.data.Repeat
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -116,11 +115,11 @@ class ScreenAndSpeechTest {
     }
 
     @Test
-    fun `her name alone wakes her`() {
-        assertTrue(WakeWordService.matchesWakePhrase("lane"))
-        assertTrue(WakeWordService.matchesWakePhrase("lane open whatsapp"))
-        assertFalse(WakeWordService.matchesWakePhrase("what lane am I in"))
-        assertFalse(WakeWordService.matchesWakePhrase("the rain is heavy"))
+    fun `her name alone counts as being addressed`() {
+        assertTrue(LainName.isAddressed("lane"))
+        assertTrue(LainName.isAddressed("lane open whatsapp"))
+        assertFalse(LainName.isAddressed("what lane am I in"))
+        assertFalse(LainName.isAddressed("the rain is heavy"))
     }
 
     // ------------------------------------------------------------ messengers

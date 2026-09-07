@@ -16,7 +16,7 @@ import com.lain.assistant.ui.theme.LainTheme
 
 /**
  * The compact surface opened by the widgets, the Quick Settings tile, the
- * floating bubble and the wake word — an input bar plus recent messages over a
+ * floating bubble — an input bar plus recent messages over a
  * translucent scrim, instead of launching the whole app just to say one thing.
  */
 class MiniActivity : ComponentActivity() {
@@ -27,22 +27,6 @@ class MiniActivity : ComponentActivity() {
         /** A command to run straight away, for widget buttons like "read the screen". */
         const val EXTRA_COMMAND = "com.lain.assistant.MINI_COMMAND"
 
-        /**
-         * The transcript that contained her name, when the wake word opened this.
-         *
-         * Carried so a wake that already held the whole command — "Lain, open
-         * WhatsApp" — does not make the user say it a second time. Without it the
-         * detector hears the instruction, throws it away, and asks for it again.
-         */
-        const val EXTRA_WOKEN_BY = "com.lain.assistant.MINI_WOKEN_BY"
-
-        /**
-         * The service already started the turn; this window is only here to watch it.
-         *
-         * Without it the screen would start a second recogniser and the two would
-         * fight over one microphone.
-         */
-        const val EXTRA_ALREADY_LISTENING = "com.lain.assistant.MINI_ALREADY_LISTENING"
     }
 
     /**
@@ -58,8 +42,6 @@ class MiniActivity : ComponentActivity() {
     private data class Request(
         val autoListen: Boolean,
         val command: String?,
-        /** What the wake word already heard, if the whole command came with it. */
-        val wokenBy: String? = null,
         val nonce: Long = System.nanoTime()
     )
 
@@ -90,7 +72,6 @@ class MiniActivity : ComponentActivity() {
                     viewModel = chatViewModel,
                     autoListen = current.autoListen,
                     command = current.command,
-                    wokenBy = current.wokenBy,
                     requestKey = current.nonce,
                     onDismiss = { finish() }
                 )
@@ -105,13 +86,7 @@ class MiniActivity : ComponentActivity() {
     }
 
     private fun readRequest(intent: Intent?) = Request(
-        autoListen = intent?.getBooleanExtra(EXTRA_AUTO_LISTEN, false) == true &&
-            intent?.getBooleanExtra(EXTRA_ALREADY_LISTENING, false) != true,
-        command = intent?.getStringExtra(EXTRA_COMMAND)?.takeIf { it.isNotBlank() },
-        // Suppressed when the service is already running the turn, or the screen
-        // would send the command a second time.
-        wokenBy = intent?.getStringExtra(EXTRA_WOKEN_BY)
-            ?.takeIf { it.isNotBlank() }
-            ?.takeIf { intent.getBooleanExtra(EXTRA_ALREADY_LISTENING, false) != true }
+        autoListen = intent?.getBooleanExtra(EXTRA_AUTO_LISTEN, false) == true,
+        command = intent?.getStringExtra(EXTRA_COMMAND)?.takeIf { it.isNotBlank() }
     )
 }

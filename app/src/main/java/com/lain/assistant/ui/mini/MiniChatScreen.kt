@@ -48,7 +48,7 @@ import com.lain.assistant.ui.theme.LainSalmon
 import com.lain.assistant.ui.theme.LainSalmonDeep
 
 /**
- * The lightweight surface the widget, Quick Settings tile and wake word open:
+ * The lightweight surface the widget and the Quick Settings tile open:
  * just an input bar and a faded strip of recent messages docked to the bottom,
  * over a transparent scrim rather than the whole app. Tapping the scrim
  * dismisses it, so it behaves like a sheet, not a launch.
@@ -60,8 +60,6 @@ fun MiniChatScreen(
     onDismiss: () -> Unit,
     /** A command to run immediately, from a widget button. */
     command: String? = null,
-    /** What the wake word heard, when it already carried the whole instruction. */
-    wokenBy: String? = null,
     /** Changes on every fresh launch, so a repeat tap re-fires the same request. */
     requestKey: Long = 0L
 ) {
@@ -75,13 +73,8 @@ fun MiniChatScreen(
     // Keyed on the launch nonce rather than Unit: the activity is singleTask, so the
     // composition survives a second widget tap and a Unit key would ignore it.
     LaunchedEffect(requestKey) {
-        // A wake that already carried the command runs it rather than asking again.
-        // "Lain, open WhatsApp" is one sentence to the person saying it, and making
-        // them repeat the second half is the thing that makes an assistant feel deaf.
-        val spokenCommand = wokenBy?.let { viewModel.commandInsideWakePhrase(it) }
         when {
             !command.isNullOrBlank() -> viewModel.send(command)
-            !spokenCommand.isNullOrBlank() -> viewModel.sendFromVoice(spokenCommand)
             autoListen -> viewModel.startVoiceInput()
         }
     }
@@ -166,8 +159,8 @@ fun MiniChatScreen(
                 Text(question, color = LainCream, style = MaterialTheme.typography.bodyMedium)
             }
 
-            // The voice state, on the surface the wake word actually opens.
-            val voiceState by com.lain.assistant.voice.WakeWordManager.state.collectAsState()
+            // The voice state, on the surface a voice launch actually opens.
+            val voiceState by com.lain.assistant.voice.VoiceSession.state.collectAsState()
             if (voiceState != com.lain.assistant.voice.VoiceState.IDLE) {
                 Spacer(Modifier.height(6.dp))
                 Text(

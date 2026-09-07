@@ -16,7 +16,7 @@ import com.lain.assistant.ui.theme.LainTheme
 class MainActivity : ComponentActivity() {
 
     companion object {
-        /** Set by the widget and the "Hello Lain" wake-word service to drop straight into listening mode. */
+        /** Set by the widget and the Quick Settings tile to drop straight into listening mode. */
         const val EXTRA_AUTO_LISTEN = "com.lain.assistant.EXTRA_AUTO_LISTEN"
     }
 

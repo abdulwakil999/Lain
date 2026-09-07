@@ -9,6 +9,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import com.lain.assistant.agent.LainName
+import com.lain.assistant.agent.Misheard
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
@@ -153,10 +154,13 @@ class VoiceInputController(private val context: Context) {
                         // Corrected here, at the single point every spoken message enters
                         // the app. Recognisers have never heard of the name and return
                         // "hello lane" — which then reaches the model as a request
-                        // addressed to a road.
+                        // addressed to a road. Misheard does the same for the rest of
+                        // the vocabulary they have never heard either: Claude comes
+                        // back as "cloud", DeepSeek as "deep seek".
                         val text = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                             ?.firstOrNull()
                             ?.let(LainName::normaliseHeard)
+                            ?.let(Misheard::correct)
                         settle(
                             if (!text.isNullOrBlank()) Result.success(text)
                             else Result.failure(IllegalStateException("Didn't catch that"))
@@ -168,6 +172,7 @@ class VoiceInputController(private val context: Context) {
                             ?.firstOrNull()
                             ?.takeIf { it.isNotBlank() }
                             ?.let(LainName::normaliseHeard)
+                            ?.let(Misheard::correct)
                             ?.let(onPartial)
                     }
 

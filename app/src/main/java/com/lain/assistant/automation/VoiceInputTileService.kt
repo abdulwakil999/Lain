@@ -13,7 +13,7 @@ import com.lain.assistant.R
 /**
  * Quick Settings tile — pull down the shade, tap it, Lain opens listening.
  *
- * It used to toggle the wake-word service, and that was the wrong job for a tile.
+ * It used to toggle background listening, and that was the wrong job for a tile.
  * Starting a microphone foreground service is refused outright from the shade on
  * Android 12+, and even when it succeeded the tile could only report "listening"
  * — an invisible state change with no feedback, which is indistinguishable from a

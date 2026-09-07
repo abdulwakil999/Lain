@@ -11,7 +11,7 @@ import com.lain.assistant.data.SecureKeyStore
 import com.lain.assistant.network.Http
 import com.lain.assistant.tools.FailureKind
 import com.lain.assistant.tools.ToolResult
-import com.lain.assistant.voice.WakeWordManager
+import com.lain.assistant.voice.VoiceSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -38,7 +38,7 @@ import java.io.ByteArrayOutputStream
  * open Shazam or SoundHound if either is installed rather than pretending. **It
  * sends audio**, which is the one place in the app where microphone audio leaves the
  * phone — so it happens only when the user has asked for it in that moment, never in
- * the background, and never as part of wake-word listening.
+ * the background, and only for as long as the sample takes.
  *
  * The clip is the shortest that reliably matches. Longer costs the user data and
  * their patience for no better result.
@@ -88,9 +88,9 @@ class MusicIdentifier(private val context: Context) {
             )
         }
 
-        // Through the same arbiter as everything else, so this can't fight the wake
-        // detector for the microphone.
-        if (!WakeWordManager.claimMicrophone(OWNER)) {
+        // Through the same arbiter as everything else, so this can't fight the
+        // command recogniser for the microphone.
+        if (!VoiceSession.claimMicrophone(OWNER)) {
             return@withContext ToolResult.fail(
                 FailureKind.TOOL_FAILURE,
                 "The microphone is busy — something else on the phone has it."
@@ -105,7 +105,7 @@ class MusicIdentifier(private val context: Context) {
                 t.message ?: "Couldn't record any audio to identify."
             )
         } finally {
-            WakeWordManager.releaseMicrophone(OWNER)
+            VoiceSession.releaseMicrophone(OWNER)
         }
 
         upload(clip, key)

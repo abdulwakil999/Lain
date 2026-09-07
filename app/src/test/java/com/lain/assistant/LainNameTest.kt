@@ -1,7 +1,6 @@
 package com.lain.assistant
 
 import com.lain.assistant.agent.LainName
-import com.lain.assistant.automation.WakeWordService
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -61,11 +60,12 @@ class LainNameTest {
 
     @Test
     fun `the name is respelled for the synthesiser and nowhere else`() {
-        // An English voice reads L-A-I-N as "Lane". The name is meant to sound like
-        // "Line", so the string on its way into the synthesiser is respelled — and
-        // only that string. Every screen still says Lain.
-        assertEquals("Hello, I'm Line.", LainName.forSpeech("Hello, I'm Lain."))
-        assertEquals("That's Line's job.", LainName.forSpeech("That's Lain's job."))
+        // The name is said "Lane". The respelling is handed to the synthesiser so a
+        // neural voice cannot guess at L-A-I-N and land somewhere else on one reply
+        // and not the next — and only that string is touched. Every screen still
+        // says Lain.
+        assertEquals("Hello, I'm Lane.", LainName.forSpeech("Hello, I'm Lain."))
+        assertEquals("That's Lane's job.", LainName.forSpeech("That's Lain's job."))
     }
 
     @Test
@@ -80,11 +80,13 @@ class LainNameTest {
     }
 
     @Test
-    fun `the wake phrase matches through a mis-hearing`() {
-        assertTrue(WakeWordService.matchesWakePhrase("hello lane"))
-        assertTrue(WakeWordService.matchesWakePhrase("hey Lain"))
-        assertTrue(WakeWordService.matchesWakePhrase("hi laine"))
-        assertFalse(WakeWordService.matchesWakePhrase("what lane am I in"))
-        assertFalse(WakeWordService.matchesWakePhrase("hello there"))
+    fun `being addressed survives a mis-hearing`() {
+        // The recogniser's spelling of the name changes with the room. What matters
+        // is that all of them still count as her being spoken to.
+        assertTrue(LainName.isAddressed("hello lane"))
+        assertTrue(LainName.isAddressed("hey Lain"))
+        assertTrue(LainName.isAddressed("hi laine"))
+        assertFalse(LainName.isAddressed("what lane am I in"))
+        assertFalse(LainName.isAddressed("hello there"))
     }
 }

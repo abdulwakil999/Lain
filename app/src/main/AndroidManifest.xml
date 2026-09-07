@@ -88,7 +88,6 @@
     <!-- Screen sharing / on-screen automation -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
@@ -278,19 +277,6 @@
             android:name=".automation.ScreenCaptureService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
-
-        <!--
-             Hands-free listening. foregroundServiceType="microphone" plus
-             FOREGROUND_SERVICE_MICROPHONE is what Android 14 requires before an app
-             may hold the microphone outside the foreground, and the ongoing
-             notification the service posts is the other half of that contract. There
-             is no path here that records without RECORD_AUDIO: the service checks it
-             on start and on every loop, and stops itself when it is missing.
-        -->
-        <service
-            android:name=".automation.WakeWordService"
-            android:exported="false"
-            android:foregroundServiceType="microphone" />
 
         <!-- Runs only while a task is in flight, holding a wake lock so the tool
              loop keeps executing with the screen off. -->

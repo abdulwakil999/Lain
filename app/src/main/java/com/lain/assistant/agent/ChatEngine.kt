@@ -3,8 +3,7 @@ package com.lain.assistant.agent
 import android.content.Context
 import com.lain.assistant.automation.Attachment
 import com.lain.assistant.automation.AttachmentReader
-import com.lain.assistant.automation.WakeWordService
-import com.lain.assistant.voice.WakeWordManager
+import com.lain.assistant.voice.VoiceSession
 import com.lain.assistant.automation.LainAccessibilityService
 import com.lain.assistant.automation.LocalActions
 import com.lain.assistant.automation.VoiceInputController
@@ -359,11 +358,11 @@ class ChatEngine(
         // rather than recording herself.
         silence()
         // Taken from whoever holds it. This is the one path that is allowed to seize
-        // the microphone rather than negotiate for it, because it is the user asking
-        // — and the wake detector, which is the only other holder, has already been
-        // told to stand down by the time this runs.
-        WakeWordManager.forceReleaseMicrophone()
-        WakeWordManager.claimMicrophone(WakeWordManager.OWNER_COMMAND)
+        // the microphone rather than negotiate for it, because it is the user asking:
+        // a stale claim from a recogniser that never called back must not be the
+        // reason a deliberate tap does nothing.
+        VoiceSession.forceReleaseMicrophone()
+        VoiceSession.claimMicrophone(VoiceSession.OWNER_COMMAND)
         publishVoice(com.lain.assistant.voice.VoiceState.LISTENING_FOR_COMMAND)
         _state.update { it.copy(isListening = true, error = null, statusLine = "Listening…") }
         activeJob = scope.launch {
@@ -373,13 +372,18 @@ class ChatEngine(
                 _state.update { if (it.isListening) it.copy(input = partial) else it }
             }).fold(
                 onSuccess = { heard ->
-                    WakeWordManager.releaseMicrophone(WakeWordManager.OWNER_COMMAND)
+                    VoiceSession.releaseMicrophone(VoiceSession.OWNER_COMMAND)
                     publishVoice(com.lain.assistant.voice.VoiceState.PROCESSING)
-                    _state.update { it.copy(isListening = false, input = heard, statusLine = null) }
-                    send(heard, fromVoice = true)
+                    // People address her out of habit even after tapping the button.
+                    // "Lain, open WhatsApp" is one sentence; the message is the half
+                    // after the name, and sending the whole thing means the model
+                    // spends its first move working out that it was being greeted.
+                    val message = LainName.commandAfterName(heard) ?: heard
+                    _state.update { it.copy(isListening = false, input = message, statusLine = null) }
+                    send(message, fromVoice = true)
                 },
                 onFailure = { err ->
-                    WakeWordManager.releaseMicrophone(WakeWordManager.OWNER_COMMAND)
+                    VoiceSession.releaseMicrophone(VoiceSession.OWNER_COMMAND)
                     _state.update { it.copy(isListening = false, statusLine = null, error = "Didn't catch that: ${err.message}") }
                     if (_state.value.conversationMode) {
                         delay(700)
@@ -387,7 +391,7 @@ class ChatEngine(
                     } else {
                         // Nothing was heard and nobody is waiting: hand the microphone
                         // back to the wake detector rather than leaving voice dead.
-                        returnToWakeWord()
+                        endVoiceSession()
                     }
                 }
             )
@@ -409,9 +413,9 @@ class ChatEngine(
         clearPendingConfirmation()
         silence()
         AgentForegroundService.stop(appContext)
-        WakeWordManager.releaseMicrophone(WakeWordManager.OWNER_COMMAND)
+        VoiceSession.releaseMicrophone(VoiceSession.OWNER_COMMAND)
         _state.update { it.copy(isSending = false, isListening = false, statusLine = null, conversationMode = false) }
-        returnToWakeWord()
+        endVoiceSession()
 
         if (wasRunning) {
             // Deliberately vague about how far it got: a cancelled task may have run
@@ -449,15 +453,14 @@ class ChatEngine(
         speakJob = null
         speaker?.stop()
         ttsEngine?.stop()
-        WakeWordManager.spokenAloud = ""
         if (_state.value.isSpeaking) _state.update { it.copy(isSpeaking = false) }
     }
 
     /**
      * A spoken command, entering the same pipeline a typed one does.
      *
-     * There is deliberately no separate voice path: this sets hands-free mode and
-     * calls [send]. Everything after it — the router, the tool loop, the
+     * There is deliberately no separate voice path: this only marks the delivery
+     * mode and calls [send]. Everything after it — the router, the tool loop, the
      * accessibility layer, the confirmations — is the code a typed message runs, so
      * "open Settings and turn on Bluetooth" cannot behave differently depending on
      * how it arrived.
@@ -465,10 +468,10 @@ class ChatEngine(
     fun sendFromVoice(text: String) {
         val message = text.trim()
         if (message.isEmpty()) return
-        // Deliberately not hands-free mode. One wake, one command, then back to
-        // listening for her name — which is what was asked for, and also what stops
-        // her holding the microphone open waiting for a follow-up nobody is going to
-        // give. fromVoice is what makes her speak the answer; that is separate.
+        // Deliberately not hands-free mode. One tap, one command — which is what
+        // stops her holding the microphone open waiting for a follow-up nobody is
+        // going to give. The HANDS-FREE toggle is how somebody asks for the other
+        // behaviour. fromVoice is what makes her speak the answer; that is separate.
         _state.update { it.copy(conversationMode = false) }
         send(message, fromVoice = true)
     }
@@ -478,11 +481,14 @@ class ChatEngine(
      *
      * Called from the same places that already update the chat state, so the voice
      * UI and the chat UI cannot disagree — and so the watchdog in
-     * [WakeWordManager] has something to time out against.
+     * [VoiceSession] has something to time out against.
      */
     private fun publishVoice(state: com.lain.assistant.voice.VoiceState) {
-        if (!WakeWordService.isRunning && !_state.value.conversationMode) return
-        WakeWordManager.enter(state)
+        // Only a turn that arrived by voice drives the voice state. A typed one has
+        // no microphone and no spoken reply, and letting it move this state was what
+        // put "Listening…" on screen for someone who had just used the keyboard.
+        if (deliveryMode != DeliveryMode.VOICE && !_state.value.isListening) return
+        VoiceSession.enter(state)
     }
 
     /**
@@ -498,13 +504,11 @@ class ChatEngine(
         // Whatever is mid-sentence stops first, or the two overlap.
         silence()
         _state.update { it.copy(isSpeaking = true) }
-        WakeWordManager.spokenAloud = spoken
         speakJob = scope.launch {
             try {
                 engine.speak(spoken)
             } finally {
-                WakeWordManager.spokenAloud = ""
-                _state.update { it.copy(isSpeaking = false) }
+                        _state.update { it.copy(isSpeaking = false) }
             }
         }
     }
@@ -1464,8 +1468,8 @@ class ChatEngine(
     }
 
     /**
-     * Closes out a spoken turn: either back to the wake word, or straight into the
-     * next command if hands-free is on.
+     * Closes out a spoken turn: either voice goes idle, or straight into the next
+     * command if hands-free is on.
      *
      * Either way it waits for her to stop talking first, or she transcribes her own
      * voice and answers herself. A turn that was typed is left alone — nothing about
@@ -1485,12 +1489,11 @@ class ChatEngine(
         if (!_state.value.isBusy && !_state.value.isSpeaking && _state.value.conversationMode) {
             startVoiceInput()
         } else {
-            // One wake, one command. Going back through returnToWakeWord is what
-            // applies the detector's cooldown — so the tail of her own reply cannot
-            // wake her — and what puts the voice state back to
-            // LISTENING_FOR_WAKE_WORD rather than leaving it reading idle while she
-            // is in fact still listening.
-            returnToWakeWord()
+            // One tap, one command. Going through endVoiceSession is what actually
+            // lets the microphone go and puts the state back to idle, rather than
+            // leaving "Listening…" on screen over a recogniser that has already
+            // stopped.
+            endVoiceSession()
         }
     }
 
@@ -1505,19 +1508,19 @@ class ChatEngine(
     private fun closeSpokenTurnIfStillOpen() {
         if (deliveryMode != DeliveryMode.VOICE || turnClosed) return
         turnClosed = true
-        returnToWakeWord()
+        endVoiceSession()
     }
 
     /**
-     * The end of every voice turn: the microphone goes back to the wake detector.
+     * The end of every voice turn: the microphone is let go and voice goes idle.
      *
      * Called on success, on failure, on a stop, and by the watchdog. It is the only
-     * exit, which is what makes "she stopped responding to her name after one
-     * command" impossible rather than unlikely.
+     * exit, which is what makes "the mic button stopped working after one command"
+     * impossible rather than unlikely.
      */
-    private fun returnToWakeWord() {
-        WakeWordManager.releaseMicrophone(WakeWordManager.OWNER_COMMAND)
-        WakeWordManager.onRecover?.invoke()
+    private fun endVoiceSession() {
+        VoiceSession.releaseMicrophone(VoiceSession.OWNER_COMMAND)
+        VoiceSession.enter(com.lain.assistant.voice.VoiceState.IDLE)
     }
 
     /**
@@ -2068,13 +2071,11 @@ class ChatEngine(
         speakJob?.cancel()
         _state.update { it.copy(isSpeaking = true) }
         publishVoice(com.lain.assistant.voice.VoiceState.SPEAKING)
-        WakeWordManager.spokenAloud = spoken
         speakJob = scope.launch {
             try {
                 engine.speak(spoken)
             } finally {
-                WakeWordManager.spokenAloud = ""
-                // Covers the natural end, a cancellation from silence(), and a TTS error
+                        // Covers the natural end, a cancellation from silence(), and a TTS error
                 // alike — the button must never be left showing over silence.
                 _state.update { it.copy(isSpeaking = false) }
             }

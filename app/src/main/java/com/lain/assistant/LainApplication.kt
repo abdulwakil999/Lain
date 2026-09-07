@@ -45,14 +45,6 @@ class LainApplication : Application() {
                     com.lain.assistant.agent.AlwaysOnService.start(this@LainApplication)
                 }
             }
-            // Same reasoning for hands-free: a switch the user threw has to survive a
-            // reboot and a process kill, or it is a switch that quietly stops working.
-            // The service itself checks the permission and stands down without it.
-            runCatching {
-                if (container.userPreferencesRepository.isWakeWordEnabled.first()) {
-                    com.lain.assistant.automation.WakeWordService.start(this@LainApplication)
-                }
-            }
         }
     }
 }

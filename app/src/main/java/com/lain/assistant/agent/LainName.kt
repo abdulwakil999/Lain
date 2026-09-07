@@ -7,13 +7,15 @@ package com.lain.assistant.agent
  * "hello lane" — sometimes "line", "laine", "lang" — and that transcript is what
  * reaches the model. It then sees a request addressed to a road, and either
  * answers about one or spends a round trip working out that it shouldn't. The
- * wake-word matcher already tolerated the variants, so listening started fine and
- * the *message* was wrong, which is the harder version to notice.
+ * The mic button already worked, so listening started fine and the *message* was
+ * wrong, which is the harder version to notice.
  *
- * Text-to-speech needs nothing done to it. An English voice handed "Lain" says
- * "Lane", and "Lane" is the pronunciation the name has — so the synthesiser was
- * already right and a previous version of this file "fixed" it into "Lah-een",
- * two syllables the name does not have. That respelling is gone.
+ * Text-to-speech is the other direction and had the opposite problem. The name is
+ * said "Lane", which is also what an English voice does with the letters L-A-I-N
+ * unaided — so the respelling here agrees with the unaided reading rather than
+ * fighting it. That is deliberate: a respelling that disagrees is only as good as
+ * its own coverage, and every path it misses says something different. This one is
+ * belt and braces, not the only thing holding the pronunciation up.
  *
  * Both directions are deterministic string work. Neither costs a model call.
  */
@@ -47,8 +49,8 @@ object LainName {
         // out. All of these were reaching a model as a sentence addressed to a road.
         "yes", "no", "nah", "yeah", "yep", "wait", "listen", "look", "alright",
         "right", "cheers", "afternoon", "evening", "welcome", "bye", "goodbye",
-        // How people actually greet her out loud. The wake word is her name, so every
-        // way of putting a word in front of it has to reach the same place.
+        // How people actually greet her out loud. Every way of putting a word in
+        // front of her name has to reach the same place.
         "sup", "wassup", "whatsup", "hiya", "howdy", "hola", "oye", "salam", "yow"
     )
 
@@ -172,7 +174,7 @@ object LainName {
         word.filter { it.isLetter() }.lowercase()
 
     /** How the name is spelled for a synthesiser so it comes out right. */
-    private const val SPOKEN = "Line"
+    private const val SPOKEN = "Lane"
 
     /**
      * The name as the assistant's name, capitalised, and not part of a longer word.
@@ -182,30 +184,38 @@ object LainName {
      * ("he had lain there for hours") never is. Matching case-sensitively means
      * ordinary English in a quoted message, a search result or a file the user
      * attached passes through untouched, which is the one thing a global replace
-     * would get wrong.
+     * would get wrong. Shouting — "LAIN!" — is the one other spelling that is always
+     * her, so it is matched too; lowercase deliberately is not.
      *
      * The negative lookbehind covers the remaining case: a sentence that opens with
      * the word, capitalised only because it opens the sentence, after an auxiliary
      * verb. Rare, but "Had Lain there" is not her.
      */
-    private val ASSISTANT_NAME = Regex("(?<!\\b(?:have|has|had|having)\\s)\\b$CANONICAL\\b")
+    private val ASSISTANT_NAME =
+        Regex("(?<!\\b(?:have|has|had|having)\\s)\\b(?:$CANONICAL|LAIN)\\b")
 
     /**
      * What the synthesiser should be handed.
      *
-     * English text-to-speech reads the letters L-A-I-N as "Lane", and that is not
-     * how the name is meant to sound — it is "Line". The UI is untouched: every
-     * screen, every message bubble and the app's own label still say "Lain". Only
-     * the string on its way into the synthesiser is respelled, and only where the
-     * word is her name.
+     * The name is said "Lane", to rhyme with rain. Handing a synthesiser "Lane"
+     * rather than trusting it to work that out from L-A-I-N is what makes it the
+     * same every time: neural voices guess at unfamiliar spellings, and guessing is
+     * exactly what produced a name that changed between one reply and the next.
      *
-     * Applied centrally, in the one place every engine already calls, so a new voice
-     * cannot forget it. Possessives come along for free — "Lain's" becomes "Line's",
-     * which is what it should sound like.
+     * Because the respelling agrees with what an unaided English voice already does,
+     * a path that somehow skips this still comes out right — the difference between
+     * a fix and a fix that cannot regress.
+     *
+     * The UI is untouched: every screen, every message bubble and the app's own
+     * label still say "Lain". Only the string on its way into the synthesiser is
+     * respelled, and only where the word is her name. Applied centrally, in the one
+     * place every engine already calls, so a new voice cannot forget it. Possessives
+     * come along for free — "Lain's" becomes "Lane's".
      */
     fun forSpeech(text: String): String {
-        if (text.isEmpty() || !text.contains(CANONICAL)) return text
-        return ASSISTANT_NAME.replace(text, SPOKEN)
+        if (text.isEmpty()) return text
+        if (!text.contains(CANONICAL) && !text.contains("LAIN")) return text
+        return ASSISTANT_NAME.replace(text) { if (it.value == "LAIN") SPOKEN.uppercase() else SPOKEN }
     }
 
     /** Whether a transcript is Lain being addressed by name at all. */

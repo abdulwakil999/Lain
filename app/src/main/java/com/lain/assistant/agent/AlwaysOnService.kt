@@ -26,8 +26,8 @@ import kotlinx.coroutines.launch
  * background process — the system is free to kill it the moment memory is short,
  * and on the OEM builds this app is aimed at, it usually does. The visible
  * consequences are the ones users report as bugs: an alarm that fires several
- * minutes late because the process had to be rebuilt first, the wake word going
- * deaf after an hour, the Accessibility Service reconnecting slowly.
+ * minutes late because the process had to be rebuilt first, a scheduled message
+ * that never goes, the Accessibility Service reconnecting slowly.
  *
  * What it does not do is make Lain think while nobody is talking to her. There is
  * no loop here, no polling, no model call. She is *available* rather than active,
@@ -139,7 +139,7 @@ class AlwaysOnService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("Lain is here")
-            .setContentText("Staying loaded so alarms and the wake word don't drift.")
+            .setContentText("Staying loaded so alarms and scheduled tasks don't drift.")
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .setContentIntent(open)

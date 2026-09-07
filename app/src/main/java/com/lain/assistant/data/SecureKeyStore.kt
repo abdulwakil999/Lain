@@ -77,7 +77,7 @@ class SecureKeyStore(context: Context) {
          * Stored in the same encrypted store as every other key, and used only when
          * the user has asked Lain what is playing — this is the one path in the app
          * where microphone audio leaves the phone, so it is never on a timer and
-         * never part of wake-word listening.
+         * never in the background.
          */
         const val AUDD_KEY = "api_key_AUDD"
     }

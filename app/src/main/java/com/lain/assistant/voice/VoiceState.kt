@@ -3,23 +3,16 @@ package com.lain.assistant.voice
 /**
  * Where the voice pipeline is, as one value.
  *
- * Before this there was no such value. "Am I listening" lived in ChatEngine, "is
- * the wake word running" lived in a static on the service, and "is she speaking"
- * lived in StreamingSpeaker — three sources that could and did disagree, which is
- * how a voice assistant ends up stuck on "Listening…" with the microphone already
- * released. One state, one owner, one place to put a watchdog.
+ * Before this there was no such value. "Am I listening" lived in ChatEngine and "is
+ * she speaking" lived in StreamingSpeaker — two sources that could and did disagree,
+ * which is how a voice assistant ends up stuck on "Listening…" with the microphone
+ * already released. One state, one owner, one place to put a watchdog.
  */
 enum class VoiceState {
     /** Voice is off entirely. Nothing holds the microphone. */
     IDLE,
 
-    /** The cheap detector is running: energy only, no transcription. */
-    LISTENING_FOR_WAKE_WORD,
-
-    /** Her name was heard. A momentary state — the chirp plays here. */
-    WAKE_WORD_DETECTED,
-
-    /** Recording the actual command, with full speech recognition. */
+    /** Recording the command, with full speech recognition. */
     LISTENING_FOR_COMMAND,
 
     /** The command is with the router or the model. */
@@ -37,9 +30,7 @@ enum class VoiceState {
     /** What the UI says. Kept here so every surface says the same thing. */
     val label: String
         get() = when (this) {
-            IDLE -> "Say Lain"
-            LISTENING_FOR_WAKE_WORD -> "Say Lain"
-            WAKE_WORD_DETECTED -> "Listening…"
+            IDLE -> "Tap to talk"
             LISTENING_FOR_COMMAND -> "Listening…"
             PROCESSING -> "Thinking…"
             EXECUTING -> "Working…"
@@ -49,7 +40,7 @@ enum class VoiceState {
 
     /** True while the microphone is genuinely in use, for the UI and the arbiter. */
     val holdsMicrophone: Boolean
-        get() = this == LISTENING_FOR_WAKE_WORD || this == LISTENING_FOR_COMMAND
+        get() = this == LISTENING_FOR_COMMAND
 
     /**
      * States that must not last.
@@ -60,6 +51,6 @@ enum class VoiceState {
      * hand-maintained one somewhere else.
      */
     val isTransient: Boolean
-        get() = this == WAKE_WORD_DETECTED || this == LISTENING_FOR_COMMAND ||
-            this == PROCESSING || this == EXECUTING || this == SPEAKING
+        get() = this == LISTENING_FOR_COMMAND || this == PROCESSING ||
+            this == EXECUTING || this == SPEAKING
 }

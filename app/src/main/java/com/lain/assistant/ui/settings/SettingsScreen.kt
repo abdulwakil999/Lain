@@ -39,10 +39,7 @@ import com.lain.assistant.automation.AccessibilityMonitor
 import com.lain.assistant.automation.AccessibilityState
 import com.lain.assistant.automation.LainAccessibilityService
 import com.lain.assistant.automation.LainNotificationListener
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import com.lain.assistant.agent.AlwaysOnService
-import com.lain.assistant.automation.WakeWordService
 import com.lain.assistant.automation.OverlayBubbleService
 import com.lain.assistant.data.Gender
 import com.lain.assistant.data.Provider
@@ -522,74 +519,15 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             )
 
             Spacer(Modifier.height(24.dp))
-            SectionLabel("Hands-free")
-            Text(
-                if (state.wakeWordEnabled) {
-                    "Say \"Lain\" — or \"hey Lain\", \"sup Lain\" — and she starts listening. " +
-                        "The mic is held open in one steady stream instead of switching on and off, " +
-                        "so the indicator stays lit and the battery cost stays low. Until she hears " +
-                        "her name that stream is only measured for loudness on this phone: nothing " +
-                        "is transcribed, stored or sent. Pauses while the screen is off."
-                } else {
-                    "Off. With it on she answers to her name without you touching the phone. " +
-                        "Nothing leaves the device until she's actually been called."
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (state.wakeWordEnabled) LainCream else LainMuted
-            )
-            Spacer(Modifier.height(8.dp))
-            // Asked at the point of use, not at install, so the reason for the prompt
-            // is on screen while it appears.
-            val micPermission = rememberLauncherForActivityResult(
-                ActivityResultContracts.RequestPermission()
-            ) { granted ->
-                if (granted) {
-                    viewModel.setWakeWordEnabled(true)
-                    WakeWordService.start(context)
-                } else {
-                    viewModel.setWakeWordEnabled(false)
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                PixelChoiceChip("On", state.wakeWordEnabled, {
-                    micPermission.launch(android.Manifest.permission.RECORD_AUDIO)
-                }, modifier = Modifier.weight(1f))
-                PixelChoiceChip("Off", !state.wakeWordEnabled, {
-                    viewModel.setWakeWordEnabled(false)
-                    WakeWordService.stop(context)
-                }, modifier = Modifier.weight(1f))
-            }
-
-            // Visible while it's on, because "it doesn't work" is true and impossible
-            // to act on. This says whether anything is being heard at all, whether it
-            // reaches the recogniser, and what the recogniser said back.
-            if (state.wakeWordEnabled) {
-                val checks by com.lain.assistant.voice.WakeWordManager.checks.collectAsState()
-                val wakes by com.lain.assistant.voice.WakeWordManager.wakes.collectAsState()
-                val note by com.lain.assistant.voice.WakeWordManager.diagnostic.collectAsState()
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    buildString {
-                        append("Heard-speech checks: ").append(checks)
-                        append(" · wakes: ").append(wakes)
-                        note?.let { append("\nLast: ").append(it) }
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = LainMuted,
-                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                )
-            }
-
-            Spacer(Modifier.height(24.dp))
             SectionLabel("Always on")
             Text(
                 if (state.alwaysOn) {
-                    "Lain stays loaded, so alarms land on the minute and the wake word keeps " +
-                        "listening. She isn't thinking while you're away — just not being shut down."
+                    "Lain stays loaded, so alarms land on the minute and a long task keeps " +
+                        "running. She isn't thinking while you're away — just not being shut down."
                 } else {
                     "Android shuts Lain down when she's not in front of you, which is why an alarm " +
-                        "can arrive late or the wake word goes quiet. Keeping her loaded fixes that " +
-                        "and costs battery."
+                        "can arrive late or a scheduled message never goes. Keeping her loaded fixes " +
+                        "that and costs battery."
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (state.alwaysOn) LainCream else LainMuted

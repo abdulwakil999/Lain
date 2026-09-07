@@ -29,15 +29,6 @@ class ChatViewModel(container: AppContainer) : ViewModel() {
     /** A spoken command, into the same pipeline a typed one uses. */
     fun sendFromVoice(text: String) = engine.sendFromVoice(text)
 
-    /**
-     * The instruction inside a wake phrase, if it carried one.
-     *
-     * "Lain, open WhatsApp" arrives as one transcript; asking the user to repeat the
-     * second half after she has already heard it is the thing that makes a voice
-     * assistant feel broken.
-     */
-    fun commandInsideWakePhrase(heard: String): String? =
-        com.lain.assistant.agent.LainName.commandAfterName(heard)
     fun send() = engine.send()
 
     /** Sends a specific reply — used by the confirmation buttons. */

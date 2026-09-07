@@ -42,7 +42,6 @@ data class SettingsUiState(
     val redditPassword: String = "",
     val overlayEnabled: Boolean = false,
     val alwaysOn: Boolean = false,
-    val wakeWordEnabled: Boolean = false,
     val auddKey: String = "",
     val loaded: Boolean = false,
     val justSaved: Boolean = false,
@@ -102,7 +101,6 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             val keys = container.secureKeyStore
             val overlayEnabled = container.userPreferencesRepository.isOverlayEnabled.first()
             val alwaysOn = container.userPreferencesRepository.isAlwaysOn.first()
-            val wakeWord = container.userPreferencesRepository.isWakeWordEnabled.first()
             val fallback = container.userPreferencesRepository.isModelFallbackEnabled.first()
             val broken = container.userPreferencesRepository.brokenModels.first()
             _state.update {
@@ -127,7 +125,6 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
                     auddKey = keys.channel(com.lain.assistant.data.SecureKeyStore.AUDD_KEY).orEmpty(),
                     overlayEnabled = overlayEnabled,
                     alwaysOn = alwaysOn,
-                    wakeWordEnabled = wakeWord,
                     modelFallback = fallback,
                     brokenModels = broken,
                     loaded = true
@@ -289,11 +286,6 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
      */
     fun setAuddKey(value: String) {
         _state.update { it.copy(auddKey = value, justSaved = false) }
-    }
-
-    fun setWakeWordEnabled(enabled: Boolean) {
-        _state.update { it.copy(wakeWordEnabled = enabled) }
-        viewModelScope.launch { container.userPreferencesRepository.setWakeWordEnabled(enabled) }
     }
 
     fun setAlwaysOn(enabled: Boolean) {
