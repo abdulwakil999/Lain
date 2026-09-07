@@ -434,6 +434,12 @@ object ToolDefinitions {
             briefDescription = "Clear recent apps."
         ),
         ToolDefinition(
+            name = "identify_music",
+            description = "Listen to what's playing nearby and name the song, like Shazam. Records about eight seconds from the microphone and matches it. Use for \"what song is this\", \"what's playing\", \"name this track\". Needs an AudD key in Settings; say so plainly if it isn't set.",
+            parameters = schema { },
+            briefDescription = "Name the song playing nearby."
+        ),
+        ToolDefinition(
             name = "recite_quran",
             description = "Play Qur'an recitation inside Lain. Accepts a surah name, meaning or number (1-114) — \"Al-Kahf\", \"the cave\", \"18\". Leave surah blank to stop what's playing.",
             parameters = schema {
@@ -617,7 +623,7 @@ object ToolDefinitions {
         "open_settings_page", "set_volume", "set_brightness", "clipboard", "fetch_page", "open_contacts",
         "tap_screen", "look_at_screen", "take_photo", "listen_microphone",
         "list_files", "read_file", "write_file", "rename_file", "make_folder", "delete_file",
-        "close_app", "send_sms", "send_whatsapp_message"
+        "close_app", "send_sms", "send_whatsapp_message", "identify_music"
     )
 
     /**

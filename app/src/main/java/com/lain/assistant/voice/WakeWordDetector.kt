@@ -26,7 +26,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.io.FileOutputStream
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.log10
 import kotlin.math.sqrt
@@ -86,10 +85,21 @@ class WakeWordDetector(
         private const val FRAMES_PER_SECOND = SAMPLE_RATE / FRAME_SAMPLES
 
         /** How far above the learned noise floor counts as somebody talking. */
-        private const val SPEECH_MARGIN_DB = 9.0
+        private const val SPEECH_MARGIN_DB = 8.0
 
-        /** Absolute floor, so a silent room doesn't drive the threshold to nothing. */
-        private const val MIN_FLOOR_DB = -55.0
+        /**
+         * How quiet the floor is allowed to learn down to.
+         *
+         * This was -55 dBFS, and that single number made her deaf. The floor is
+         * clamped *up* to it, so the trigger threshold could never be lower than
+         * -46 dBFS — which is roughly someone speaking into the phone. A normal
+         * voice a metre away sits well below that and never crossed it, so stage two
+         * hardly ever ran. A real room floor is -65 to -75.
+         */
+        private const val MIN_FLOOR_DB = -75.0
+
+        /** Where the floor starts before it has learned anything. */
+        private const val INITIAL_FLOOR_DB = -60.0
         private const val FLOOR_RISE = 0.02
         private const val FLOOR_FALL = 0.15
 
@@ -109,7 +119,15 @@ class WakeWordDetector(
 
         /** Quiet period after a check that found nothing. Grows in a noisy room. */
         private const val BASE_REFRACTORY_MS = 1_500L
-        private const val MAX_REFRACTORY_MS = 12_000L
+        /**
+         * Ceiling on the quiet period after a miss.
+         *
+         * Twelve seconds was too long: if verification is broken on a device — the
+         * recogniser refusing the piped audio, say — every check misses and she goes
+         * effectively deaf while still appearing to listen. Four seconds keeps a noisy
+         * room cheap without ever making her unresponsive.
+         */
+        private const val MAX_REFRACTORY_MS = 4_000L
 
         /** Longest a verification runs before it is abandoned. */
         private const val VERIFY_WINDOW_MS = 3_500L
@@ -130,6 +148,22 @@ class WakeWordDetector(
 
         /** The pipe path exists from Android 13; below that a handover is unavoidable. */
         private val PIPE_AVAILABLE = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+
+        /** Piped checks that may fail before the device is written off as not supporting it. */
+        private const val PIPE_FAILURES_BEFORE_FALLBACK = 2
+
+        /**
+         * Recogniser errors that mean it never got our audio, as opposed to hearing
+         * nothing in it. The first group is a reason to change approach; the second is
+         * simply a miss.
+         */
+        private val AUDIO_REJECTED = setOf(
+            SpeechRecognizer.ERROR_AUDIO,
+            SpeechRecognizer.ERROR_CLIENT,
+            SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
+            SpeechRecognizer.ERROR_SERVER,
+            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS
+        )
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -146,8 +180,29 @@ class WakeWordDetector(
     private var refractory = BASE_REFRACTORY_MS
     private var quietUntil = 0L
 
+    /**
+     * What one check concluded.
+     *
+     * [audioRejected] is the distinction that matters. A recogniser that heard
+     * nothing and a recogniser that could not read our audio at all look identical
+     * from a bare transcript, and treating them the same is why a device whose
+     * recogniser ignores the piped audio went quietly deaf instead of falling back.
+     */
+    private data class Verdict(val text: String, val audioRejected: Boolean = false)
+
     /** Set by the verification listener; read by the loop. */
-    private val verdict = AtomicReference<String?>(null)
+    private val verdict = AtomicReference<Verdict?>(null)
+
+    /**
+     * Whether the piped path is usable on this device.
+     *
+     * `EXTRA_AUDIO_SOURCE` is honoured by the recognisers that implement it and
+     * ignored by the ones that don't — and a recogniser that ignores it opens the
+     * microphone itself, finds ours already on it, and fails. There is no way to ask
+     * in advance, so this tries, watches, and stops trying.
+     */
+    @Volatile private var pipeWorks = PIPE_AVAILABLE
+    private var pipeFailures = 0
 
     /** A piped check is in flight: the loop keeps reading and feeds the recogniser. */
     @Volatile private var verifying = false
@@ -161,7 +216,7 @@ class WakeWordDetector(
      */
     @Volatile private var handingOver = false
 
-    private var audioSink: FileOutputStream? = null
+    private var audioSink: java.io.OutputStream? = null
 
     /**
      * Bytes fed to the recogniser this check.
@@ -225,7 +280,7 @@ class WakeWordDetector(
         val frame = ShortArray(FRAME_SAMPLES)
         val preroll = AudioRing(SAMPLE_RATE * PREROLL_SECONDS)
 
-        var floor = MIN_FLOOR_DB
+        var floor = INITIAL_FLOOR_DB
         var speechFrames = 0
         var silenceFrames = 0
         var inUtterance = false
@@ -262,7 +317,7 @@ class WakeWordDetector(
                 }
                 backoff = BASE_BACKOFF_MS
                 preroll.clear()
-                floor = MIN_FLOOR_DB
+                floor = INITIAL_FLOOR_DB
             }
 
             val active = recorder ?: continue
@@ -285,17 +340,46 @@ class WakeWordDetector(
             // there is one reader and no second microphone.
             if (verifying) {
                 writeToSink(frame, read)
-                verdict.getAndSet(null)?.let { transcript ->
+                verdict.getAndSet(null)?.let { result ->
                     finishVerification()
-                    if (transcript.isNotEmpty() && isWakePhrase(transcript)) {
-                        refractory = BASE_REFRACTORY_MS
-                        suspended = true
-                        main.post { onWake(transcript) }
-                    } else {
-                        // Nothing there. Back off a little further each time, so a
-                        // room full of talking costs less rather than more.
-                        refractory = (refractory * 2).coerceAtMost(MAX_REFRACTORY_MS)
-                        quietUntil = System.currentTimeMillis() + refractory
+                    when {
+                        result.text.isNotEmpty() && isWakePhrase(result.text) -> {
+                            pipeFailures = 0
+                            refractory = BASE_REFRACTORY_MS
+                            WakeWordManager.recordWake()
+                            suspended = true
+                            // Closed here, synchronously, before anyone is told. Setting
+                            // `suspended` only makes the loop close it on its *next*
+                            // pass, and the command recogniser starts long before that —
+                            // finding this AudioRecord still on the microphone and
+                            // failing with ERROR_RECOGNIZER_BUSY. Which is a wake word
+                            // that works followed by an assistant that hears nothing.
+                            closeRecorder()
+                            main.post { onWake(result.text) }
+                        }
+
+                        result.audioRejected -> {
+                            // The recogniser could not use the audio we handed it. Two
+                            // of these and the piped route is written off for this
+                            // session, which puts the device on the handover path
+                            // rather than leaving it unable to hear anything.
+                            pipeFailures++
+                            if (pipeFailures >= PIPE_FAILURES_BEFORE_FALLBACK) {
+                                pipeWorks = false
+                                WakeWordManager.recordDiagnostic(
+                                    "Piped audio refused; using the microphone handover instead"
+                                )
+                            }
+                            quietUntil = System.currentTimeMillis() + BASE_REFRACTORY_MS
+                        }
+
+                        else -> {
+                            // Heard, but not her name. Back off a little further each
+                            // time, so a room full of talking costs less rather than more.
+                            pipeFailures = 0
+                            refractory = (refractory * 2).coerceAtMost(MAX_REFRACTORY_MS)
+                            quietUntil = System.currentTimeMillis() + refractory
+                        }
                     }
                     inUtterance = false
                     speechFrames = 0
@@ -311,8 +395,18 @@ class WakeWordDetector(
                 speechFrames++
                 silenceFrames = 0
                 if (speechFrames >= MIN_UTTERANCE_FRAMES) inUtterance = true
-                // Too long to be somebody saying a name: a sentence, a TV, music.
-                if (speechFrames > MAX_UTTERANCE_FRAMES) inUtterance = false
+
+                // Speech that runs long used to set inUtterance = false and then never
+                // verify at all — so "Lain, open WhatsApp", the exact sentence this is
+                // for, could not wake her. It is checked *now* instead: her name is at
+                // the start of such a sentence, and the pre-roll still holds it.
+                if (speechFrames >= MAX_UTTERANCE_FRAMES) {
+                    inUtterance = false
+                    speechFrames = 0
+                    if (System.currentTimeMillis() >= quietUntil) {
+                        beginVerification(preroll.snapshot())
+                    }
+                }
             } else {
                 silenceFrames++
                 // Only quiet frames teach the floor. Learning from speech would let a
@@ -438,19 +532,28 @@ class WakeWordDetector(
         if (verifying) return
         if (!SpeechRecognizer.isRecognitionAvailable(context)) return
 
-        if (!PIPE_AVAILABLE) {
+        WakeWordManager.recordCheck()
+
+        if (!pipeWorks) {
             handingOver = true
             scope.launch { verifyByHandover() }
             return
         }
 
-        val pipe = runCatching { ParcelFileDescriptor.createPipe() }.getOrNull() ?: return
+        val pipe = runCatching { ParcelFileDescriptor.createPipe() }.getOrNull() ?: run {
+            pipeWorks = false
+            return
+        }
         val readEnd = pipe[0]
         val writeEnd = pipe[1]
 
         verdict.set(null)
         bytesWritten = 0
-        audioSink = FileOutputStream(writeEnd.fileDescriptor)
+        // AutoCloseOutputStream owns the descriptor. A plain FileOutputStream over
+        // pfd.fileDescriptor does not, so the ParcelFileDescriptor's finaliser would
+        // later close a descriptor this stream had already closed — and by then the
+        // number may belong to something else entirely.
+        audioSink = ParcelFileDescriptor.AutoCloseOutputStream(writeEnd)
         verifying = true
 
         // The moment *before* the trigger. Written here, on the loop thread, and
@@ -462,7 +565,7 @@ class WakeWordDetector(
         main.post {
             val engine = runCatching { buildRecogniser() }.getOrNull()
             if (engine == null) {
-                verdict.compareAndSet(null, "")
+                verdict.compareAndSet(null, Verdict("", audioRejected = true))
                 runCatching { readEnd.close() }
                 return@post
             }
@@ -474,7 +577,8 @@ class WakeWordDetector(
                 putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, SAMPLE_RATE)
                 putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1)
             }
-            runCatching { engine.startListening(intent) }.onFailure { verdict.compareAndSet(null, "") }
+            runCatching { engine.startListening(intent) }
+                .onFailure { verdict.compareAndSet(null, Verdict("", audioRejected = true)) }
             // Our copy of the read end; the recogniser holds its own.
             runCatching { readEnd.close() }
         }
@@ -483,7 +587,7 @@ class WakeWordDetector(
             delay(VERIFY_WINDOW_MS)
             // Nothing came back. Treat it as "not her name" rather than leaving the
             // loop feeding a recogniser forever.
-            if (verifying) verdict.compareAndSet(null, "")
+            if (verifying) verdict.compareAndSet(null, Verdict(""))
         }
     }
 
@@ -571,6 +675,7 @@ class WakeWordDetector(
 
         if (heard.isNotEmpty() && isWakePhrase(heard)) {
             refractory = BASE_REFRACTORY_MS
+            WakeWordManager.recordWake()
             suspended = true
             main.post { onWake(heard) }
         } else {
@@ -583,13 +688,15 @@ class WakeWordDetector(
         override fun onPartialResults(partialResults: Bundle) {
             // Settling on a partial is what makes waking feel instant: no reason to
             // wait out the trailing silence once the name has already been said.
-            best(partialResults)?.takeIf { isWakePhrase(it) }?.let { verdict.compareAndSet(null, it) }
+            val hit = best(partialResults)?.takeIf { isWakePhrase(it) } ?: return
+            verdict.compareAndSet(null, Verdict(hit))
         }
         override fun onResults(results: Bundle) {
-            verdict.compareAndSet(null, best(results).orEmpty())
+            verdict.compareAndSet(null, Verdict(best(results).orEmpty()))
         }
         override fun onError(error: Int) {
-            verdict.compareAndSet(null, "")
+            WakeWordManager.recordDiagnostic("recogniser error $error")
+            verdict.compareAndSet(null, Verdict("", audioRejected = error in AUDIO_REJECTED))
         }
         override fun onReadyForSpeech(params: Bundle?) = Unit
         override fun onBeginningOfSpeech() = Unit

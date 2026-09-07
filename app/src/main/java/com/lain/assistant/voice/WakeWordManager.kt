@@ -83,6 +83,53 @@ object WakeWordManager {
     @Volatile
     var spokenAloud: String = ""
 
+    // ------------------------------------------------------------ diagnostics
+
+    /**
+     * Enough to tell a working detector from a broken one, from the Settings screen.
+     *
+     * This exists because the last two attempts at hands-free shipped broken and the
+     * only report available was "it doesn't work" — which is true, and cannot be
+     * acted on. A count of checks, a count of wakes and the last thing the recogniser
+     * said turns the next round into reading rather than guessing.
+     *
+     * Nothing here is stored or sent. It is in memory and dies with the process.
+     */
+    private val _checks = MutableStateFlow(0)
+    val checks: StateFlow<Int> = _checks.asStateFlow()
+
+    private val _wakes = MutableStateFlow(0)
+    val wakes: StateFlow<Int> = _wakes.asStateFlow()
+
+    private val _diagnostic = MutableStateFlow<String?>(null)
+    val diagnostic: StateFlow<String?> = _diagnostic.asStateFlow()
+
+    /** One candidate utterance was sent for checking. */
+    fun recordCheck() {
+        _checks.value = _checks.value + 1
+    }
+
+    /** Her name was actually found. */
+    fun recordWake() {
+        _wakes.value = _wakes.value + 1
+    }
+
+    fun recordDiagnostic(note: String) {
+        _diagnostic.value = note
+    }
+
+    /** A one-line summary for the Settings screen. */
+    fun diagnosticSummary(): String {
+        val c = _checks.value
+        val w = _wakes.value
+        val base = when {
+            c == 0 -> "Nothing has sounded like speech yet."
+            w == 0 -> "$c candidate(s) checked, none were her name."
+            else -> "$c checked, $w wake(s)."
+        }
+        return _diagnostic.value?.let { "$base Last: $it" } ?: base
+    }
+
     // ------------------------------------------------------------------ state
 
     fun enter(next: VoiceState, error: String? = null) {
@@ -144,6 +191,9 @@ object WakeWordManager {
 
     /** Called when voice is switched off, so nothing is left armed. */
     fun shutDown() {
+        _checks.value = 0
+        _wakes.value = 0
+        _diagnostic.value = null
         watchdog?.cancel()
         watchdog = null
         onRecover = null

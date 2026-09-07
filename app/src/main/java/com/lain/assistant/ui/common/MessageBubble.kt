@@ -75,6 +75,8 @@ fun MessageBubble(
     onCopyToInput: () -> Unit,
     onResend: () -> Unit,
     onDelete: () -> Unit,
+    /** Reads this reply out again. Absent on the user's own messages. */
+    onSpeakAgain: (() -> Unit)? = null,
     /** The mini surface is smaller and sits over another app, so it reads quieter. */
     compact: Boolean = false
 ) {
@@ -137,6 +139,9 @@ fun MessageBubble(
                             add(CustomAccessibilityAction("Copy message") { copyToClipboard(); true })
                             add(CustomAccessibilityAction("Put in the message box") { onCopyToInput(); true })
                             if (!busy) add(CustomAccessibilityAction("Send again") { onResend(); true })
+                            if (onSpeakAgain != null) {
+                                add(CustomAccessibilityAction("Read it again") { onSpeakAgain(); true })
+                            }
                             add(CustomAccessibilityAction("Delete message") { onDelete(); true })
                         }
                     }
@@ -179,6 +184,38 @@ fun MessageBubble(
                             }
                         }
                     }
+
+                    // Hear it again.
+                    //
+                    // A spoken reply is gone the moment it finishes, and the usual
+                    // recovery — read it off the screen — is exactly what someone
+                    // using Lain hands-free, or not looking at the phone, cannot do.
+                    // A tap is a much smaller ask than making them repeat the whole
+                    // question. Only on her side: replaying the user's own words back
+                    // at them is not a feature anyone wants.
+                    if (onSpeakAgain != null && message.text.isNotBlank()) {
+                        Spacer(Modifier.height(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .clickable {
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onSpeakAgain()
+                                }
+                                // The tap target stays finger-sized even though the
+                                // glyph is not — a 10dp button is not a button.
+                                .padding(horizontal = 8.dp, vertical = 6.dp)
+                                .semantics { contentDescription = "Read this reply again" }
+                        ) {
+                            PixelIcons.Megaphone(
+                                color = LainCream.copy(alpha = 0.7f),
+                                // Deliberately tiny. It sits under every reply she
+                                // gives, so it has to be findable without competing
+                                // with the words above it.
+                                size = if (compact) 8.dp else 10.dp
+                            )
+                        }
+                    }
                 }
             }
 
@@ -188,6 +225,13 @@ fun MessageBubble(
                 modifier = Modifier.background(LainNavy)
             ) {
                 MessageAction("Copy") { copyToClipboard() }
+
+                if (onSpeakAgain != null) {
+                    MessageAction("Read it again") {
+                        onSpeakAgain()
+                        closeMenu()
+                    }
+                }
 
                 MessageAction(if (isUser) "Edit and resend" else "Put in the box") {
                     onCopyToInput()

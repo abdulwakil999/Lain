@@ -270,28 +270,83 @@ class WakeWordService : Service() {
     }
 
     /**
-     * Her name was heard: hand over to the command surface.
+     * Her name was heard. The turn runs here, with no screen involved.
      *
-     * The detector has already suspended itself, so the microphone is free before
-     * MiniActivity's recogniser asks for it. Everything from here is the existing
-     * pipeline — the same one a typed message uses — which is the point.
+     * This used to call `startActivity` to open the mini surface and let *that* start
+     * listening — and that is why hands-free did nothing at all. **A background
+     * service may not start an activity on Android 10 and later** unless the app
+     * holds "display over other apps" or something of the app is already in the
+     * foreground. The service was running, the microphone was open, the wake word was
+     * heard, and the launch was silently refused. From outside: the mic indicator
+     * lit, and Lain never answered. This codebase had already learned the same
+     * lesson in ScheduledTaskReceiver and it was not applied here.
+     *
+     * A voice turn needs no activity. [com.lain.assistant.agent.ChatEngine] is
+     * application-scoped: it owns the recogniser, the router, the tool loop and the
+     * voice, and every one of those works from a service. So the conversation is
+     * driven directly and the screen is left out of it entirely — which also means
+     * hands-free works with the phone face-down on a table, which is the whole point
+     * of hands-free.
+     *
+     * The mini surface is still attempted afterwards, as visual feedback for the case
+     * where Android does allow it. It failing changes nothing.
      */
     private fun onWakeWord(heard: String) {
+        val engine = com.lain.assistant.agent.ChatEngine.activeInstance
+        if (engine == null) {
+            // Nothing to drive. Say so rather than sitting in WAKE_WORD_DETECTED until
+            // the watchdog notices.
+            WakeWordManager.enter(VoiceState.ERROR, "Lain isn't running")
+            returnToWakeListening()
+            return
+        }
+
         // Barge-in. Saying her name while she is mid-sentence stops the sentence:
         // anything else means the old reply talks over the new one, which is the
         // single most irritating way for a voice assistant to behave.
         val was = WakeWordManager.state.value
         if (was == VoiceState.SPEAKING || was == VoiceState.PROCESSING || was == VoiceState.EXECUTING) {
-            com.lain.assistant.agent.ChatEngine.activeInstance?.silence()
+            engine.silence()
         }
+
         WakeWordManager.enter(VoiceState.WAKE_WORD_DETECTED)
-        startActivity(
-            Intent(this, MiniActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                putExtra(MiniActivity.EXTRA_AUTO_LISTEN, true)
-                putExtra(MiniActivity.EXTRA_WOKEN_BY, heard)
-            }
-        )
+
+        // "Lain, open WhatsApp" is one sentence. If the wake already carried the
+        // instruction, run it rather than asking the person to say it again.
+        val carried = LainName.commandAfterName(heard)
+        if (!carried.isNullOrBlank()) {
+            engine.sendFromVoice(carried)
+        } else {
+            // One turn per wake: she answers, then goes back to listening for her
+            // name rather than holding the microphone open for a follow-up.
+            engine.setConversationMode(false)
+            engine.startVoiceInput()
+        }
+
+        showMiniSurface(heard)
+    }
+
+    /**
+     * Best-effort visual feedback. Never load-bearing.
+     *
+     * Android refuses this from the background unless the app holds "display over
+     * other apps" — which the floating bubble asks for and many users will not have
+     * granted. The turn is already running by the time this is attempted, so a
+     * refusal costs a window and nothing else.
+     */
+    private fun showMiniSurface(heard: String) {
+        runCatching {
+            startActivity(
+                Intent(this, MiniActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    // Deliberately not EXTRA_AUTO_LISTEN: the service has already
+                    // started listening, and a second recogniser would fight it for
+                    // the microphone.
+                    putExtra(MiniActivity.EXTRA_WOKEN_BY, heard)
+                    putExtra(MiniActivity.EXTRA_ALREADY_LISTENING, true)
+                }
+            )
+        }
     }
 
     /**

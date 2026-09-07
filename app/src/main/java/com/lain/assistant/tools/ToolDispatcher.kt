@@ -89,6 +89,7 @@ class ToolDispatcher(context: Context) {
     private val systemToggles = SystemToggles(appContext)
     private val searchFlow = SearchFlow(appContext)
     private val quran = QuranPlayer(appContext)
+    private val music = com.lain.assistant.automation.MusicIdentifier(appContext)
     private val location = LocationReader(appContext)
     private val messaging = MessageFlow(appContext)
     private val web = WebResearch()
@@ -195,6 +196,8 @@ class ToolDispatcher(context: Context) {
                 )
             }
         }
+
+        "identify_music" -> music.identify()
 
         "open_app" -> {
             val target = args.str("app_name")

@@ -579,29 +579,134 @@ object Replies {
         en("I need an internet connection to contact your chosen LLM that'll act as my brain. Qué tonto eres, going offline and expecting a brain.")
     )
 
+    /**
+     * Who and what she is, answered from the phone.
+     *
+     * Twelve of them, and every one is a complete answer rather than a category
+     * list — because "what can you do" is usually the first thing anybody asks, and
+     * the first answer is the one that decides whether they ask a second question.
+     *
+     * These are constants on purpose. Asked what she is, she should not need a
+     * network, an API key or a working model: the answer is a fact about the app,
+     * and routing it to a language model produced an invented feature list on a good
+     * day and nothing at all on a plane. Each line also carries where she came from —
+     * Professor Poopy Butthole, Lewa·dev, and the siblings — because "what are you"
+     * and "whose are you" are the same question asked twice.
+     */
     val capabilities = listOf(
         en(
-            "Calls, texts, WhatsApp. Alarms, reminders, recurring tasks. Opening apps and searching " +
-                "in them. Wi-Fi, Bluetooth, data, torch, Do Not Disturb. Reading and tapping your " +
-                "screen. Music and recitation. Maths, time, where you are. Code in any language, and " +
-                "schoolwork with the working shown. Ask and I'll say if I can't."
+            "I'm Lain, built by Professor Poopy Butthole at Lewa·dev — same shop as Lewa Coder and " +
+                "Lewa Therapist. I run your phone: calls, texts, WhatsApp, Telegram and Signal, " +
+                "alarms and reminders that survive a reboot, opening apps and searching inside them, " +
+                "Wi-Fi and Bluetooth and the torch, reading the screen out and tapping it for you. " +
+                "I read documents, photos and PDFs, play music and recitation, do the maths, and " +
+                "write code in any language. Ask for something and I'll say plainly if I can't."
         ),
         en(
-            "Most of the phone. Ring people, message them, set alarms, open and drive apps, flip the " +
-                "radios, read the screen out, play things, do sums. Write you working code, walk you " +
-                "through an assignment. Ask for something specific and you'll find out faster " +
-                "than I can list it."
+            "Lain. Professor Poopy Butthole's, out of Lewa·dev — he also made Lewa Coder, the " +
+                "coding workspace, and Lewa Therapist. What I do: ring people and message them, " +
+                "set alarms and repeating tasks, open and drive any app on here, flip the radios, " +
+                "read what's on screen, look at pictures and documents you send me, play what you " +
+                "want, and answer properly. I hear you and I speak back."
         ),
         en(
-            "Anything on the phone I can reach: calling, texting, alarms, apps, toggles, music, " +
-                "Qur'an, maths, the time, where you are. Off the phone: code in whatever language you " +
-                "need, and homework — method included, not just the answer. And I'll tell you " +
-                "plainly when something Android won't let me do."
+            "Made at Lewa·dev by Professor Poopy Butthole, alongside Lewa Coder and Lewa Therapist. " +
+                "I'm the phone one. Calls, messages, alarms, apps, settings, media, the screen — " +
+                "and off the phone, code in whatever language and schoolwork with the working shown. " +
+                "Everything that touches somebody else gets confirmed with you first."
+        ),
+        esThenEn(
+            "Soy Lain, de Lewa·dev.",
+            "Professor Poopy Butthole built me — Lewa Coder and Lewa Therapist are his too. I " +
+                "handle the phone end to end: calling, texting, scheduling, apps, toggles, the " +
+                "screen, files, music. And I'll tell you when Android simply won't allow something."
         ),
         en(
-            "Phone things — calls, messages, alarms, apps, settings, media. Screen things, if you've " +
-                "switched Accessibility on. Code and coursework, in any language you like. Knowledge " +
-                "things, through whichever model you picked."
+            "Lain, from Lewa·dev. My developer is Professor Poopy Butthole; his other work is Lewa " +
+                "Coder for building things and Lewa Therapist for the harder days. Mine is this " +
+                "phone. I place calls, send messages across four apps, keep alarms and recurring " +
+                "tasks, open and search apps, switch settings, read and tap the screen, read your " +
+                "documents and photos, identify songs, and write real code."
+        ),
+        en(
+            "Short version: I'm the assistant Professor Poopy Butthole built at Lewa·dev, after " +
+                "Lewa Coder and Lewa Therapist. Long version: calls, SMS, WhatsApp, Telegram, " +
+                "Signal, alarms, reminders, repeating tasks, app launching and in-app search, " +
+                "Wi-Fi, Bluetooth, mobile data, torch, Do Not Disturb, screen reading, screen " +
+                "tapping, documents, photos, video frames, music, Qur'an recitation, maths, " +
+                "location, code, coursework. Ask for the specific thing; it's faster."
+        ),
+        en(
+            "Lewa·dev's phone assistant — Professor Poopy Butthole's, same as Lewa Coder and Lewa " +
+                "Therapist. I do the things that need the device: ringing someone, sending the " +
+                "message, setting the alarm, opening the app, turning the thing on, reading the " +
+                "screen when you can't look at it. I also read files and write code. No internet " +
+                "needed for a good half of that."
+        ),
+        en(
+            "I'm Lain. Professor Poopy Butthole made me at Lewa·dev — he's the one behind Lewa " +
+                "Coder and Lewa Therapist. I can hear you, speak to you, run your phone, remember " +
+                "what you tell me across days, learn a routine you teach me once, and keep it after " +
+                "a reboot. Ask me to do something on here and I'll either do it or say why not."
+        ),
+        esThenEn(
+            "Lain, hecha en Lewa·dev.",
+            "Professor Poopy Butthole is the developer — Lewa Coder and Lewa Therapist are the " +
+                "siblings. I run the phone: contacts, messages, alarms, apps, settings, the screen, " +
+                "your files, your music. I answer questions too, through whichever model you picked."
+        ),
+        en(
+            "Built by Professor Poopy Butthole at Lewa·dev. Lewa Coder writes software, Lewa " +
+                "Therapist sits with you, I drive the phone. Calls and messages, alarms and " +
+                "reminders, apps and settings, screen reading and tapping, documents and pictures, " +
+                "music and recitation, sums and code. I say what I did and what failed, never " +
+                "the other way round."
+        ),
+        en(
+            "Lain — Lewa·dev, Professor Poopy Butthole, same family as Lewa Coder and Lewa " +
+                "Therapist. The useful list: I place calls, send messages on four apps, schedule " +
+                "anything that repeats, open and search apps, toggle the radios, read the screen " +
+                "aloud, tap what you name, open your documents and photos, name a song that's " +
+                "playing, and write code that runs. Half of it works with no signal."
+        ),
+        en(
+            "Professor Poopy Butthole built me at Lewa·dev, after Lewa Coder and Lewa Therapist. " +
+                "What that amounts to: your phone does what you say out loud. Calls, texts, " +
+                "messaging apps, alarms, reminders, app launching, settings, the screen, files, " +
+                "media, maths, code, schoolwork. And the limits are said out loud too — there are " +
+                "things Android won't let any app do, and I name them rather than pretending."
+        )
+    )
+
+    /**
+     * The other half of the question, and it gets a straight answer.
+     *
+     * An assistant that lists what it can do and goes quiet about the rest teaches
+     * people to keep asking for the one thing it will never manage. These are real
+     * platform limits, not modesty.
+     */
+    val limits = listOf(
+        en(
+            "Things I can't: install or uninstall apps, force-quit whatever is in front of you, " +
+                "read a WhatsApp message that isn't on screen, switch Wi-Fi or Bluetooth without " +
+                "going through your own Quick Settings tile, or grant myself a permission. Android " +
+                "forbids all of those, and I'd rather say so than fake it."
+        ),
+        en(
+            "Off the table: silently granting permissions, installing apps, killing a foreground " +
+                "app, unlocking a phone that has a PIN, or listening while the screen is off. " +
+                "Those are Android's rules and I'm not going around them."
+        ),
+        en(
+            "I can't watch a video or listen to an audio file — I take frames from one and read " +
+                "the other's details. I can't read inside a locked app. I can't unlock your phone " +
+                "if you've set a code. And without Accessibility switched on I can't see or tap " +
+                "the screen at all."
+        ),
+        esThenEn(
+            "Lo que no puedo:",
+            "install things, grant myself permissions, unlock a phone with a passcode, or read " +
+                "apps that block screen capture. Android says no, so I say no."
         )
     )
 
@@ -676,7 +781,7 @@ object Replies {
             unknownUserName + lainName + appName + necio + animeName +
             developer + maker + lewaCoder + lewaTherapist + lewaDev +
             developerChallenge() + developerAccepted + developerRejected +
-            capabilities + sassPrefixes + praises +
+            capabilities + limits + sassPrefixes + praises +
             standDownAsk + standDownDone + standDownKept + offline
 
     // ------------------------------------------------------------------ util

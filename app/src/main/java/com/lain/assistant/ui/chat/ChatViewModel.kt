@@ -47,6 +47,9 @@ class ChatViewModel(container: AppContainer) : ViewModel() {
 
     /** Stops the current utterance only — the task keeps running and the mute setting is untouched. */
     fun silence() = engine.silence()
+
+    /** Reads a reply out again, from the megaphone under it. */
+    fun speakAgain(text: String) = engine.speakAgain(text)
     fun setConversationMode(enabled: Boolean) = engine.setConversationMode(enabled)
 
     /** Puts a message's text in the composer, ready to edit and send again. */

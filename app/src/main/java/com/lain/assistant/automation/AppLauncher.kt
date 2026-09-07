@@ -41,20 +41,58 @@ class AppLauncher(private val context: Context) {
      * ignores case and punctuation, and tolerates the filler words store listings
      * are full of.
      */
-    private fun match(spokenName: String): Pair<String, String>? =
-        when (val result = FuzzyMatch.best(spokenName, installedApps()) { it.second }) {
-            is FuzzyMatch.Result.Found -> result.hit.value
+    private fun match(spokenName: String): Pair<String, String>? {
+        resolve(spokenName, installedApps())?.let { return it }
+
+        // Nothing matched. Before saying an app isn't installed — which is the reply
+        // people report as simply wrong — rebuild the list once and look again. The
+        // cache is invalidated by package broadcasts, and that registration is inside
+        // a runCatching: if it ever failed, or the process missed the broadcast, the
+        // list is a snapshot from launch and every app installed since is invisible.
+        // A miss is exactly the moment that is worth ruling out.
+        Cache.invalidate()
+        return resolve(spokenName, installedApps())
+    }
+
+    private fun resolve(
+        spokenName: String,
+        apps: List<Pair<String, String>>
+    ): Pair<String, String>? {
+        when (val byLabel = FuzzyMatch.best(spokenName, apps) { it.second }) {
+            is FuzzyMatch.Result.Found -> return byLabel.hit.value
             // A tie still opens the strongest candidate: opening the wrong app is a
             // back-press, unlike calling the wrong person. openAppDetailed is there
             // for callers that want to surface the choice.
-            is FuzzyMatch.Result.Ambiguous -> result.hits.first().value
-            FuzzyMatch.Result.None -> null
+            is FuzzyMatch.Result.Ambiguous -> return byLabel.hits.first().value
+            FuzzyMatch.Result.None -> Unit
         }
+
+        // The display name is not the only name an app has. "WhatsApp Business" is
+        // com.whatsapp.w4b, "Files by Google" is com.google.android.apps.nbu.files,
+        // and people say "w4b" and "files" — neither of which scores against the
+        // label. The package is a second, independent way in.
+        val needle = spokenName.lowercase().filter { it.isLetterOrDigit() }
+        if (needle.length < 3) return null
+
+        return apps.firstOrNull { (pkg, _) ->
+            // The last dotted segment is the app's own name in almost every package.
+            pkg.substringAfterLast('.').lowercase().contains(needle)
+        } ?: apps.firstOrNull { (pkg, _) ->
+            pkg.lowercase().replace(".", "").contains(needle)
+        } ?: apps.firstOrNull { (_, label) ->
+            // Last resort: bare substring on a squashed label, which catches the
+            // spacing and punctuation differences fuzzy scoring discounts —
+            // "yt music" against "YT Music", "xbox" against "Xbox Game Pass".
+            label.lowercase().filter { it.isLetterOrDigit() }.contains(needle)
+        }
+    }
 
     fun openApp(spokenName: String): AutomationResult {
         val hit = match(spokenName)
             ?: return AutomationResult.Failure(
-                "No installed app matches \"$spokenName\". Call list_apps to see what is installed."
+                "No installed app matches \"$spokenName\" among the ${installedApps().size} apps on this " +
+                    "phone. Call list_apps with part of the name to check the spelling before telling " +
+                    "the user it isn't installed."
             )
         val (packageName, label) = hit
         val intent = pm.getLaunchIntentForPackage(packageName)
@@ -107,6 +145,12 @@ class AppLauncher(private val context: Context) {
         @Volatile
         private var receiverRegistered = false
 
+        /** Drops the snapshot so the next lookup rebuilds it. */
+        @Synchronized
+        fun invalidate() {
+            apps = null
+        }
+
         @Synchronized
         fun get(context: Context): List<Pair<String, String>> {
             apps?.let { return it }
@@ -117,14 +161,41 @@ class AppLauncher(private val context: Context) {
             return built
         }
 
+        /**
+         * Everything on the phone that can actually be opened.
+         *
+         * Two sources, unioned. The launcher query is the fast one and covers almost
+         * everything. The installed-packages sweep catches what it misses: apps whose
+         * entry point is a LEANBACK or CAR category rather than LAUNCHER, and apps
+         * that ship a launch intent without declaring the category at all. Those are
+         * a minority, but they are exactly the ones a user swears are installed while
+         * Lain says they are not.
+         */
         private fun build(context: Context): List<Pair<String, String>> {
             val pm = context.packageManager
             val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-            return runCatching {
+
+            val fromLauncher = runCatching {
                 pm.queryIntentActivities(launcherIntent, 0)
                     .map { it.activityInfo.packageName to it.loadLabel(pm).toString() }
-                    .distinctBy { it.first }
             }.getOrDefault(emptyList())
+
+            val seen = fromLauncher.mapTo(mutableSetOf()) { it.first }
+
+            val fromPackages = runCatching {
+                @Suppress("DEPRECATION")
+                pm.getInstalledApplications(0)
+                    .asSequence()
+                    .filter { it.packageName !in seen }
+                    // Openable is the whole test. An app with no launch intent cannot
+                    // be started and listing it would only produce a different wrong
+                    // answer.
+                    .filter { runCatching { pm.getLaunchIntentForPackage(it.packageName) != null }.getOrDefault(false) }
+                    .map { it.packageName to runCatching { pm.getApplicationLabel(it).toString() }.getOrDefault(it.packageName) }
+                    .toList()
+            }.getOrDefault(emptyList())
+
+            return (fromLauncher + fromPackages).distinctBy { it.first }
         }
 
         private fun registerOnce(context: Context) {

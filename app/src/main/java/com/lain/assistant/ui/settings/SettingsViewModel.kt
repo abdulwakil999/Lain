@@ -43,6 +43,7 @@ data class SettingsUiState(
     val overlayEnabled: Boolean = false,
     val alwaysOn: Boolean = false,
     val wakeWordEnabled: Boolean = false,
+    val auddKey: String = "",
     val loaded: Boolean = false,
     val justSaved: Boolean = false,
     val testResult: String? = null,
@@ -123,6 +124,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
                     redditSecret = keys.channel(StoredChannelCredentials.REDDIT_SECRET).orEmpty(),
                     redditUser = keys.channel(StoredChannelCredentials.REDDIT_USER).orEmpty(),
                     redditPassword = keys.channel(StoredChannelCredentials.REDDIT_PASSWORD).orEmpty(),
+                    auddKey = keys.channel(com.lain.assistant.data.SecureKeyStore.AUDD_KEY).orEmpty(),
                     overlayEnabled = overlayEnabled,
                     alwaysOn = alwaysOn,
                     wakeWordEnabled = wakeWord,
@@ -210,7 +212,8 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             StoredChannelCredentials.REDDIT_ID to s.redditClientId,
             StoredChannelCredentials.REDDIT_SECRET to s.redditSecret,
             StoredChannelCredentials.REDDIT_USER to s.redditUser,
-            StoredChannelCredentials.REDDIT_PASSWORD to s.redditPassword
+            StoredChannelCredentials.REDDIT_PASSWORD to s.redditPassword,
+            com.lain.assistant.data.SecureKeyStore.AUDD_KEY to s.auddKey
         ).forEach { (slot, value) ->
             if (value.isBlank()) keys.clearChannel(slot) else keys.saveChannel(slot, value)
         }
@@ -284,6 +287,10 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
      * Applied immediately rather than on Save — the bubble is a visible, running
      * thing, so the toggle should reflect reality the moment it's flipped.
      */
+    fun setAuddKey(value: String) {
+        _state.update { it.copy(auddKey = value, justSaved = false) }
+    }
+
     fun setWakeWordEnabled(enabled: Boolean) {
         _state.update { it.copy(wakeWordEnabled = enabled) }
         viewModelScope.launch { container.userPreferencesRepository.setWakeWordEnabled(enabled) }

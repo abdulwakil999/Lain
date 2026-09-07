@@ -141,6 +141,11 @@ fun MiniChatScreen(
                         onCopyToInput = { viewModel.copyToInput(message.text) },
                         onResend = { viewModel.resend(message.id) },
                         onDelete = { viewModel.deleteMessage(message.id) },
+                        // Only her replies get the megaphone; replaying the
+                        // user's own words back at them is not a feature.
+                        onSpeakAgain = if (message.sender == com.lain.assistant.data.Sender.LAIN) {
+                            { viewModel.speakAgain(message.text) }
+                        } else null,
                         compact = true
                     )
                 }

@@ -89,6 +89,7 @@ class LocalActions(private val context: Context) {
                 is LocalIntent.DeveloperAnswer -> developerAnswer(intent.text)
                 is LocalIntent.StandDownRequest -> standDownRequest()
                 is LocalIntent.StandDownAnswer -> standDownAnswer(intent.text)
+                is LocalIntent.IdentifyMusic -> identifyMusic()
                 is LocalIntent.Recite -> recite(intent)
                 is LocalIntent.WhereAmI -> whereAmI()
                 is LocalIntent.LockScreen -> lockScreen()
@@ -180,6 +181,18 @@ class LocalActions(private val context: Context) {
         if (!service.tapByText(label)) return null
         service.awaitSettle(maxWait = 1200L)
         return sass("Tapped $label.")
+    }
+
+    /**
+     * Names the song playing nearby.
+     *
+     * Kept on the local path because it needs no model at all — it is a recording, an
+     * upload and a name — and going through one would add a round trip to a request
+     * that is already waiting eight seconds on the microphone.
+     */
+    private suspend fun identifyMusic(): String? {
+        val outcome = com.lain.assistant.automation.MusicIdentifier(context).identify()
+        return outcome.error ?: outcome.result
     }
 
     // -------------------------------------------------------------- timers
@@ -317,6 +330,7 @@ class LocalActions(private val context: Context) {
             IdentityQuestion.NECIO -> say(Replies.necio)
             IdentityQuestion.DEVELOPER -> say(Replies.developer)
             IdentityQuestion.MAKER -> say(Replies.maker)
+            IdentityQuestion.LIMITS -> say(Replies.limits)
             IdentityQuestion.LEWA_CODER -> say(Replies.lewaCoder)
             IdentityQuestion.LEWA_THERAPIST -> say(Replies.lewaTherapist)
             IdentityQuestion.LEWA_DEV -> say(Replies.lewaDev)

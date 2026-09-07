@@ -88,6 +88,11 @@ object ToolRegistry {
         ToolMeta("open_app", "Launch an installed app by display name.",
             commonFailures = listOf("app not installed", "no launchable activity")),
         ToolMeta("list_apps", "List what is actually installed, so absence is checked rather than assumed."),
+        ToolMeta(
+            "identify_music", "Record a few seconds and name the song.",
+            permissions = listOf("RECORD_AUDIO"),
+            commonFailures = listOf("no AudD key set", "nothing matched", "music too quiet")
+        ),
         // No longer accessibility-only: a background app is reaped through
         // ActivityManager, which needs no service at all.
         ToolMeta("close_app", "Close an app, from the foreground or the background.",

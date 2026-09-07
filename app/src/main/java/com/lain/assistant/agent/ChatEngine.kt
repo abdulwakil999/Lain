@@ -27,6 +27,7 @@ import com.lain.assistant.network.LlmClientFactory
 import com.lain.assistant.network.LlmMessage
 import com.lain.assistant.network.LlmResult
 import com.lain.assistant.network.RequestTuning
+import com.lain.assistant.network.TokenBudget
 import com.lain.assistant.network.StreamEvent
 import com.lain.assistant.network.ToolCall
 import com.lain.assistant.tools.FailureKind
@@ -459,7 +460,11 @@ class ChatEngine(
     fun sendFromVoice(text: String) {
         val message = text.trim()
         if (message.isEmpty()) return
-        _state.update { it.copy(conversationMode = true) }
+        // Deliberately not hands-free mode. One wake, one command, then back to
+        // listening for her name — which is what was asked for, and also what stops
+        // her holding the microphone open waiting for a follow-up nobody is going to
+        // give. fromVoice is what makes her speak the answer; that is separate.
+        _state.update { it.copy(conversationMode = false) }
         send(message, fromVoice = true)
     }
 
@@ -473,6 +478,30 @@ class ChatEngine(
     private fun publishVoice(state: com.lain.assistant.voice.VoiceState) {
         if (!WakeWordService.isRunning && !_state.value.conversationMode) return
         WakeWordManager.enter(state)
+    }
+
+    /**
+     * Reads a reply out again, on demand.
+     *
+     * Ignores the mute setting, deliberately. Mute means "don't speak at me
+     * unprompted"; tapping the megaphone is the prompt, and refusing it because a
+     * switch elsewhere is off would look like a broken button.
+     */
+    fun speakAgain(text: String) {
+        val spoken = CodeBlocks.forSpeech(text).takeIf { it.isNotBlank() } ?: return
+        val engine = ttsEngine ?: return
+        // Whatever is mid-sentence stops first, or the two overlap.
+        silence()
+        _state.update { it.copy(isSpeaking = true) }
+        WakeWordManager.spokenAloud = spoken
+        speakJob = scope.launch {
+            try {
+                engine.speak(spoken)
+            } finally {
+                WakeWordManager.spokenAloud = ""
+                _state.update { it.copy(isSpeaking = false) }
+            }
+        }
     }
 
     fun send(text: String? = null, fromVoice: Boolean = false) {
@@ -734,6 +763,9 @@ class ChatEngine(
         is LocalIntent.PlayMusic -> "play_music" to listOfNotNull(intent.query.ifBlank { null }, intent.app).joinToString(" on ")
         is LocalIntent.Transport -> "media_control" to intent.action.name.lowercase()
         is LocalIntent.Recite -> "recite" to if (intent.stop) "stop" else intent.surah
+        // Logged because it uses the microphone and sends audio off the phone.
+        // That is exactly the shape of thing the action log exists for.
+        is LocalIntent.IdentifyMusic -> "identify_music" to ""
         is LocalIntent.SearchIn -> "search_in_app" to "${intent.query} in ${intent.app}"
         is LocalIntent.ClearRecents -> "clear_recents" to ""
         is LocalIntent.LockScreen -> "lock_screen" to ""
@@ -972,7 +1004,9 @@ class ChatEngine(
         // loop itself if it turns out it needed something.
         if (route is Route.Chat || route is Route.Study) {
             directAnswerWorking = null
-            val quick = tryDirectAnswer(client, modelId, apiKey, systemPrompt, history, trace, route)
+            val quick = tryDirectAnswer(
+                client, modelId, apiKey, systemPrompt, history, trace, route, caps, userMessage
+            )
             if (quick != null) {
                 finishTurn(
                     cid, quick, usedModel = modelId, fellBack = false,
@@ -1013,14 +1047,21 @@ class ChatEngine(
             // Choosing the next tool call needs decisiveness, not deliberation. The
             // ceiling is lifted only for the final round, where the model is likely
             // writing the actual answer rather than picking an action.
-            val tuning = when {
-                // Given room precisely once, and only after being cut off. Raising the
-                // ceiling for everyone would buy longer monologues rather than fewer;
-                // the instruction sent with it is what does the work.
-                retriedAfterTruncation -> RequestTuning.TOOL_STEP.copy(maxTokens = 2000)
+            val baseTuning = when {
                 deliveryMode == DeliveryMode.VOICE -> RequestTuning.SPOKEN
                 rounds == 1 -> RequestTuning.TOOL_STEP
                 else -> RequestTuning.TOOL_STEP.copy(maxTokens = 1000)
+            }
+            // Sized to the request rather than to a constant, and doubled again after
+            // a cut-off. The instruction sent with a retry is what stops the extra
+            // room buying a longer monologue; the room itself is what lets a genuinely
+            // long answer finish.
+            val tuning = if (retriedAfterTruncation) {
+                TokenBudget.afterTruncation(
+                    TokenBudget.forRequest(baseTuning, caps, userMessage), caps
+                )
+            } else {
+                TokenBudget.forRequest(baseTuning, caps, userMessage)
             }
             // Streamed, so the final answer starts appearing as the model writes it
             // rather than after it has finished. Intermediate tool-selection rounds
@@ -1188,17 +1229,25 @@ class ChatEngine(
         systemPrompt: String,
         history: List<LlmMessage>,
         trace: Trace.Turn,
-        route: Route
+        route: Route,
+        /** What the model can take, so the reply ceiling is clamped to it. */
+        caps: ModelCapabilities,
+        /** The request itself, which is where most of the length signal lives. */
+        userMessage: String
     ): String? {
         val prompt = systemPrompt + "\n\n" + PromptBuilder.directAnswerRule()
         // Voice still wins over everything: a spoken answer is two sentences whatever
         // was asked, and code is summarised aloud rather than read out character by
         // character. Otherwise study work gets the ceiling it needs to finish.
-        val tuning = when {
-            deliveryMode == DeliveryMode.VOICE -> RequestTuning.SPOKEN
-            route is Route.Study -> RequestTuning.STUDY
-            else -> RequestTuning.ANSWER
-        }
+        val tuning = TokenBudget.forRequest(
+            when {
+                deliveryMode == DeliveryMode.VOICE -> RequestTuning.SPOKEN
+                route is Route.Study -> RequestTuning.STUDY
+                else -> RequestTuning.ANSWER
+            },
+            caps,
+            userMessage
+        )
         // The escape hatch: a model that decides it needs the phone or the live web
         // says so, and the caller falls through to the full loop — so a
         // misclassification costs one cheap request, never a wrong answer.
@@ -1211,7 +1260,7 @@ class ChatEngine(
         // truncation said out loud rather than passed off as finished.
         if (outcome is StreamOutcome.Truncated && route is Route.Study) {
             trace.mark("study_truncated_retry")
-            val roomier = tuning.copy(maxTokens = tuning.maxTokens * 2)
+            val roomier = TokenBudget.afterTruncation(tuning, caps)
             val second = streamAnswer(client, modelId, apiKey, prompt, history, emptyList(), roomier, trace)
             val recovered = when (second) {
                 is StreamOutcome.Text -> second.text

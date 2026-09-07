@@ -501,6 +501,27 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             )
 
             Spacer(Modifier.height(24.dp))
+            SectionLabel("Song identification")
+            Text(
+                "Lets Lain name what's playing, like Shazam. She records about eight seconds and " +
+                    "sends it to AudD to be matched — the one place audio leaves this phone, and " +
+                    "only when you ask her what's playing. Free for a few hundred lookups a month.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = LainMuted
+            )
+            Spacer(Modifier.height(6.dp))
+            PixelTextField(state.auddKey, viewModel::setAuddKey, "AudD API token")
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Register your API key here",
+                style = MaterialTheme.typography.labelLarge,
+                color = LainSalmon,
+                modifier = Modifier
+                    .clickable { openLink(context, "https://dashboard.audd.io/") }
+                    .padding(vertical = 4.dp)
+            )
+
+            Spacer(Modifier.height(24.dp))
             SectionLabel("Hands-free")
             Text(
                 if (state.wakeWordEnabled) {
@@ -537,6 +558,26 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
                     viewModel.setWakeWordEnabled(false)
                     WakeWordService.stop(context)
                 }, modifier = Modifier.weight(1f))
+            }
+
+            // Visible while it's on, because "it doesn't work" is true and impossible
+            // to act on. This says whether anything is being heard at all, whether it
+            // reaches the recogniser, and what the recogniser said back.
+            if (state.wakeWordEnabled) {
+                val checks by com.lain.assistant.voice.WakeWordManager.checks.collectAsState()
+                val wakes by com.lain.assistant.voice.WakeWordManager.wakes.collectAsState()
+                val note by com.lain.assistant.voice.WakeWordManager.diagnostic.collectAsState()
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    buildString {
+                        append("Heard-speech checks: ").append(checks)
+                        append(" · wakes: ").append(wakes)
+                        note?.let { append("\nLast: ").append(it) }
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = LainMuted,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                )
             }
 
             Spacer(Modifier.height(24.dp))

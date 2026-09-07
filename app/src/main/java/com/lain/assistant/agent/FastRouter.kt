@@ -138,6 +138,9 @@ sealed class LocalIntent {
      */
     data class SmallTalk(val kind: SmallTalkKind) : LocalIntent()
 
+    /** "what song is this", "shazam this" — recorded here, matched by a service. */
+    object IdentifyMusic : LocalIntent()
+
     /** "recite Al-Kahf", "play surah 18", "stop the recitation". */
     data class Recite(val surah: String, val reciter: String, val stop: Boolean) : LocalIntent()
 
@@ -163,6 +166,9 @@ enum class IdentityQuestion {
      * asking this has already been told the name and wants to know what it means.
      */
     MAKER,
+
+    /** "What can't you do" — real platform limits, not modesty. */
+    LIMITS,
 
     /** The sibling apps. Real products, so a model must not invent their features. */
     LEWA_CODER,
@@ -459,6 +465,9 @@ object FastRouter {
             ?: systemToggle(t) ?: settingsOrToggle(t) ?: call(t)
             // Music is checked before the generic app launcher so "play spotify" is
             // understood as playback rather than as opening an app called "spotify".
+            // Before the transport and play matchers, or "what's playing" is read as
+            // a request to start something rather than to name what already is.
+            ?: identifyMusic(t)
             ?: transport(t) ?: playMusic(t)
             // Arithmetic is checked late: it only matches strings that are
             // unambiguously expressions, so it can't shadow a real command.
@@ -758,6 +767,22 @@ object FastRouter {
 
     // -------------------------------------------------------------- location
 
+    /**
+     * Naming the song in the room.
+     *
+     * Matched on the whole message: "what's this" alone is far too broad, and a
+     * false positive here records eight seconds of audio and uploads it, which is
+     * not something to do on a guess.
+     */
+    private fun identifyMusic(t: String): LocalIntent? = when (t) {
+        "what song is this", "what song is playing", "what's this song", "whats this song",
+        "what is this song", "what's playing", "whats playing", "what is playing",
+        "name this song", "name this track", "identify this song", "identify this music",
+        "shazam this", "shazam it", "what music is this", "who sings this",
+        "what track is this", "tag this song" -> LocalIntent.IdentifyMusic
+        else -> null
+    }
+
     private fun whereAmI(t: String): LocalIntent? = when {
         t == "where am i" || t == "where am i right now" || t == "my location" ||
             t == "what's my location" || t == "whats my location" ||
@@ -856,8 +881,22 @@ object FastRouter {
             Regex("\\b(you|your|lain|name)\\b").containsMatchIn(t) ->
             LocalIntent.Identity(IdentityQuestion.ANIME)
 
+        // Checked before the capabilities question, because these phrasings contain it.
+        Regex("^what (can'?t|cannot|can not) you do\\??$").matches(t) ||
+            t == "what are your limits" || t == "what are your limitations" ||
+            t == "what can't you help with" || t == "whats your limit" ->
+            LocalIntent.Identity(IdentityQuestion.LIMITS)
+
         t == "what can you do" || t == "what are you able to do" || t == "help" ||
-            t == "what can i ask you" || t == "what do you do" ->
+            t == "what can i ask you" || t == "what do you do" ||
+            // The same question, asked the way people actually ask it. Every one of
+            // these used to cost a network round trip to be told something the app
+            // already knows about itself — and on a plane, got nothing at all.
+            t == "who are you and what can you do" || t == "what are you" ||
+            t == "tell me about yourself" || t == "describe yourself" ||
+            t == "what are your capabilities" || t == "what are your features" ||
+            t == "what can you help me with" || t == "what else can you do" ||
+            t == "introduce yourself" || t == "what are you good for" ->
             LocalIntent.Identity(IdentityQuestion.CAPABILITIES)
 
         // Everything below is a fact about real software that a model has never seen

@@ -35,6 +35,14 @@ class MiniActivity : ComponentActivity() {
          * detector hears the instruction, throws it away, and asks for it again.
          */
         const val EXTRA_WOKEN_BY = "com.lain.assistant.MINI_WOKEN_BY"
+
+        /**
+         * The service already started the turn; this window is only here to watch it.
+         *
+         * Without it the screen would start a second recogniser and the two would
+         * fight over one microphone.
+         */
+        const val EXTRA_ALREADY_LISTENING = "com.lain.assistant.MINI_ALREADY_LISTENING"
     }
 
     /**
@@ -97,8 +105,13 @@ class MiniActivity : ComponentActivity() {
     }
 
     private fun readRequest(intent: Intent?) = Request(
-        autoListen = intent?.getBooleanExtra(EXTRA_AUTO_LISTEN, false) == true,
+        autoListen = intent?.getBooleanExtra(EXTRA_AUTO_LISTEN, false) == true &&
+            intent?.getBooleanExtra(EXTRA_ALREADY_LISTENING, false) != true,
         command = intent?.getStringExtra(EXTRA_COMMAND)?.takeIf { it.isNotBlank() },
-        wokenBy = intent?.getStringExtra(EXTRA_WOKEN_BY)?.takeIf { it.isNotBlank() }
+        // Suppressed when the service is already running the turn, or the screen
+        // would send the command a second time.
+        wokenBy = intent?.getStringExtra(EXTRA_WOKEN_BY)
+            ?.takeIf { it.isNotBlank() }
+            ?.takeIf { intent.getBooleanExtra(EXTRA_ALREADY_LISTENING, false) != true }
     )
 }
