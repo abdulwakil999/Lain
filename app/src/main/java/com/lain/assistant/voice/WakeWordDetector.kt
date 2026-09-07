@@ -8,11 +8,13 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.AudioEffect
 import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.ParcelFileDescriptor
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -24,43 +26,49 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import java.io.FileOutputStream
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.math.log10
 import kotlin.math.sqrt
 
 /**
- * Listens for her name without transcribing the room.
+ * Listens for her name on one microphone stream that is opened once and stays open.
  *
- * The previous version looped Android's SpeechRecognizer forever: it transcribed
- * every sound in the room, threw almost all of it away, and did that on a service
- * binding, a model inference and an IPC round trip per cycle. That is expensive
- * enough to show up in the battery breakdown, and it means continuous speech
- * recognition is running on everything said near the phone — which is not a
- * privacy posture anyone should have to accept from an assistant.
+ * The version before this one cycled the microphone. It opened an [AudioRecord],
+ * waited for speech, then closed the recorder — releasing both audio effects with it
+ * — bound a [SpeechRecognizer], checked the transcript, tore that down and opened a
+ * fresh recorder. Every time anybody said anything. In a room with a television that
+ * is an open/close cycle every couple of seconds, and each one costs an audio HAL
+ * round trip, a route reconfiguration and two AudioEffect allocations. It is also
+ * exactly what the privacy indicator flickering on and off looks like from outside.
  *
- * This is two stages instead, and the split is the entire design:
+ * Assistants that do this properly never cycle the mic, and neither does this now:
  *
- *  **Stage one — energy.** A raw [AudioRecord] at 16 kHz, read in 20 ms frames,
- *  reduced to one number: RMS in dBFS. That is a few hundred floating-point
- *  operations per frame and nothing else — no model, no service, no network, no
- *  buffer kept. Silence never leaves this stage, so most of the time the phone is
- *  doing arithmetic on a number and discarding it. The noise floor is learned
- *  continuously, so a quiet bedroom and a moving car both work without a setting.
+ *  - **One recorder for the life of the detector.** Opened in [start], released in
+ *    [stop], and at no point in between. The read loop is a 20 ms frame reduced to
+ *    RMS — a few hundred float operations, no allocation, nothing kept.
+ *  - **No handover on Android 13+.** `RecognizerIntent.EXTRA_AUDIO_SOURCE` lets a
+ *    recogniser read from a pipe instead of opening the microphone itself, so
+ *    checking a candidate means writing the audio we are already holding into a file
+ *    descriptor. The microphone is never touched. This is the path that removes the
+ *    churn entirely.
+ *  - **Rare handover below 13.** Older releases have no such API, so the recorder
+ *    genuinely must be released for the recogniser. The gate below makes that
+ *    uncommon rather than constant.
  *
- *  **Stage two — the name.** Only when stage one has heard sustained speech does a
- *  recogniser start, and only for one short utterance. On Android 13+ the
- *  *on-device* recogniser is used where the platform provides it, so the audio
- *  never leaves the phone at all. If the name is not in it, everything is torn down
- *  and stage one resumes. Nothing is stored and nothing is sent.
+ * The gate is the other half of the fix. Triggering on any 240 ms of speech meant a
+ * conversation or a TV kept stage two busy permanently. A wake word has a shape —
+ * a short burst of voice followed by a pause — and continuous speech does not, so
+ * only completed short utterances are checked, and a run of failures widens a
+ * refractory period so a noisy room quietly costs less rather than more.
  *
- * The honest limitation, stated rather than buried: this is not a trained keyword
- * spotter like Porcupine. Doing that properly needs either a licensed engine with
- * a key the user must go and get, or a bundled acoustic model of tens of megabytes,
- * and neither belongs in an app whose whole premise is working out of the box on a
- * cheap phone. What this gives up is a little accuracy at distance; what it keeps
- * is that stage one is genuinely cheap and genuinely local.
- *
- * The class owns the microphone through [WakeWordManager], never both stages at
- * once, and never at the same time as the command recogniser.
+ * The honest limitation is unchanged: this is not a DSP keyword spotter. Android
+ * reserves `AlwaysOnHotwordDetector` and `HotwordDetectionService` for whichever app
+ * currently holds the system voice-interaction role, and the phrases those accept
+ * are the ones burned into the OEM's hardware model — "Lain" is not among them. A
+ * licensed engine needs a key the user must go and fetch; a bundled acoustic model
+ * is tens of megabytes. This is what is available to an ordinary app, done without
+ * waste.
  */
 class WakeWordDetector(
     private val context: Context,
@@ -75,55 +83,94 @@ class WakeWordDetector(
 
         /** 20 ms of mono 16-bit audio. Short enough to react, long enough to be stable. */
         private const val FRAME_SAMPLES = 320
+        private const val FRAMES_PER_SECOND = SAMPLE_RATE / FRAME_SAMPLES
 
-        /**
-         * How far above the learned noise floor counts as somebody talking.
-         *
-         * Low enough to catch a normal speaking voice across a room, high enough
-         * that a fridge, a fan or traffic does not keep waking stage two.
-         */
+        /** How far above the learned noise floor counts as somebody talking. */
         private const val SPEECH_MARGIN_DB = 9.0
-
-        /** Consecutive speech frames before stage two runs: ~240 ms of actual voice. */
-        private const val FRAMES_TO_TRIGGER = 12
-
-        /** Frames of quiet that reset the counter, so a cough doesn't accumulate. */
-        private const val FRAMES_TO_RESET = 15
-
-        /** How quickly the noise floor follows the room. Slow on purpose. */
-        private const val FLOOR_RISE = 0.02
-        private const val FLOOR_FALL = 0.15
 
         /** Absolute floor, so a silent room doesn't drive the threshold to nothing. */
         private const val MIN_FLOOR_DB = -55.0
-
-        /** Longest stage two ever runs before giving up and going back to stage one. */
-        private const val RECOGNISE_WINDOW_MS = 3_500L
+        private const val FLOOR_RISE = 0.02
+        private const val FLOOR_FALL = 0.15
 
         /**
-         * Quiet period after a wake, and after Lain starts speaking.
+         * The shape of a wake word: a short burst of voice, then a pause.
          *
-         * Without the first, her own "Yes?" retriggers the detector. Without the
-         * second, the opening syllable of every reply does.
+         * Anything shorter is a door or a cough; anything longer is a sentence, and a
+         * sentence is what a television produces continuously. Checking only completed
+         * short utterances is what stopped stage two running all evening.
          */
+        private const val MIN_UTTERANCE_FRAMES = FRAMES_PER_SECOND / 4      // 250 ms
+        private const val MAX_UTTERANCE_FRAMES = FRAMES_PER_SECOND * 2      // 2 s
+        private const val TRAILING_SILENCE_FRAMES = FRAMES_PER_SECOND / 4   // 250 ms
+
+        /** Audio kept before the trigger, so the first syllable isn't clipped off. */
+        private const val PREROLL_SECONDS = 1
+
+        /** Quiet period after a check that found nothing. Grows in a noisy room. */
+        private const val BASE_REFRACTORY_MS = 1_500L
+        private const val MAX_REFRACTORY_MS = 12_000L
+
+        /** Longest a verification runs before it is abandoned. */
+        private const val VERIFY_WINDOW_MS = 3_500L
+
+        /** After a wake, and after Lain starts talking, so she doesn't answer herself. */
         private const val COOLDOWN_MS = 1_200L
 
-        /** Backoff ceiling when the recorder or recogniser keeps failing. */
+        /**
+         * Ceiling on audio fed to one check: about two seconds at 16 kHz mono.
+         *
+         * Sized under a pipe's ~64 KB buffer on purpose, so the write never blocks
+         * the read loop.
+         */
+        private const val MAX_VERIFY_BYTES = 60_000
+
         private const val MAX_BACKOFF_MS = 30_000L
         private const val BASE_BACKOFF_MS = 500L
+
+        /** The pipe path exists from Android 13; below that a handover is unavoidable. */
+        private val PIPE_AVAILABLE = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
     }
 
     private val main = Handler(Looper.getMainLooper())
 
-    @Volatile
-    private var running = false
-
-    @Volatile
-    private var suspended = false
+    @Volatile private var running = false
+    @Volatile private var suspended = false
 
     private var loop: Job? = null
+    private var recorder: AudioRecord? = null
+    private var effects: List<AudioEffect> = emptyList()
     private var recogniser: SpeechRecognizer? = null
+
     private var backoff = BASE_BACKOFF_MS
+    private var refractory = BASE_REFRACTORY_MS
+    private var quietUntil = 0L
+
+    /** Set by the verification listener; read by the loop. */
+    private val verdict = AtomicReference<String?>(null)
+
+    /** A piped check is in flight: the loop keeps reading and feeds the recogniser. */
+    @Volatile private var verifying = false
+
+    /**
+     * A pre-Android-13 check is in flight: the recogniser has the microphone and the
+     * loop must not try to reopen it. Separate from [verifying] because the two
+     * states are opposites — one keeps the recorder, the other gives it up — and
+     * sharing a flag between them is how the loop and the recogniser ended up
+     * fighting over the same device.
+     */
+    @Volatile private var handingOver = false
+
+    private var audioSink: FileOutputStream? = null
+
+    /**
+     * Bytes fed to the recogniser this check.
+     *
+     * A pipe holds about 64 KB. Writing past that blocks the loop thread — the
+     * detector would stall mid-check with the microphone open — so the sink is closed
+     * at the cap instead, which the recogniser reads as end-of-audio and answers.
+     */
+    private var bytesWritten = 0
 
     fun hasPermission(): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
@@ -138,10 +185,17 @@ class WakeWordDetector(
         running = true
         suspended = false
         backoff = BASE_BACKOFF_MS
-        loop = scope.launch(Dispatchers.Default) { listenLoop() }
+        refractory = BASE_REFRACTORY_MS
+        loop = scope.launch(Dispatchers.Default) { run() }
     }
 
-    /** Stops for a while — during a command, or while the screen is off. */
+    /**
+     * Stands down and lets go of the microphone.
+     *
+     * Used for the transitions where something else genuinely needs it — the command
+     * recogniser, the screen going off — and nowhere else. It is not part of the
+     * detection cycle any more, which is the entire point of this rewrite.
+     */
     fun suspendDetection() {
         suspended = true
     }
@@ -154,151 +208,199 @@ class WakeWordDetector(
     fun stop() {
         running = false
         suspended = false
+        handingOver = false
         loop?.cancel()
         loop = null
-        tearDownRecogniser()
+        closeRecorder()
+        main.post { tearDownRecogniser() }
         WakeWordManager.releaseMicrophone(WakeWordManager.OWNER_WAKE_WORD)
     }
 
-    // ------------------------------------------------------------- stage one
+    /** Held after a wake and after each reply starts, so she doesn't answer herself. */
+    suspend fun cooldown() = delay(COOLDOWN_MS)
 
-    private suspend fun listenLoop() {
+    // ----------------------------------------------------------------- the loop
+
+    private suspend fun run() {
+        val frame = ShortArray(FRAME_SAMPLES)
+        val preroll = AudioRing(SAMPLE_RATE * PREROLL_SECONDS)
+
+        var floor = MIN_FLOOR_DB
+        var speechFrames = 0
+        var silenceFrames = 0
+        var inUtterance = false
+
         while (scope.isActive && running) {
-            if (suspended) {
-                delay(200)
-                continue
-            }
-            if (!hasPermission()) {
-                // Revoked while running. Not an error to retry in a tight loop: the
-                // user has to go and grant it, so back off and keep checking cheaply.
-                onError("Microphone permission was revoked")
-                delay(5_000)
-                continue
-            }
-            // Somebody else has the mic — the command recogniser, or another app.
-            // Waiting is correct; fighting for it is not.
-            if (!WakeWordManager.claimMicrophone(WakeWordManager.OWNER_WAKE_WORD)) {
-                delay(400)
+            // The only two reasons the recorder is ever closed: somebody else needs
+            // the microphone, or the permission went away.
+            if (suspended || !hasPermission()) {
+                if (recorder != null) closeRecorder()
+                if (!hasPermission() && running) onError("Microphone permission was revoked")
+                inUtterance = false
+                speechFrames = 0
+                delay(250)
                 continue
             }
 
-            val outcome = runCatching { awaitSpeech() }
-
-            // Released before stage two starts. One microphone user at a time is not
-            // a style preference — a recogniser started while an AudioRecord is open
-            // returns ERROR_RECOGNIZER_BUSY on most devices and nothing at all on the
-            // rest.
-            WakeWordManager.releaseMicrophone(WakeWordManager.OWNER_WAKE_WORD)
-
-            val failure = outcome.exceptionOrNull()
-            if (failure != null) {
-                onError(failure.message ?: "Microphone unavailable")
-                delay(backoff)
-                backoff = (backoff * 2).coerceAtMost(MAX_BACKOFF_MS)
+            // The legacy check has the microphone. Reopening here would race it and
+            // one of the two would lose, unpredictably.
+            if (handingOver) {
+                delay(50)
                 continue
             }
-            backoff = BASE_BACKOFF_MS
 
-            if (outcome.getOrDefault(false) != true || suspended || !running) continue
-
-            val transcript = recogniseOnce()
-            if (transcript != null && isWakePhrase(transcript)) {
-                suspended = true
-                withContext(Dispatchers.Main) { onWake(transcript) }
+            if (recorder == null) {
+                if (!WakeWordManager.claimMicrophone(WakeWordManager.OWNER_WAKE_WORD)) {
+                    delay(400)
+                    continue
+                }
+                if (!openRecorder()) {
+                    WakeWordManager.releaseMicrophone(WakeWordManager.OWNER_WAKE_WORD)
+                    delay(backoff)
+                    backoff = (backoff * 2).coerceAtMost(MAX_BACKOFF_MS)
+                    continue
+                }
+                backoff = BASE_BACKOFF_MS
+                preroll.clear()
+                floor = MIN_FLOOR_DB
             }
-            delay(120)
+
+            val active = recorder ?: continue
+            val read = active.read(frame, 0, FRAME_SAMPLES)
+            if (read <= 0) {
+                // A negative read is the recorder being invalidated under us — a call
+                // arriving, a headset going. Close and let the loop rebuild it.
+                if (read < 0) {
+                    closeRecorder()
+                    onError("The microphone was taken")
+                    delay(backoff)
+                    backoff = (backoff * 2).coerceAtMost(MAX_BACKOFF_MS)
+                }
+                continue
+            }
+
+            preroll.write(frame, read)
+
+            // While a check is in flight the same frames go to the recogniser, so
+            // there is one reader and no second microphone.
+            if (verifying) {
+                writeToSink(frame, read)
+                verdict.getAndSet(null)?.let { transcript ->
+                    finishVerification()
+                    if (transcript.isNotEmpty() && isWakePhrase(transcript)) {
+                        refractory = BASE_REFRACTORY_MS
+                        suspended = true
+                        main.post { onWake(transcript) }
+                    } else {
+                        // Nothing there. Back off a little further each time, so a
+                        // room full of talking costs less rather than more.
+                        refractory = (refractory * 2).coerceAtMost(MAX_REFRACTORY_MS)
+                        quietUntil = System.currentTimeMillis() + refractory
+                    }
+                    inUtterance = false
+                    speechFrames = 0
+                    silenceFrames = 0
+                }
+                continue
+            }
+
+            val db = levelDb(frame, read)
+            val speaking = db > floor + SPEECH_MARGIN_DB
+
+            if (speaking) {
+                speechFrames++
+                silenceFrames = 0
+                if (speechFrames >= MIN_UTTERANCE_FRAMES) inUtterance = true
+                // Too long to be somebody saying a name: a sentence, a TV, music.
+                if (speechFrames > MAX_UTTERANCE_FRAMES) inUtterance = false
+            } else {
+                silenceFrames++
+                // Only quiet frames teach the floor. Learning from speech would let a
+                // long sentence raise the threshold above itself.
+                val rate = if (db > floor) FLOOR_RISE else FLOOR_FALL
+                floor = (floor + (db - floor) * rate).coerceAtLeast(MIN_FLOOR_DB)
+
+                if (inUtterance && silenceFrames >= TRAILING_SILENCE_FRAMES) {
+                    inUtterance = false
+                    speechFrames = 0
+                    if (System.currentTimeMillis() >= quietUntil) {
+                        beginVerification(preroll.snapshot())
+                    }
+                } else if (silenceFrames >= TRAILING_SILENCE_FRAMES) {
+                    speechFrames = 0
+                }
+            }
         }
+
+        closeRecorder()
     }
 
-    /**
-     * Blocks on the microphone until somebody talks, or until detection is stopped.
-     *
-     * @return true when speech was heard, false when the loop should simply go round
-     *   again (suspended, stopped, or the mic taken).
-     */
-    private suspend fun awaitSpeech(): Boolean {
-        val minBuffer = AudioRecord.getMinBufferSize(
-            SAMPLE_RATE,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT
-        )
-        if (minBuffer <= 0) throw IllegalStateException("This device won't open a 16 kHz mono recorder")
+    // ---------------------------------------------------------------- recorder
 
-        val bufferSize = maxOf(minBuffer, FRAME_SAMPLES * 2 * 4)
-        val recorder = try {
+    private fun openRecorder(): Boolean {
+        val minBuffer = AudioRecord.getMinBufferSize(
+            SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
+        )
+        if (minBuffer <= 0) {
+            onError("This device won't open a 16 kHz mono recorder")
+            return false
+        }
+        val built = runCatching {
             @Suppress("MissingPermission")
             AudioRecord(
                 // VOICE_RECOGNITION rather than MIC: the platform applies its
-                // recognition tuning, and on most devices routes the echo canceller,
-                // which is what stops her hearing herself.
+                // recognition tuning and, on most devices, routes the echo canceller —
+                // which is what stops her hearing her own replies.
                 MediaRecorder.AudioSource.VOICE_RECOGNITION,
                 SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
-                bufferSize
+                maxOf(minBuffer, FRAME_SAMPLES * 2 * 8)
             )
-        } catch (t: Throwable) {
-            throw IllegalStateException("Microphone is not available")
+        }.getOrNull() ?: run {
+            onError("The microphone is not available")
+            return false
         }
 
-        if (recorder.state != AudioRecord.STATE_INITIALIZED) {
-            runCatching { recorder.release() }
-            throw IllegalStateException("Another app is using the microphone")
+        if (built.state != AudioRecord.STATE_INITIALIZED) {
+            runCatching { built.release() }
+            onError("Another app is using the microphone")
+            return false
         }
 
-        val effects = attachEffects(recorder.audioSessionId)
+        // Created once with the recorder, not once per check. Allocating and freeing
+        // these on every candidate was a large part of the churn.
+        effects = attachEffects(built.audioSessionId)
 
-        return try {
-            recorder.startRecording()
-            if (recorder.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+        return runCatching {
+            built.startRecording()
+            if (built.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
                 throw IllegalStateException("The microphone didn't start")
             }
-
-            val frame = ShortArray(FRAME_SAMPLES)
-            var floor = MIN_FLOOR_DB
-            var speechFrames = 0
-            var quietFrames = 0
-
-            while (scope.isActive && running && !suspended) {
-                val read = recorder.read(frame, 0, FRAME_SAMPLES)
-                if (read <= 0) {
-                    // A negative read is the recorder having been invalidated under
-                    // us, which is what happens when a call comes in.
-                    if (read < 0) throw IllegalStateException("The microphone was taken")
-                    continue
-                }
-
-                val db = levelDb(frame, read)
-                val speaking = db > floor + SPEECH_MARGIN_DB
-
-                if (speaking) {
-                    speechFrames++
-                    quietFrames = 0
-                    if (speechFrames >= FRAMES_TO_TRIGGER) return true
-                } else {
-                    quietFrames++
-                    if (quietFrames >= FRAMES_TO_RESET) speechFrames = 0
-                    // The floor only learns from quiet. Learning from speech would
-                    // let a long sentence raise the threshold above itself.
-                    val rate = if (db > floor) FLOOR_RISE else FLOOR_FALL
-                    floor = (floor + (db - floor) * rate).coerceAtLeast(MIN_FLOOR_DB)
-                }
-            }
+            recorder = built
+            true
+        }.getOrElse {
+            runCatching { built.release() }
+            effects.forEach { e -> runCatching { e.release() } }
+            effects = emptyList()
+            onError(it.message ?: "The microphone didn't start")
             false
-        } finally {
-            runCatching { recorder.stop() }
-            runCatching { recorder.release() }
-            effects.forEach { runCatching { it.release() } }
         }
     }
 
-    /**
-     * Echo cancellation and noise suppression, where the device has them.
-     *
-     * Both are optional hardware features. Their absence is not an error — it makes
-     * self-triggering more likely, which the spoken-text check below still catches.
-     */
-    private fun attachEffects(sessionId: Int): List<android.media.audiofx.AudioEffect> = buildList {
+    private fun closeRecorder() {
+        finishVerification()
+        recorder?.let {
+            runCatching { it.stop() }
+            runCatching { it.release() }
+        }
+        recorder = null
+        effects.forEach { runCatching { it.release() } }
+        effects = emptyList()
+        WakeWordManager.releaseMicrophone(WakeWordManager.OWNER_WAKE_WORD)
+    }
+
+    private fun attachEffects(sessionId: Int): List<AudioEffect> = buildList {
         runCatching {
             if (AcousticEchoCanceler.isAvailable()) {
                 AcousticEchoCanceler.create(sessionId)?.also { it.enabled = true; add(it) }
@@ -311,7 +413,7 @@ class WakeWordDetector(
         }
     }
 
-    /** RMS of one frame, in dBFS. The only thing stage one ever computes. */
+    /** RMS of one frame in dBFS. The only thing the idle path ever computes. */
     private fun levelDb(frame: ShortArray, count: Int): Double {
         var sum = 0.0
         for (i in 0 until count) {
@@ -319,93 +421,207 @@ class WakeWordDetector(
             sum += sample * sample
         }
         val rms = sqrt(sum / count)
-        if (rms <= 0.0) return -100.0
-        return 20.0 * kotlin.math.log10(rms)
+        return if (rms <= 0.0) -100.0 else 20.0 * log10(rms)
     }
 
-    // ------------------------------------------------------------- stage two
+    // ------------------------------------------------------------ verification
 
     /**
-     * One short recognition, on-device where the platform offers it.
+     * Checks one candidate utterance for her name.
      *
-     * Runs only after stage one heard a voice, so this is a handful of times an
-     * hour in a quiet room rather than continuously. The result is examined and
-     * dropped; nothing is stored and nothing is sent anywhere.
+     * On Android 13+ this hands the recogniser a pipe and keeps the microphone
+     * exactly where it was. Below that it has to release the recorder, because no
+     * older API lets a recogniser read from anywhere but the mic — so the loop above
+     * works hard to make sure it rarely gets here.
      */
-    private suspend fun recogniseOnce(): String? = withContext(Dispatchers.Main) {
-        if (!SpeechRecognizer.isRecognitionAvailable(context)) return@withContext null
-        if (!WakeWordManager.claimMicrophone(WakeWordManager.OWNER_WAKE_WORD)) return@withContext null
+    private fun beginVerification(preroll: ShortArray) {
+        if (verifying) return
+        if (!SpeechRecognizer.isRecognitionAvailable(context)) return
 
-        val result = kotlinx.coroutines.withTimeoutOrNull(RECOGNISE_WINDOW_MS) {
-            kotlinx.coroutines.suspendCancellableCoroutine { cont ->
-                val engine = runCatching { buildRecogniser() }.getOrNull()
-                if (engine == null) {
-                    if (cont.isActive) cont.resume(null) { _, _, _ -> }
-                    return@suspendCancellableCoroutine
-                }
-                recogniser = engine
-
-                var settled = false
-                fun settle(value: String?) {
-                    if (settled) return
-                    settled = true
-                    if (cont.isActive) cont.resume(value) { _, _, _ -> }
-                }
-
-                engine.setRecognitionListener(object : RecognitionListener {
-                    override fun onPartialResults(partialResults: Bundle) {
-                        val best = best(partialResults) ?: return
-                        // Settling on a partial is what makes waking feel instant:
-                        // there is no reason to wait out the trailing silence once
-                        // the name has already been said.
-                        if (isWakePhrase(best)) settle(best)
-                    }
-
-                    override fun onResults(results: Bundle) = settle(best(results))
-                    override fun onError(error: Int) = settle(null)
-                    override fun onReadyForSpeech(params: Bundle?) = Unit
-                    override fun onBeginningOfSpeech() = Unit
-                    override fun onRmsChanged(rmsdB: Float) = Unit
-                    override fun onBufferReceived(buffer: ByteArray?) = Unit
-                    override fun onEndOfSpeech() = Unit
-                    override fun onEvent(eventType: Int, params: Bundle?) = Unit
-                })
-
-                cont.invokeOnCancellation { main.post { tearDownRecogniser() } }
-                runCatching { engine.startListening(recogniserIntent()) }
-                    .onFailure { settle(null) }
-            }
+        if (!PIPE_AVAILABLE) {
+            handingOver = true
+            scope.launch { verifyByHandover() }
+            return
         }
 
-        tearDownRecogniser()
-        WakeWordManager.releaseMicrophone(WakeWordManager.OWNER_WAKE_WORD)
-        result
+        val pipe = runCatching { ParcelFileDescriptor.createPipe() }.getOrNull() ?: return
+        val readEnd = pipe[0]
+        val writeEnd = pipe[1]
+
+        verdict.set(null)
+        bytesWritten = 0
+        audioSink = FileOutputStream(writeEnd.fileDescriptor)
+        verifying = true
+
+        // The moment *before* the trigger. Written here, on the loop thread, and
+        // before the recogniser starts — the pipe buffers it. Doing this from the
+        // main thread instead meant two threads writing one stream and interleaving
+        // their frames into noise.
+        writeToSink(preroll, preroll.size)
+
+        main.post {
+            val engine = runCatching { buildRecogniser() }.getOrNull()
+            if (engine == null) {
+                verdict.compareAndSet(null, "")
+                runCatching { readEnd.close() }
+                return@post
+            }
+            recogniser = engine
+            engine.setRecognitionListener(listener())
+            val intent = baseIntent().apply {
+                putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, readEnd)
+                putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
+                putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, SAMPLE_RATE)
+                putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1)
+            }
+            runCatching { engine.startListening(intent) }.onFailure { verdict.compareAndSet(null, "") }
+            // Our copy of the read end; the recogniser holds its own.
+            runCatching { readEnd.close() }
+        }
+
+        scope.launch {
+            delay(VERIFY_WINDOW_MS)
+            // Nothing came back. Treat it as "not her name" rather than leaving the
+            // loop feeding a recogniser forever.
+            if (verifying) verdict.compareAndSet(null, "")
+        }
+    }
+
+    private fun writeToSink(frame: ShortArray, count: Int) {
+        val sink = audioSink ?: return
+        val bytes = ByteArray(count * 2)
+        for (i in 0 until count) {
+            val v = frame[i].toInt()
+            bytes[i * 2] = (v and 0xFF).toByte()
+            bytes[i * 2 + 1] = ((v shr 8) and 0xFF).toByte()
+        }
+        runCatching { sink.write(bytes) }.onFailure {
+            // The recogniser closed its end: it has decided, and the verdict is on
+            // its way through the listener.
+            runCatching { sink.close() }
+            audioSink = null
+            return
+        }
+        bytesWritten += bytes.size
+        if (bytesWritten >= MAX_VERIFY_BYTES) {
+            // Enough for anyone to have said a name. Closing is what tells the
+            // recogniser the audio has ended, so it answers instead of waiting — and
+            // it is what stops a full pipe blocking this thread with the mic open.
+            runCatching { sink.close() }
+            audioSink = null
+        }
+    }
+
+    private fun finishVerification() {
+        verifying = false
+        audioSink?.let { runCatching { it.close() } }
+        audioSink = null
+        main.post { tearDownRecogniser() }
+    }
+
+    /**
+     * The pre-Android-13 path: release the microphone, listen, take it back.
+     *
+     * Kept deliberately simple because it should be rare. It is also the reason the
+     * utterance gate and the refractory period exist — on those devices, every one of
+     * these is a microphone cycle the user can see in the privacy indicator.
+     */
+    private suspend fun verifyByHandover() {
+        closeRecorder()
+        val heard = kotlinx.coroutines.withTimeoutOrNull(VERIFY_WINDOW_MS) {
+            kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+                main.post {
+                    val engine = runCatching { buildRecogniser() }.getOrNull()
+                    if (engine == null) {
+                        if (cont.isActive) cont.resume("") { _, _, _ -> }
+                        return@post
+                    }
+                    recogniser = engine
+                    var settled = false
+                    // Hoisted out of the listener so the startListening failure below
+                    // can resume the same continuation. A recogniser that refuses to
+                    // start must not leave the loop waiting out the whole window.
+                    val settle: (String) -> Unit = { value ->
+                        if (!settled) {
+                            settled = true
+                            if (cont.isActive) cont.resume(value) { _, _, _ -> }
+                        }
+                    }
+                    engine.setRecognitionListener(object : RecognitionListener {
+                        override fun onPartialResults(partialResults: Bundle) {
+                            val hit = best(partialResults)?.takeIf { isWakePhrase(it) }
+                            if (hit != null) settle(hit)
+                        }
+                        override fun onResults(results: Bundle) = settle(best(results).orEmpty())
+                        override fun onError(error: Int) = settle("")
+                        override fun onReadyForSpeech(params: Bundle?) = Unit
+                        override fun onBeginningOfSpeech() = Unit
+                        override fun onRmsChanged(rmsdB: Float) = Unit
+                        override fun onBufferReceived(buffer: ByteArray?) = Unit
+                        override fun onEndOfSpeech() = Unit
+                        override fun onEvent(eventType: Int, params: Bundle?) = Unit
+                    })
+                    runCatching { engine.startListening(baseIntent()) }.onFailure { settle("") }
+                }
+            }
+        }.orEmpty()
+
+        main.post { tearDownRecogniser() }
+        handingOver = false
+
+        if (heard.isNotEmpty() && isWakePhrase(heard)) {
+            refractory = BASE_REFRACTORY_MS
+            suspended = true
+            main.post { onWake(heard) }
+        } else {
+            refractory = (refractory * 2).coerceAtMost(MAX_REFRACTORY_MS)
+            quietUntil = System.currentTimeMillis() + refractory
+        }
+    }
+
+    private fun listener() = object : RecognitionListener {
+        override fun onPartialResults(partialResults: Bundle) {
+            // Settling on a partial is what makes waking feel instant: no reason to
+            // wait out the trailing silence once the name has already been said.
+            best(partialResults)?.takeIf { isWakePhrase(it) }?.let { verdict.compareAndSet(null, it) }
+        }
+        override fun onResults(results: Bundle) {
+            verdict.compareAndSet(null, best(results).orEmpty())
+        }
+        override fun onError(error: Int) {
+            verdict.compareAndSet(null, "")
+        }
+        override fun onReadyForSpeech(params: Bundle?) = Unit
+        override fun onBeginningOfSpeech() = Unit
+        override fun onRmsChanged(rmsdB: Float) = Unit
+        override fun onBufferReceived(buffer: ByteArray?) = Unit
+        override fun onEndOfSpeech() = Unit
+        override fun onEvent(eventType: Int, params: Bundle?) = Unit
     }
 
     private fun buildRecogniser(): SpeechRecognizer =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
         ) {
-            // The whole point: on 13+ this never touches the network, so waiting for
-            // her name costs no data and leaks no audio.
+            // On 13+ this never touches the network, so waiting for her name costs no
+            // data and leaks no audio.
             SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
         } else {
             SpeechRecognizer.createSpeechRecognizer(context)
         }
 
-    private fun recogniserIntent() = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+    private fun baseIntent() = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-        // Asked for even below 13, where some OEM recognisers honour it.
         putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
         putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 600L)
     }
 
-    private fun best(bundle: Bundle): String? =
-        bundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-            ?.firstOrNull { isWakePhrase(it) }
-            ?: bundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+    private fun best(bundle: Bundle): String? {
+        val all = bundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: return null
+        return all.firstOrNull { isWakePhrase(it) } ?: all.firstOrNull()
+    }
 
     private fun tearDownRecogniser() {
         recogniser?.let {
@@ -418,11 +634,10 @@ class WakeWordDetector(
     /**
      * Her name, said to her.
      *
-     * Not a fixed phrase. "Hello Lain", "hi Lain", "sup Lain", "Lain, open
-     * WhatsApp" and the name on its own all wake her, because that is how people
-     * actually address someone. [LainName] already knows the difference between the
-     * name and the road it sounds like, so this asks it rather than keeping a second
-     * list that would drift.
+     * Not a fixed phrase. "Hello Lain", "hi Lain", "sup Lain", "Lain, open WhatsApp"
+     * and the name on its own all wake her. [LainName] already knows the difference
+     * between the name and the road it sounds like, so this asks it rather than
+     * keeping a second list that would drift.
      */
     private fun isWakePhrase(heard: String): Boolean {
         if (!LainName.isAddressed(heard)) return false
@@ -435,7 +650,43 @@ class WakeWordDetector(
         }
         return true
     }
+}
 
-    /** Held after a wake and after each reply starts, so she doesn't answer herself. */
-    suspend fun cooldown() = delay(COOLDOWN_MS)
+/**
+ * A fixed-size window of the most recent audio.
+ *
+ * Exists so the recogniser is handed the moment *before* the trigger fired. Without
+ * it verification starts partway through the word and hears the tail of the name
+ * rather than the name.
+ *
+ * Top-level and internal rather than nested and private, because getting the wrap
+ * wrong produces audio that is subtly out of order — which sounds like nothing at
+ * all to a recogniser and looks like "the wake word just doesn't work" from outside.
+ * That is worth a test, and a private inner class cannot have one.
+ */
+internal class AudioRing(private val capacity: Int) {
+    private val data = ShortArray(capacity)
+    private var head = 0
+    private var filled = 0
+
+    fun clear() {
+        head = 0
+        filled = 0
+    }
+
+    fun write(source: ShortArray, count: Int) {
+        for (i in 0 until count) {
+            data[head] = source[i]
+            head = (head + 1) % capacity
+            if (filled < capacity) filled++
+        }
+    }
+
+    /** Oldest-first copy of what is held. */
+    fun snapshot(): ShortArray {
+        val out = ShortArray(filled)
+        val start = (head - filled + capacity) % capacity
+        for (i in 0 until filled) out[i] = data[(start + i) % capacity]
+        return out
+    }
 }

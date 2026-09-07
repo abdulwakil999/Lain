@@ -334,12 +334,14 @@ class WakeWordService : Service() {
             .setContentTitle("Listening for your voice")
             // States exactly what is happening, because a microphone notification
             // that is vague about it is worse than none.
-            .setContentText("Say \"Lain\". Nothing is recorded or sent until she hears her name. Pauses when the screen is off.")
+            .setContentText("Say \"Lain\". The mic stays open but nothing is transcribed or sent until she hears her name. Pauses when the screen is off.")
             .setStyle(
                 NotificationCompat.BigTextStyle().bigText(
-                    "Say \"Lain\" — \"hey Lain\", \"sup Lain\", or just her name. Until she hears it, " +
-                        "the microphone is only measuring loudness on this phone: no transcription, " +
-                        "nothing stored, nothing sent anywhere. Pauses while the screen is off."
+                    "Say \"Lain\" — \"hey Lain\", \"sup Lain\", or just her name. The microphone " +
+                        "stays open in one steady stream rather than switching on and off, which is " +
+                        "both cheaper on battery and why the mic indicator stays lit. Until she hears " +
+                        "her name that stream is only measured for loudness on this phone: no " +
+                        "transcription, nothing stored, nothing sent. Pauses while the screen is off."
                 )
             )
             .setContentIntent(open)

@@ -505,8 +505,10 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             Text(
                 if (state.wakeWordEnabled) {
                     "Say \"Lain\" — or \"hey Lain\", \"sup Lain\" — and she starts listening. " +
-                        "Until she hears her name the microphone is only measuring loudness on this " +
-                        "phone: nothing is transcribed, stored or sent. Pauses while the screen is off."
+                        "The mic is held open in one steady stream instead of switching on and off, " +
+                        "so the indicator stays lit and the battery cost stays low. Until she hears " +
+                        "her name that stream is only measured for loudness on this phone: nothing " +
+                        "is transcribed, stored or sent. Pauses while the screen is off."
                 } else {
                     "Off. With it on she answers to her name without you touching the phone. " +
                         "Nothing leaves the device until she's actually been called."

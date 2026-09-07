@@ -3,6 +3,7 @@ package com.lain.assistant
 import com.lain.assistant.agent.LainName
 import com.lain.assistant.automation.WakeWordService
 import com.lain.assistant.voice.VoiceState
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -125,6 +126,41 @@ class VoiceSystemTest {
         assertEquals("Working…", VoiceState.EXECUTING.label)
         assertEquals("Speaking…", VoiceState.SPEAKING.label)
         assertEquals("Voice unavailable", VoiceState.ERROR.label)
+    }
+
+    // ------------------------------------------------------------- the pre-roll
+
+    @Test
+    fun `the pre-roll keeps the newest audio, oldest first`() {
+        // What the recogniser is handed. If the wrap is wrong the samples come back
+        // rotated, which a recogniser hears as nothing and a user reads as "the wake
+        // word doesn't work".
+        val ring = com.lain.assistant.voice.AudioRing(4)
+        ring.write(shortArrayOf(1, 2, 3, 4, 5, 6), 6)
+        assertArrayEquals(shortArrayOf(3, 4, 5, 6), ring.snapshot())
+    }
+
+    @Test
+    fun `a part-filled pre-roll returns only what it has`() {
+        val ring = com.lain.assistant.voice.AudioRing(8)
+        ring.write(shortArrayOf(7, 8, 9), 3)
+        assertArrayEquals(shortArrayOf(7, 8, 9), ring.snapshot())
+    }
+
+    @Test
+    fun `writes that wrap several times still land in order`() {
+        val ring = com.lain.assistant.voice.AudioRing(3)
+        repeat(4) { ring.write(shortArrayOf(1, 2, 3, 4, 5), 5) }
+        // The last three samples written, in the order they were spoken.
+        assertArrayEquals(shortArrayOf(3, 4, 5), ring.snapshot())
+    }
+
+    @Test
+    fun `clearing drops everything`() {
+        val ring = com.lain.assistant.voice.AudioRing(4)
+        ring.write(shortArrayOf(1, 2, 3), 3)
+        ring.clear()
+        assertArrayEquals(shortArrayOf(), ring.snapshot())
     }
 
     // -------------------------------------------------------------- the voice
