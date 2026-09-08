@@ -3,6 +3,7 @@ package com.lain.assistant.network
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import com.lain.assistant.data.ApiKeys
 import com.lain.assistant.data.Provider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -35,45 +36,61 @@ class ConnectionTester(private val context: Context) {
         if (apiKey.isNullOrBlank()) return@withContext "No API key saved for ${provider.displayName}."
         if (modelId.isNullOrBlank()) return@withContext "No model selected."
 
+        // What is actually sent, and what was wrong with what was typed. The repair
+        // is reported either way: a key that only works after cleaning is a key the
+        // user should know was cleaned, and a key that fails anyway is much easier to
+        // think about once the invisible characters are ruled out.
+        val key = ApiKeys.clean(apiKey)
+        if (key.isEmpty()) {
+            return@withContext "That isn't a usable key — there's nothing in it but spaces or punctuation."
+        }
+        val note = listOfNotNull(ApiKeys.problem(apiKey), ApiKeys.mismatch(provider, apiKey))
+            .joinToString(" ")
+            .takeIf { it.isNotEmpty() }
+
         val isAnthropic = provider == Provider.ANTHROPIC
         val url = provider.apiBaseUrl.trimEnd('/') + if (isAnthropic) "/messages" else "/chat/completions"
 
         val body = buildJsonObject {
             put("model", modelId)
             put("max_tokens", 8)
+            put("messages", buildJsonArray {
+                add(buildJsonObject {
+                    put("role", "user")
+                    put("content", "hi")
+                })
+            })
+        }
+
+        val request = try {
+            val builder = Request.Builder()
+                .url(url)
+                .post(body.toString().toRequestBody("application/json".toMediaType()))
             if (isAnthropic) {
-                put("messages", buildJsonArray {
-                    add(buildJsonObject {
-                        put("role", "user")
-                        put("content", "hi")
-                    })
-                })
+                builder.addHeader("x-api-key", key).addHeader("anthropic-version", "2023-06-01")
             } else {
-                put("messages", buildJsonArray {
-                    add(buildJsonObject {
-                        put("role", "user")
-                        put("content", "hi")
-                    })
-                })
+                builder.addHeader("Authorization", "Bearer $key")
             }
+            builder.build()
+        } catch (t: Throwable) {
+            // OkHttp refuses a header value it cannot legally send. That used to throw
+            // out of here into a coroutine with nothing catching it, so a key with one
+            // stray character took the screen down instead of explaining itself.
+            return@withContext "That key has a character that can't be sent in a request " +
+                "header. Delete it and paste it again — a copy from a web page often " +
+                "brings an invisible one along."
         }
 
-        val builder = Request.Builder()
-            .url(url)
-            .post(body.toString().toRequestBody("application/json".toMediaType()))
-        if (isAnthropic) {
-            builder.addHeader("x-api-key", apiKey).addHeader("anthropic-version", "2023-06-01")
-        } else {
-            builder.addHeader("Authorization", "Bearer $apiKey")
-        }
-
-        http.executeWithRetry(builder.build(), maxAttempts = 2).fold(
+        val outcome = http.executeWithRetry(request, maxAttempts = 2).fold(
             onSuccess = { response ->
                 response.use {
                     val raw = it.body?.string().orEmpty()
                     when {
                         it.isSuccessful -> "Working — ${provider.displayName} replied on $modelId."
-                        it.code == 401 || it.code == 403 -> "Key rejected (HTTP ${it.code}). Check the API key."
+                        it.code == 401 || it.code == 403 ->
+                            "Key rejected (HTTP ${it.code}) by ${provider.displayName}. The key was " +
+                                "sent exactly as stored, so this is the key itself: check it hasn't " +
+                                "been revoked, and that it belongs to ${provider.displayName}."
                         it.code == 404 -> "Model \"$modelId\" not found on this account (HTTP 404). Pick another model."
                         it.code == 402 -> "Out of credit on ${provider.displayName} (HTTP 402)."
                         it.code == 429 -> "Rate limited (HTTP 429) — common on free models. Try a ★ model."
@@ -83,6 +100,7 @@ class ConnectionTester(private val context: Context) {
             },
             onFailure = { describeNetworkFailure(it) }
         )
+        if (note == null) outcome else "$outcome\n\n$note"
     }
 
     private fun hasNetwork(): Boolean {

@@ -20,11 +20,33 @@ class SecureKeyStore(context: Context) {
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
     )
 
+    /**
+     * Cleaned on the way in, so no caller has to remember to.
+     *
+     * It used to be stored verbatim and every call site was expected to trim it.
+     * That is the kind of rule that holds until somebody adds a sixth call site,
+     * and [ApiKeys] removes more than a trim can anyway.
+     */
     fun saveApiKey(provider: Provider, apiKey: String) {
-        prefs.edit().putString(keyFor(provider), apiKey).apply()
+        prefs.edit().putString(keyFor(provider), ApiKeys.clean(apiKey)).apply()
     }
 
-    fun getApiKey(provider: Provider): String? = prefs.getString(keyFor(provider), null)
+    /**
+     * Cleaned on the way out as well, and rewritten when it needed cleaning.
+     *
+     * The keys that are failing right now were stored before any of this existed,
+     * and their owners have no way to see what is wrong with them — the field shows
+     * dots. Repairing on read fixes those phones on the next request instead of
+     * asking everybody to notice, delete and retype a key that looks fine.
+     */
+    fun getApiKey(provider: Provider): String? {
+        val stored = prefs.getString(keyFor(provider), null) ?: return null
+        val cleaned = ApiKeys.clean(stored)
+        if (cleaned != stored) {
+            prefs.edit().putString(keyFor(provider), cleaned).apply()
+        }
+        return cleaned.takeIf { it.isNotEmpty() }
+    }
 
     fun clearApiKey(provider: Provider) {
         prefs.edit().remove(keyFor(provider)).apply()
@@ -39,10 +61,11 @@ class SecureKeyStore(context: Context) {
      * answering your questions".
      */
     fun saveVoiceKey(apiKey: String) {
-        prefs.edit().putString(VOICE_KEY, apiKey.trim()).apply()
+        prefs.edit().putString(VOICE_KEY, ApiKeys.clean(apiKey)).apply()
     }
 
-    fun getVoiceKey(): String? = prefs.getString(VOICE_KEY, null)?.takeIf { it.isNotBlank() }
+    fun getVoiceKey(): String? =
+        prefs.getString(VOICE_KEY, null)?.let(ApiKeys::clean)?.takeIf { it.isNotEmpty() }
 
     fun clearVoiceKey() {
         prefs.edit().remove(VOICE_KEY).apply()
@@ -56,6 +79,12 @@ class SecureKeyStore(context: Context) {
      * Encrypted alongside the model keys and never leaving the device except to the
      * service they belong to. Kept as free-form named slots rather than typed fields
      * so adding a platform later is a string, not a schema change.
+     */
+    /**
+     * Trimmed, not key-cleaned. One of these slots holds a Reddit password, and a
+     * password is allowed to contain a space — stripping one the way [ApiKeys] does
+     * would silently lock somebody out of their own account. Tokens that must be
+     * header-safe are cleaned by whoever supplies them.
      */
     fun saveChannel(slot: String, value: String) {
         prefs.edit().putString("channel_$slot", value.trim()).apply()

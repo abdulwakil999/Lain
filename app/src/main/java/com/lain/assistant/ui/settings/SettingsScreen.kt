@@ -175,6 +175,13 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             Spacer(Modifier.height(24.dp))
             SectionLabel("${state.provider.displayName} API key")
             PixelTextField(state.apiKey, viewModel::setApiKey, "API key", isPassword = true)
+            // The field masks what it holds, so anything wrong with the key is
+            // invisible unless the app says it out loud. This is what turns "my key
+            // is rejected" into something the person holding the phone can act on.
+            state.keyNote?.let { note ->
+                Spacer(Modifier.height(6.dp))
+                Text(note, style = MaterialTheme.typography.bodyMedium, color = LainSalmon)
+            }
             Spacer(Modifier.height(6.dp))
             // The step that otherwise stops people using the app: a field asking for a
             // key, and nowhere to get one. Points at whichever provider is selected.
@@ -215,7 +222,7 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
                 color = LainMuted
             )
             Spacer(Modifier.height(10.dp))
-            PixelTextField(state.fishKey, viewModel::setFishKey, "Fish Audio API key")
+            PixelTextField(state.fishKey, viewModel::setFishKey, "Fish Audio API key", isPassword = true)
             Spacer(Modifier.height(8.dp))
             PixelTextField(state.fishVoiceId, viewModel::setFishVoiceId, "Voice ID (blank = default)")
             Spacer(Modifier.height(6.dp))
@@ -268,7 +275,12 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
 
             SectionLabel("Kokoro TTS endpoint (optional)")
 
-            PixelTextField(state.kokoroEndpoint, viewModel::setKokoroEndpoint, "https://your-kokoro-server")
+            PixelTextField(
+                state.kokoroEndpoint,
+                viewModel::setKokoroEndpoint,
+                "https://your-kokoro-server",
+                keyboardType = KeyboardType.Uri
+            )
             Text(
                 "Leave blank to use the on-device Android voice.",
                 style = MaterialTheme.typography.bodyMedium,
@@ -458,19 +470,20 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
             PixelTextField(
                 state.discordWebhook,
                 viewModel::setDiscordWebhook,
-                "Discord webhook URL"
+                "Discord webhook URL",
+                keyboardType = KeyboardType.Uri
             )
             Spacer(Modifier.height(12.dp))
             Text("Reddit — a \"script\" app at reddit.com/prefs/apps.",
                 style = MaterialTheme.typography.bodyMedium, color = LainCream)
             Spacer(Modifier.height(6.dp))
-            PixelTextField(state.redditClientId, viewModel::setRedditClientId, "Reddit client ID")
+            PixelTextField(state.redditClientId, viewModel::setRedditClientId, "Reddit client ID", isPassword = true)
             Spacer(Modifier.height(6.dp))
-            PixelTextField(state.redditSecret, viewModel::setRedditSecret, "Reddit client secret")
+            PixelTextField(state.redditSecret, viewModel::setRedditSecret, "Reddit client secret", isPassword = true)
             Spacer(Modifier.height(6.dp))
             PixelTextField(state.redditUser, viewModel::setRedditUser, "Reddit username")
             Spacer(Modifier.height(6.dp))
-            PixelTextField(state.redditPassword, viewModel::setRedditPassword, "Reddit password")
+            PixelTextField(state.redditPassword, viewModel::setRedditPassword, "Reddit password", isPassword = true)
             Spacer(Modifier.height(6.dp))
             Text(
                 "Encrypted on your phone, sent only to Reddit. Every post is confirmed first.",
@@ -490,6 +503,12 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
                 onClick = viewModel::save,
                 enabled = state.loaded && state.canSave
             )
+            // A disabled button that never says why is the reason a key could go
+            // unsaved without anybody noticing.
+            state.whyCannotSave?.takeIf { state.loaded }?.let { reason ->
+                Spacer(Modifier.height(6.dp))
+                Text(reason, style = MaterialTheme.typography.bodyMedium, color = LainSalmon)
+            }
             Spacer(Modifier.height(8.dp))
             Text(
                 "Everything below takes effect as you tap it — no saving needed.",
@@ -507,7 +526,7 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
                 color = LainMuted
             )
             Spacer(Modifier.height(6.dp))
-            PixelTextField(state.auddKey, viewModel::setAuddKey, "AudD API token")
+            PixelTextField(state.auddKey, viewModel::setAuddKey, "AudD API token", isPassword = true)
             Spacer(Modifier.height(6.dp))
             Text(
                 "Register your API key here",

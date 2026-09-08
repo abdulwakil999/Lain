@@ -1646,15 +1646,34 @@ class ChatEngine(
         OTHER
     }
 
+    /** "HTTP 401: {...}" — the status the failure message opens with, when it has one. */
+    private val LEADING_STATUS = Regex("^http (\\d{3})\\b", RegexOption.IGNORE_CASE)
+
     private fun classify(message: String): ErrorClass {
         val m = message.lowercase()
+
+        // The status code the client reported, not any three digits that happen to
+        // appear in the body. A 404 whose JSON mentions "401" was being reported to
+        // the user as a rejected API key — sending somebody to check a key that was
+        // never the problem.
+        LEADING_STATUS.find(m)?.groupValues?.get(1)?.let { code ->
+            return when (code) {
+                "401", "403" -> ErrorClass.AUTH
+                "402" -> ErrorClass.CREDIT
+                "404" -> ErrorClass.MODEL_GONE
+                "429", "500", "502", "503", "504" -> ErrorClass.TRANSIENT
+                else -> ErrorClass.OTHER
+            }
+        }
+
         return when {
-            m.contains("404") || m.contains("no endpoints") || m.contains("model_not_found") ||
+            m.contains("no endpoints") || m.contains("model_not_found") ||
                 m.contains("not a valid model") || m.contains("is not available") -> ErrorClass.MODEL_GONE
-            m.contains("429") || m.contains("rate") || m.contains("503") || m.contains("502") ||
-                m.contains("overloaded") || m.contains("timeout") -> ErrorClass.TRANSIENT
-            m.contains("401") || m.contains("403") || m.contains("invalid api key") -> ErrorClass.AUTH
-            m.contains("402") || m.contains("insufficient") || m.contains("credit") -> ErrorClass.CREDIT
+            m.contains("rate limit") || m.contains("overloaded") || m.contains("timeout") -> ErrorClass.TRANSIENT
+            m.contains("invalid api key") || m.contains("invalid_api_key") ||
+                m.contains("no auth credentials") || m.contains("unauthorized") ||
+                m.contains("authentication") -> ErrorClass.AUTH
+            m.contains("insufficient") || m.contains("credit") -> ErrorClass.CREDIT
             else -> ErrorClass.OTHER
         }
     }

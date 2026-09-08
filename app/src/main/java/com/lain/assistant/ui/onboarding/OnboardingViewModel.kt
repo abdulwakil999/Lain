@@ -138,7 +138,7 @@ class OnboardingViewModel(private val container: AppContainer) : ViewModel() {
                 chosen,
                 s.availableModels.firstOrNull { it.id == chosen }
             )
-            container.secureKeyStore.saveApiKey(s.provider, s.apiKey.trim())
+            container.secureKeyStore.saveApiKey(s.provider, s.apiKey)
             container.userPreferencesRepository.markOnboarded()
             _state.update { it.copy(complete = true) }
         }

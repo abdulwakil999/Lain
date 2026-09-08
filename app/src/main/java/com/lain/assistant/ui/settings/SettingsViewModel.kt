@@ -79,8 +79,32 @@ data class SettingsUiState(
         get() = modelId?.let { ModelCapabilityRegistry.forModel(it, provider, infoFor(it)) }
 
     val canSave: Boolean
-        get() = name.isNotBlank() && nickname.isNotBlank() && gender != null &&
-            age.toIntOrNull()?.let { it in 1..120 } == true
+        get() = whyCannotSave == null
+
+    /**
+     * Why Save is refusing, in words, or null when it isn't.
+     *
+     * It used to be a bare boolean and the button simply did nothing when it was
+     * false — so somebody who opened Settings, pasted a key and pressed Save with an
+     * incomplete profile got no key saved, no error, and a rejected key on the next
+     * message. A refusal nobody can see is indistinguishable from a bug.
+     */
+    val whyCannotSave: String?
+        get() = when {
+            name.isBlank() -> "Your name is empty — fill it in and the rest saves with it."
+            nickname.isBlank() -> "The nickname is empty — fill it in and the rest saves with it."
+            gender == null -> "Pick one of the options above, then save."
+            age.toIntOrNull()?.let { it in 1..120 } != true ->
+                "That age isn't a number between 1 and 120."
+            else -> null
+        }
+
+    /** What is wrong with the key as typed, if anything — shown live under the field. */
+    val keyNote: String?
+        get() = listOfNotNull(
+            com.lain.assistant.data.ApiKeys.problem(apiKey),
+            com.lain.assistant.data.ApiKeys.mismatch(provider, apiKey)
+        ).joinToString(" ").takeIf { it.isNotEmpty() }
 }
 
 class SettingsViewModel(private val container: AppContainer) : ViewModel() {
@@ -210,7 +234,11 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             StoredChannelCredentials.REDDIT_SECRET to s.redditSecret,
             StoredChannelCredentials.REDDIT_USER to s.redditUser,
             StoredChannelCredentials.REDDIT_PASSWORD to s.redditPassword,
-            com.lain.assistant.data.SecureKeyStore.AUDD_KEY to s.auddKey
+            // Cleaned here rather than in the store: this one rides in a request
+            // and has to be header-safe, and the slot beside it holds a password
+            // that must keep whatever characters its owner chose.
+            com.lain.assistant.data.SecureKeyStore.AUDD_KEY to
+                com.lain.assistant.data.ApiKeys.clean(s.auddKey)
         ).forEach { (slot, value) ->
             if (value.isBlank()) keys.clearChannel(slot) else keys.saveChannel(slot, value)
         }
@@ -329,17 +357,30 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         _state.update { it.copy(isTesting = true, testResult = null) }
         viewModelScope.launch {
             val s = _state.value
-            container.secureKeyStore.saveApiKey(s.provider, s.apiKey.trim())
+            container.secureKeyStore.saveApiKey(s.provider, s.apiKey)
             s.modelId?.let { id ->
                 container.userPreferencesRepository.saveModelSelection(s.provider, id, s.infoFor(id))
             }
-            val result = container.connectionTester.test(s.provider, s.modelId, s.apiKey.trim())
+            val result = container.connectionTester.test(s.provider, s.modelId, s.apiKey)
             _state.update { it.copy(isTesting = false, testResult = result) }
         }
     }
 
     fun save() {
         val s = _state.value
+        // The credentials are saved before the profile check, deliberately. They are
+        // the part somebody came here to change, they are independent of the profile,
+        // and losing them to an empty nickname field is the failure this used to be.
+        viewModelScope.launch {
+            container.secureKeyStore.saveApiKey(s.provider, s.apiKey)
+            s.modelId?.let { id ->
+                container.userPreferencesRepository.saveModelSelection(s.provider, id, s.infoFor(id))
+            }
+            container.userPreferencesRepository.saveKokoroEndpoint(s.kokoroEndpoint.trim())
+            container.secureKeyStore.saveVoiceKey(s.fishKey)
+            container.userPreferencesRepository.saveFishVoiceId(s.fishVoiceId.trim())
+            saveChannelCredentials(s)
+        }
         if (!s.canSave) return
         val modelId = s.modelId ?: return
         viewModelScope.launch {
@@ -350,11 +391,6 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
                 nickname = s.nickname.trim()
             )
             container.userPreferencesRepository.saveModelSelection(s.provider, modelId, s.infoFor(modelId))
-            container.secureKeyStore.saveApiKey(s.provider, s.apiKey.trim())
-            container.userPreferencesRepository.saveKokoroEndpoint(s.kokoroEndpoint.trim())
-            container.secureKeyStore.saveVoiceKey(s.fishKey.trim())
-            container.userPreferencesRepository.saveFishVoiceId(s.fishVoiceId.trim())
-            saveChannelCredentials(s)
             _state.update { it.copy(justSaved = true) }
         }
     }

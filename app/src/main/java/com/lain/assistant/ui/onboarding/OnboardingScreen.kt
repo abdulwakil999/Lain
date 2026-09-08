@@ -277,6 +277,17 @@ private fun ModelChoice(
 private fun ApiKeyStep(provider: Provider, value: String, onChange: (String) -> Unit) {
     androidx.compose.foundation.layout.Column {
         PixelTextField(value, onChange, "${provider.displayName} API key", isPassword = true)
+        // Said here as well as in Settings, because this is where most keys are
+        // entered — and a key that arrives with an invisible character attached fails
+        // on the very first message, which reads as the app not working at all.
+        val note = listOfNotNull(
+            com.lain.assistant.data.ApiKeys.problem(value),
+            com.lain.assistant.data.ApiKeys.mismatch(provider, value)
+        ).joinToString(" ").takeIf { it.isNotEmpty() }
+        note?.let {
+            Spacer(Modifier.height(8.dp))
+            Text(it, style = MaterialTheme.typography.bodyMedium, color = LainSalmon)
+        }
         Spacer(Modifier.height(8.dp))
         Text(
             "Stored encrypted on this device only, never leaves your phone except in calls to $provider directly.",
