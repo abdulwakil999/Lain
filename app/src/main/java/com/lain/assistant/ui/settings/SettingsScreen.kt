@@ -141,11 +141,26 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
                     Text("Checking what's actually free right now…", style = MaterialTheme.typography.bodyMedium, color = LainMuted)
                 }
                 if (state.brokenModels.isNotEmpty()) {
+                    // Says what was actually observed — the provider refused these —
+                    // rather than asserting they were retired, which is only one of
+                    // the two reasons and often the wrong one. And it can be dismissed:
+                    // a notice with no way out is the app insisting on a fact the user
+                    // can see has stopped being true.
                     Text(
-                        "${state.brokenModels.size} model(s) stopped existing on the provider and are hidden. " +
-                            "Free models get retired without notice; Lain switched you off them automatically.",
+                        "${state.brokenModels.size} model(s) hidden — the provider refused them, " +
+                            "either retired or not served to this app. Lain switched you off them " +
+                            "automatically. They come back on their own within a week.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = LainSalmon
+                    )
+                    Text(
+                        "Show them again",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = LainSalmon,
+                        modifier = Modifier
+                            .clickable { viewModel.clearHiddenModels() }
+                            .padding(vertical = 4.dp)
+                            .semantics { contentDescription = "Un-hide the models that were refused" }
                     )
                 }
                 state.availableModels.forEach { model ->

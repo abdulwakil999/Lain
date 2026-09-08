@@ -211,6 +211,18 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         _state.update { it.copy(modelId = modelId, brokenModels = it.brokenModels - modelId, justSaved = false) }
         viewModelScope.launch { container.userPreferencesRepository.clearModelBroken(modelId) }
     }
+    /**
+     * Puts every hidden model back in the picker.
+     *
+     * The marks expire on their own, but a week is a long time to look at a notice
+     * about a model that started working again this morning — and the user asking to
+     * see them is better evidence than a timer.
+     */
+    fun clearHiddenModels() {
+        _state.update { it.copy(brokenModels = emptySet()) }
+        viewModelScope.launch { container.userPreferencesRepository.clearAllBrokenModels() }
+    }
+
     fun setApiKey(value: String) = _state.update { it.copy(apiKey = value, justSaved = false) }
     fun setKokoroEndpoint(value: String) = _state.update { it.copy(kokoroEndpoint = value, justSaved = false) }
     fun setFishKey(value: String) = _state.update { it.copy(fishKey = value, justSaved = false) }

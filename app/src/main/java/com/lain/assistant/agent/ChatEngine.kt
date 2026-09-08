@@ -1696,6 +1696,10 @@ class ChatEngine(
     /** "HTTP 401: {...}" — the status the failure message opens with, when it has one. */
     private val LEADING_STATUS = Regex("^http (\\d{3})\\b", RegexOption.IGNORE_CASE)
 
+    /** The provider's body, out of a "HTTP <code>: <body>" failure message. */
+    private fun bodyOf(message: String): String =
+        message.substringAfter(':', "").trim()
+
     private fun classify(message: String): ErrorClass {
         val m = message.lowercase()
 
@@ -1704,6 +1708,15 @@ class ChatEngine(
         // the user as a rejected API key — sending somebody to check a key that was
         // never the problem.
         LEADING_STATUS.find(m)?.groupValues?.get(1)?.let { code ->
+            // A 403 that says the model is restricted to approved apps is not about
+            // the key at all — it is this model being unusable from here, for good,
+            // and the only cure is a different model. Treated as such so she switches
+            // rather than failing the same way on every message.
+            if (code == "403" &&
+                com.lain.assistant.network.ProviderError.refusesThisModel(403, bodyOf(message))
+            ) {
+                return ErrorClass.MODEL_GONE
+            }
             return when (code) {
                 "401", "403" -> ErrorClass.AUTH
                 "402" -> ErrorClass.CREDIT
@@ -1772,13 +1785,16 @@ class ChatEngine(
                 prefs.markModelBroken(modelId)
                 val alternative = pickAlternative(provider, modelId)
                     ?: return StreamOutcomeWithModel(
+                        // Says what the provider said rather than asserting the model
+                        // was retired — it may instead be one this app is not allowed
+                        // to use, and those are different things to be told.
                         StreamOutcome.Failed(
-                            "\"$modelId\" no longer exists on ${provider.displayName} — free models get retired " +
-                                "without notice. Open Settings and pick another one."
+                            explainFailure(first.message, provider) +
+                                " Open Settings and pick another model."
                         ),
                         modelId, false
                     )
-                setStatus("That model's gone — using ${alternative.label}…")
+                setStatus("Switching off that model — using ${alternative.label}…")
                 val second = streamAnswer(client, alternative.id, apiKey, systemPrompt, history, tools, tuning, trace, speakable)
                 if (second is StreamOutcome.Failed) {
                     StreamOutcomeWithModel(

@@ -55,10 +55,21 @@ object ProviderError {
             401 -> "$name did not recognise that key (HTTP 401).$quoted Check it hasn't " +
                 "been deleted or regenerated, and that it belongs to $name."
 
-            403 -> "$name accepted the key and refused the request (HTTP 403).$quoted " +
-                "This is not the key — a key it doesn't know comes back as a 401. It is " +
-                "usually the account itself: a spend or region restriction, moderation on " +
-                "the model, or a key limited to something other than chat."
+            403 -> if (isModelRestricted(said)) {
+                // The one that actually turned up: OpenRouter gates some free models
+                // to approved "agentic harnesses" and refuses everybody else. Nothing
+                // in the catalogue says so beforehand — this 403 is the only place it
+                // is ever stated — so the message has to name it plainly, because no
+                // amount of looking at the key or the account will explain it.
+                "That model won't serve this app (HTTP 403).$quoted It is restricted to " +
+                    "apps the provider has approved, which Lain is not. Nothing is wrong " +
+                    "with your key or your account — pick another model."
+            } else {
+                "$name accepted the key and refused the request (HTTP 403).$quoted " +
+                    "This is not the key — a key it doesn't know comes back as a 401. It is " +
+                    "usually the account itself: a spend or region restriction, moderation on " +
+                    "the model, or a key limited to something other than chat."
+            }
 
             402 -> "No credit left on $name (HTTP 402).$quoted Top up, or pick a free model."
 
@@ -80,6 +91,27 @@ object ProviderError {
 
             else -> "HTTP $code from $name.$quoted"
         }
+    }
+
+    /**
+     * Whether the failure means this model, specifically, is not usable from here.
+     *
+     * Distinct from a bad key and from a dead slug: the model exists, the key works,
+     * and the provider will still never answer. It has to be learnable, because the
+     * catalogue does not carry it — asked for its metadata, a gated model looks
+     * exactly like an open one. The only place it is ever said is in this refusal.
+     */
+    fun refusesThisModel(code: Int, body: String): Boolean =
+        code == 403 && isModelRestricted(messageIn(body))
+
+    /** The provider's ways of saying "not for you". */
+    private fun isModelRestricted(said: String?): Boolean {
+        val text = said?.lowercase() ?: return false
+        return text.contains("only available on") ||
+            text.contains("agentic harness") ||
+            text.contains("not available to your") ||
+            text.contains("approved app") ||
+            (text.contains("only available") && text.contains("app"))
     }
 
     /**

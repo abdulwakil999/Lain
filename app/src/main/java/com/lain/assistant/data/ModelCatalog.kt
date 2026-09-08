@@ -76,11 +76,15 @@ object ModelCatalog {
         // the ones with the biggest benchmark. A reasoning model asked to be somebody
         // narrates its way there and arrives flat; an instruction-tuned chat model
         // just answers in voice, which is the whole job on this tier. Gemma leads for
-        // that reason and Inkling backs it up on length.
+        // that reason, with Dots3-Note behind it on length.
         ModelInfo("google/gemma-4-31b-it:free", "Gemma 4 31B (Free)", Provider.OPENROUTER, isFree = true, supportsVision = true, contextTokens = 262_144),
         ModelInfo("google/gemma-4-26b-a4b-it:free", "Gemma 4 26B (Free)", Provider.OPENROUTER, isFree = true, supportsVision = true, contextTokens = 262_144),
-        ModelInfo("thinkingmachines/inkling:free", "Inkling (Free)", Provider.OPENROUTER, isFree = true, supportsVision = true, contextTokens = 1_048_576),
-        ModelInfo("thinkingmachines/inkling-small:free", "Inkling Small (Free)", Provider.OPENROUTER, isFree = true, supportsVision = true, contextTokens = 1_048_576),
+        // Inkling and Inkling Small are deliberately absent. They are listed as free
+        // and answer a request for their metadata like any other model, but asked to
+        // actually generate they return 403: "only available on agentic harnesses".
+        // Nothing in the catalogue says so — the refusal is the only place it is
+        // stated — so the app learns it at runtime and hides them, and there is no
+        // sense shipping a list that puts them in front of somebody first.
         ModelInfo("nvidia/nemotron-3-ultra-550b-a55b:free", "Nemotron 3 Ultra 550B (Free)", Provider.OPENROUTER, isFree = true, contextTokens = 1_000_000),
         ModelInfo("nvidia/nemotron-3.5-lightning:free", "Nemotron 3.5 Lightning (Free)", Provider.OPENROUTER, isFree = true, contextTokens = 1_000_000),
         ModelInfo("dots-studio/dots-3-note-preview:free", "Dots3-Note (Free)", Provider.OPENROUTER, isFree = true, supportsVision = true, contextTokens = 512_000),

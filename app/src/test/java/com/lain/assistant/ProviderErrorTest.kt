@@ -51,6 +51,35 @@ class ProviderErrorTest {
     }
 
     @Test
+    fun `a model the provider will not serve this app is named as such`() {
+        // OpenRouter's actual words, from a real report. The catalogue lists this
+        // model as free and says nothing about the restriction — the refusal is the
+        // only place it is ever stated.
+        val body = """{"error":{"message":"thinkingmachines/inkling:free is only available on agentic harnesses. Try plugging it into a coding agent or productivity app listed on https://openrouter.ai/apps","code":403}}"""
+        val said = ProviderError.describe(403, body, Provider.OPENROUTER)
+        assertTrue(said, said.contains("restricted to"))
+        // It must clear the user's key and account, because neither is involved.
+        assertTrue(said, said.contains("Nothing is wrong with your key"))
+        assertTrue(said, said.contains("pick another model", ignoreCase = true))
+
+        // And it has to be recognisable as a model problem, so the app switches off
+        // the model instead of failing the same way on every message.
+        assertTrue(ProviderError.refusesThisModel(403, body))
+    }
+
+    @Test
+    fun `an ordinary 403 is not mistaken for a restricted model`() {
+        val body = """{"error":{"message":"Account restricted","code":403}}"""
+        assertFalse(ProviderError.refusesThisModel(403, body))
+        // Nor is any other status, whatever it says.
+        assertFalse(
+            ProviderError.refusesThisModel(
+                429, """{"error":{"message":"only available on agentic harnesses"}}"""
+            )
+        )
+    }
+
+    @Test
     fun `a page instead of an answer is reported as a blocked request`() {
         val blocked = ProviderError.describe(
             403,

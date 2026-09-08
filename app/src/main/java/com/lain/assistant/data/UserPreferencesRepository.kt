@@ -14,6 +14,17 @@ private val Context.dataStore by preferencesDataStore(name = "lain_prefs")
 
 class UserPreferencesRepository(private val context: Context) {
 
+    private companion object {
+        /**
+         * How long a model stays hidden after refusing to answer.
+         *
+         * A week. Long enough that a retired slug isn't retried on every launch,
+         * short enough that a free tier coming back — which happens constantly — is
+         * noticed without the user having to go and clear anything.
+         */
+        const val BROKEN_TTL_MS = 7L * 24 * 60 * 60 * 1000
+    }
+
     private object Keys {
         val NAME = stringPreferencesKey("name")
         val AGE = intPreferencesKey("age")
@@ -226,27 +237,61 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     /**
-     * Models that returned a "this model does not exist here" error in anger.
+     * Models that failed in anger in a way that means "don't pick this again".
      *
-     * Free-tier slugs are retired without notice, and the picker's live fetch only
-     * tells us what exists now — not that the thing already selected has since
-     * stopped existing. Remembering the failure means the dead entry is hidden from
-     * the picker and never silently re-selected, instead of the user hitting the
-     * same HTTP 404 on every message until they work out what changed.
+     * Two things produce one: a slug that has been retired (HTTP 404), and a model
+     * the provider will not serve to this app at all — OpenRouter gates some free
+     * models to approved "agentic harnesses" and answers everybody else with a 403.
+     * Neither is visible in the catalogue beforehand; both are only learnable by
+     * being refused, so being refused has to be remembered.
+     *
+     * **Marks expire.** They used to be permanent, and that was wrong in both
+     * directions: a retired free slug frequently comes back, and a hidden model with
+     * a banner that never goes away is the app insisting on a fact that has since
+     * stopped being true. Each mark carries the time it was made and lapses after
+     * [BROKEN_TTL_MS], so the picker heals itself without anybody having to know it
+     * needs healing.
+     *
+     * Stored as "id|timestamp" strings in one set, so the shape on disk stays a
+     * string set and an older install's plain ids still parse — they simply read as
+     * having been marked at the epoch, and lapse on the next read.
      */
-    val brokenModels: Flow<Set<String>> = context.dataStore.data.map { it[Keys.BROKEN_MODELS] ?: emptySet() }
+    val brokenModels: Flow<Set<String>> = context.dataStore.data.map { prefs ->
+        val now = System.currentTimeMillis()
+        (prefs[Keys.BROKEN_MODELS] ?: emptySet())
+            .mapNotNull { entry -> parseMark(entry)?.takeIf { now - it.second < BROKEN_TTL_MS }?.first }
+            .toSet()
+    }
 
     suspend fun markModelBroken(modelId: String) {
         context.dataStore.edit { prefs ->
-            prefs[Keys.BROKEN_MODELS] = (prefs[Keys.BROKEN_MODELS] ?: emptySet()) + modelId
+            val kept = (prefs[Keys.BROKEN_MODELS] ?: emptySet())
+                .filter { parseMark(it)?.first != modelId }
+            prefs[Keys.BROKEN_MODELS] = (kept + "$modelId|${System.currentTimeMillis()}").toSet()
         }
     }
 
     /** Called when a model is deliberately re-selected, so a since-restored slug gets another chance. */
     suspend fun clearModelBroken(modelId: String) {
         context.dataStore.edit { prefs ->
-            prefs[Keys.BROKEN_MODELS] = (prefs[Keys.BROKEN_MODELS] ?: emptySet()) - modelId
+            prefs[Keys.BROKEN_MODELS] = (prefs[Keys.BROKEN_MODELS] ?: emptySet())
+                .filter { parseMark(it)?.first != modelId }
+                .toSet()
         }
+    }
+
+    /** Un-hides everything at once, for the user who would rather judge for themselves. */
+    suspend fun clearAllBrokenModels() {
+        context.dataStore.edit { prefs -> prefs[Keys.BROKEN_MODELS] = emptySet() }
+    }
+
+    /** "id|timestamp", or a bare id from a version that did not record the time. */
+    private fun parseMark(entry: String): Pair<String, Long>? {
+        val cut = entry.lastIndexOf('|')
+        if (cut <= 0) return entry.takeIf { it.isNotBlank() }?.let { it to 0L }
+        val id = entry.take(cut)
+        val at = entry.drop(cut + 1).toLongOrNull() ?: return id to 0L
+        return id to at
     }
 
     suspend fun markOnboarded() {
