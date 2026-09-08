@@ -1,7 +1,10 @@
 package com.lain.assistant.network
 
+import android.os.Build
+import com.lain.assistant.BuildConfig
 import okhttp3.ConnectionPool
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -28,7 +31,31 @@ object Http {
      * should be short: if the socket hasn't opened in a few seconds, the network is
      * the problem and waiting longer won't fix it.
      */
+    /**
+     * Who is calling, said properly.
+     *
+     * Left alone, OkHttp identifies itself as "okhttp/4.x" and nothing else. Edge
+     * networks in front of these APIs — and the DNS filters, VPNs and school or ISP
+     * proxies users sit behind — treat an unidentified library client as a bot far
+     * more readily than an app that says what it is, and the way that arrives is a
+     * 403 with an HTML body that looks exactly like the provider rejecting a key.
+     *
+     * This is not a proven cause of any particular report. It is the cheapest way to
+     * stop being the anonymous client, and it costs one header.
+     */
+    private val identify = Interceptor { chain ->
+        chain.proceed(
+            chain.request().newBuilder()
+                .header(
+                    "User-Agent",
+                    "Lain/${BuildConfig.VERSION_NAME} (Android ${Build.VERSION.RELEASE}; ${Build.MODEL})"
+                )
+                .build()
+        )
+    }
+
     val shared: OkHttpClient = OkHttpClient.Builder()
+        .addInterceptor(identify)
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .writeTimeout(15, TimeUnit.SECONDS)

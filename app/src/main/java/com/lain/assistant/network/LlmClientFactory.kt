@@ -19,9 +19,13 @@ object LlmClientFactory {
     fun create(provider: Provider): LlmClient = cache.getOrPut(provider) {
         when (provider) {
             Provider.ANTHROPIC -> AnthropicClient(provider.apiBaseUrl)
+            // OpenRouter uses these two for attribution. The referer used to claim
+            // "https://lain.app", a domain this project does not own — a made-up
+            // origin is exactly the kind of thing an edge network scores against you,
+            // and it was pointing at nothing anyway. This one is real.
             Provider.OPENROUTER -> OpenAiCompatibleClient(
                 baseUrl = provider.apiBaseUrl,
-                httpReferer = "https://lain.app",
+                httpReferer = "https://github.com/abdulwakil999/Lain",
                 appTitle = "Lain"
             )
             Provider.OPENAI, Provider.GEMINI, Provider.GROK -> OpenAiCompatibleClient(provider.apiBaseUrl)

@@ -1754,8 +1754,12 @@ class ChatEngine(
         if (first !is StreamOutcome.Failed) return StreamOutcomeWithModel(first, modelId, false)
 
         return when (classify(first.message)) {
+            // Deliberately not "your API key was rejected" any more. That was said
+            // for every auth-shaped status, and a 403 is not a bad key — a key the
+            // provider has never seen comes back 401. Telling somebody to re-paste a
+            // working key is worse than saying nothing, because it reads as an answer.
             ErrorClass.AUTH -> StreamOutcomeWithModel(
-                StreamOutcome.Failed("Your ${provider.displayName} API key was rejected. Check it in Settings."),
+                StreamOutcome.Failed(explainFailure(first.message, provider)),
                 modelId, false
             )
 
@@ -1801,8 +1805,27 @@ class ChatEngine(
                 StreamOutcomeWithModel(second, alternative.id, second !is StreamOutcome.Failed)
             }
 
-            ErrorClass.OTHER -> StreamOutcomeWithModel(first, modelId, false)
+            ErrorClass.OTHER -> StreamOutcomeWithModel(
+                StreamOutcome.Failed(explainFailure(first.message, provider)),
+                modelId, false
+            )
         }
+    }
+
+    /**
+     * A stream failure, put into words, using whatever the provider actually said.
+     *
+     * The clients report a failed request as "HTTP <code>: <body>". When that shape
+     * is there the body is the most useful thing anybody has — it is the provider
+     * explaining itself — so it is parsed and passed on rather than replaced with a
+     * guess. Anything else (a socket that never opened, a timeout) is already a
+     * sentence and is left alone.
+     */
+    private fun explainFailure(message: String, provider: com.lain.assistant.data.Provider): String {
+        val match = Regex("^HTTP (\\d{3}):\\s*(.*)$", RegexOption.DOT_MATCHES_ALL).find(message.trim())
+            ?: return message
+        val code = match.groupValues[1].toIntOrNull() ?: return message
+        return com.lain.assistant.network.ProviderError.describe(code, match.groupValues[2], provider)
     }
 
     /**

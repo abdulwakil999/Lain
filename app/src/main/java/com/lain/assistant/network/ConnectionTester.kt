@@ -85,17 +85,11 @@ class ConnectionTester(private val context: Context) {
             onSuccess = { response ->
                 response.use {
                     val raw = it.body?.string().orEmpty()
-                    when {
-                        it.isSuccessful -> "Working — ${provider.displayName} replied on $modelId."
-                        it.code == 401 || it.code == 403 ->
-                            "Key rejected (HTTP ${it.code}) by ${provider.displayName}. The key was " +
-                                "sent exactly as stored, so this is the key itself: check it hasn't " +
-                                "been revoked, and that it belongs to ${provider.displayName}."
-                        it.code == 404 -> "Model \"$modelId\" not found on this account (HTTP 404). Pick another model."
-                        it.code == 402 -> "Out of credit on ${provider.displayName} (HTTP 402)."
-                        it.code == 429 -> "Rate limited (HTTP 429) — common on free models. Try a ★ model."
-                        else -> "HTTP ${it.code}: ${raw.take(200)}"
-                    }
+                    if (it.isSuccessful) "Working — ${provider.displayName} replied on $modelId."
+                    // Whatever went wrong, the provider said why. Repeating its own
+                    // words beats a canned line about the key — which for a 403 was
+                    // simply untrue, and sent people to re-paste a working key.
+                    else ProviderError.describe(it.code, raw, provider)
                 }
             },
             onFailure = { describeNetworkFailure(it) }
