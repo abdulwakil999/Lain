@@ -2,9 +2,12 @@ package com.lain.assistant.automation
 
 import android.content.Context
 import android.content.Intent
+import android.media.AudioFormat
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.ParcelFileDescriptor
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -32,7 +35,20 @@ import kotlin.coroutines.resume
  * most of that pause.
  *
  * Partial results are enabled so the caller can show words as they're recognised.
+ *
+ * **It can read somebody else's stream.** Given an [audioSource] pipe it recognises
+ * from that instead of opening the microphone itself. That is what lets hands-free
+ * answer a command without the wake detector letting go of the recorder: one stream
+ * stays open the whole time, and the privacy indicator stays lit and steady instead
+ * of blinking off and on at every turn. Android 13 and up only — below that there is
+ * no such API and the microphone is opened here as before.
  */
+/**
+ * The piped stream was not accepted, so the same command is worth one more attempt
+ * on the microphone itself.
+ */
+class PipedAudioRefused(message: String) : IllegalStateException(message)
+
 class VoiceInputController(private val context: Context) {
 
     companion object {
@@ -52,6 +68,22 @@ class VoiceInputController(private val context: Context) {
          * ignore. This one is ours and cannot be ignored.
          */
         private const val LISTEN_CEILING_MS = 25_000L
+
+        /** What the wake detector captures at, and therefore what a piped stream is. */
+        const val PIPE_SAMPLE_RATE = 16_000
+
+        /**
+         * Recogniser errors that mean the piped audio was not accepted.
+         *
+         * Distinct from "nothing was said": these are the ones that say the stream
+         * itself was refused, and they are the signal to stop trying the pipe and go
+         * back to opening the microphone.
+         */
+        val AUDIO_REJECTED = setOf(
+            SpeechRecognizer.ERROR_AUDIO,
+            SpeechRecognizer.ERROR_CLIENT,
+            SpeechRecognizer.ERROR_CANNOT_CHECK_SUPPORT
+        )
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -101,9 +133,12 @@ class VoiceInputController(private val context: Context) {
      * calls back at all. Without a ceiling that is a permanent "Listening…" and a
      * microphone nobody ever releases.
      */
-    suspend fun listenOnce(onPartial: (String) -> Unit = {}): Result<String> {
+    suspend fun listenOnce(
+        onPartial: (String) -> Unit = {},
+        audioSource: ParcelFileDescriptor? = null
+    ): Result<String> {
         val result: Result<String>? =
-            kotlinx.coroutines.withTimeoutOrNull(LISTEN_CEILING_MS) { listenInternal(onPartial) }
+            kotlinx.coroutines.withTimeoutOrNull(LISTEN_CEILING_MS) { listenInternal(onPartial, audioSource) }
         if (result != null) return result
         // Timed out with no callback at all: cancel the recogniser so the next
         // attempt isn't refused as busy, and report it rather than hanging.
@@ -111,7 +146,10 @@ class VoiceInputController(private val context: Context) {
         return Result.failure(IllegalStateException("The recogniser stopped responding"))
     }
 
-    private suspend fun listenInternal(onPartial: (String) -> Unit): Result<String> =
+    private suspend fun listenInternal(
+        onPartial: (String) -> Unit,
+        audioSource: ParcelFileDescriptor?
+    ): Result<String> =
         suspendCancellableCoroutine<Result<String>> { cont ->
             if (!SpeechRecognizer.isRecognitionAvailable(context)) {
                 cont.resume(Result.failure(IllegalStateException("No speech recognition service on this device")))
@@ -138,6 +176,16 @@ class VoiceInputController(private val context: Context) {
                     putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, MINIMUM_LENGTH_MS)
                     // Only the top hypothesis is ever used.
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+
+                    // Reading a caller's stream rather than the microphone. The
+                    // format has to be stated because a pipe carries no header —
+                    // it is raw PCM and nothing else.
+                    if (audioSource != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, audioSource)
+                        putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
+                        putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, PIPE_SAMPLE_RATE)
+                        putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1)
+                    }
                 }
 
                 engine.setRecognitionListener(object : RecognitionListener {
@@ -177,7 +225,16 @@ class VoiceInputController(private val context: Context) {
                     }
 
                     override fun onError(error: Int) {
-                        settle(Result.failure(IllegalStateException(describe(error))))
+                        // Tagged so the caller can tell "the pipe was refused" from
+                        // "nobody said anything" and fall back to the microphone
+                        // rather than reporting a broken assistant.
+                        val fromPipe = audioSource != null && error in AUDIO_REJECTED
+                        settle(
+                            Result.failure(
+                                if (fromPipe) PipedAudioRefused(describe(error))
+                                else IllegalStateException(describe(error))
+                            )
+                        )
                     }
 
                     override fun onReadyForSpeech(params: Bundle?) = Unit

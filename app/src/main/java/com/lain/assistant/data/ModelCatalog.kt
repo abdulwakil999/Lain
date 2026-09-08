@@ -67,21 +67,32 @@ object ModelCatalog {
         // from OpenRouter at runtime (see OpenRouterModelsClient) and only
         // falls back to these hardcoded entries if that call fails, so this
         // set existing works today is a nice-to-have, not load-bearing.
-        // Verified against OpenRouter's live catalogue: every slug below currently
-        // resolves, is priced at zero, and advertises function-calling. Ordered
-        // biggest-context-first, which is the order the live fetch also uses, so the
-        // picker looks the same whether or not the network call succeeded.
+        // Verified against OpenRouter's live catalogue on the day of writing: every
+        // slug below resolves, is priced at zero, and advertises function-calling.
+        // Three that used to be here (glm-5.2:free, nemotron-3-nano-30b:free,
+        // gpt-oss-20b:free) had already stopped being free, which is what the
+        // picker's "stopped existing" notice was reporting.
+        // The free tier is ordered to put the ones that hold a character first, not
+        // the ones with the biggest benchmark. A reasoning model asked to be somebody
+        // narrates its way there and arrives flat; an instruction-tuned chat model
+        // just answers in voice, which is the whole job on this tier. Gemma leads for
+        // that reason and Inkling backs it up on length.
+        ModelInfo("google/gemma-4-31b-it:free", "Gemma 4 31B (Free)", Provider.OPENROUTER, isFree = true, supportsVision = true, contextTokens = 262_144),
+        ModelInfo("google/gemma-4-26b-a4b-it:free", "Gemma 4 26B (Free)", Provider.OPENROUTER, isFree = true, supportsVision = true, contextTokens = 262_144),
+        ModelInfo("thinkingmachines/inkling:free", "Inkling (Free)", Provider.OPENROUTER, isFree = true, supportsVision = true, contextTokens = 1_048_576),
+        ModelInfo("thinkingmachines/inkling-small:free", "Inkling Small (Free)", Provider.OPENROUTER, isFree = true, supportsVision = true, contextTokens = 1_048_576),
         ModelInfo("nvidia/nemotron-3-ultra-550b-a55b:free", "Nemotron 3 Ultra 550B (Free)", Provider.OPENROUTER, isFree = true, contextTokens = 1_000_000),
         ModelInfo("nvidia/nemotron-3.5-lightning:free", "Nemotron 3.5 Lightning (Free)", Provider.OPENROUTER, isFree = true, contextTokens = 1_000_000),
-        ModelInfo("google/gemma-4-31b-it:free", "Gemma 4 31B (Free)", Provider.OPENROUTER, isFree = true, supportsVision = true, contextTokens = 262_144),
+        ModelInfo("dots-studio/dots-3-note-preview:free", "Dots3-Note (Free)", Provider.OPENROUTER, isFree = true, supportsVision = true, contextTokens = 512_000),
         ModelInfo("nvidia/nemotron-3-super-120b-a12b:free", "Nemotron 3 Super 120B (Free)", Provider.OPENROUTER, isFree = true, contextTokens = 262_144),
-        ModelInfo("z-ai/glm-5.2:free", "GLM 5.2 (Free)", Provider.OPENROUTER, isFree = true, contextTokens = 256_000),
-        ModelInfo("nvidia/nemotron-3-nano-30b-a3b:free", "Nemotron 3 Nano 30B (Free)", Provider.OPENROUTER, isFree = true, contextTokens = 256_000),
-        ModelInfo("openai/gpt-oss-20b:free", "GPT-OSS 20B (Free)", Provider.OPENROUTER, isFree = true, contextTokens = 131_072),
+        ModelInfo("liquid/lfm-2.5-2.6b:free", "LFM 2.5 (Free)", Provider.OPENROUTER, isFree = true, contextTokens = 65_536),
 
         // --- OpenRouter: paid, and the only tier that reliably drives multi-step
         // automation. Slugs verified against OpenRouter's live catalogue. ---
         ModelInfo("anthropic/claude-sonnet-5", "Claude Sonnet 5", Provider.OPENROUTER, recommended = true, strongAtTools = true, supportsVision = true, contextTokens = 1_000_000),
+        ModelInfo("openai/gpt-6-astra", "GPT-6 Astra", Provider.OPENROUTER, strongAtTools = true, supportsVision = true, contextTokens = 1_050_000),
+        ModelInfo("openai/gpt-6-astra-pro", "GPT-6 Astra Pro", Provider.OPENROUTER, strongAtTools = true, supportsVision = true, contextTokens = 1_050_000),
+        ModelInfo("anthropic/claude-fable-5.1", "Claude Fable 5.1", Provider.OPENROUTER, strongAtTools = true, supportsVision = true, contextTokens = 1_000_000),
         ModelInfo("google/gemini-3.7-flash", "Gemini 3.7 Flash", Provider.OPENROUTER, strongAtTools = true, supportsVision = true, contextTokens = 1_048_576),
         ModelInfo("openai/gpt-5-mini", "GPT-5 Mini (cheap)", Provider.OPENROUTER, strongAtTools = true, supportsVision = true, contextTokens = 400_000),
         ModelInfo("openai/gpt-5", "GPT-5", Provider.OPENROUTER, strongAtTools = true, supportsVision = true, contextTokens = 400_000),
@@ -91,10 +102,13 @@ object ModelCatalog {
         // --- Anthropic direct ---
         ModelInfo("claude-sonnet-5", "Claude Sonnet 5", Provider.ANTHROPIC, recommended = true, strongAtTools = true),
         ModelInfo("claude-opus-5", "Claude Opus 5", Provider.ANTHROPIC, strongAtTools = true),
+        ModelInfo("claude-fable-5-1", "Claude Fable 5.1", Provider.ANTHROPIC, strongAtTools = true),
         ModelInfo("claude-haiku-4-5-20251001", "Claude Haiku 4.5", Provider.ANTHROPIC, strongAtTools = true),
 
         // --- OpenAI direct ---
-        ModelInfo("gpt-5", "GPT-5", Provider.OPENAI, recommended = true, strongAtTools = true),
+        ModelInfo("gpt-6-astra", "GPT-6 Astra", Provider.OPENAI, recommended = true, strongAtTools = true),
+        ModelInfo("gpt-6-astra-pro", "GPT-6 Astra Pro", Provider.OPENAI, strongAtTools = true),
+        ModelInfo("gpt-5", "GPT-5", Provider.OPENAI, strongAtTools = true),
         ModelInfo("gpt-5-mini", "GPT-5 Mini", Provider.OPENAI, strongAtTools = true),
 
         // --- Gemini direct ---

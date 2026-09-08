@@ -1,6 +1,7 @@
 package com.lain.assistant
 
 import com.lain.assistant.agent.LainName
+import com.lain.assistant.automation.WakeWordService
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -80,13 +81,13 @@ class LainNameTest {
     }
 
     @Test
-    fun `being addressed survives a mis-hearing`() {
+    fun `the wake phrase matches through a mis-hearing`() {
         // The recogniser's spelling of the name changes with the room. What matters
-        // is that all of them still count as her being spoken to.
-        assertTrue(LainName.isAddressed("hello lane"))
-        assertTrue(LainName.isAddressed("hey Lain"))
-        assertTrue(LainName.isAddressed("hi laine"))
-        assertFalse(LainName.isAddressed("what lane am I in"))
-        assertFalse(LainName.isAddressed("hello there"))
+        // is that all of them still wake her.
+        assertTrue(WakeWordService.matchesWakePhrase("hello lane"))
+        assertTrue(WakeWordService.matchesWakePhrase("hey Lain"))
+        assertTrue(WakeWordService.matchesWakePhrase("hi laine"))
+        assertFalse(WakeWordService.matchesWakePhrase("what lane am I in"))
+        assertFalse(WakeWordService.matchesWakePhrase("hello there"))
     }
 }

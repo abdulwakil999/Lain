@@ -147,6 +147,9 @@ object ModelCapabilityRegistry {
     private val strongIds = setOf(
         "anthropic/claude-sonnet-5", "claude-sonnet-5",
         "anthropic/claude-opus-5", "claude-opus-5",
+        "anthropic/claude-fable-5.1", "claude-fable-5-1",
+        "openai/gpt-6-astra", "gpt-6-astra",
+        "openai/gpt-6-astra-pro", "gpt-6-astra-pro",
         "openai/gpt-5", "gpt-5",
         "x-ai/grok-4.6", "grok-4.6"
     )

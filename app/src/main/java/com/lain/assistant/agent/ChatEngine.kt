@@ -3,6 +3,7 @@ package com.lain.assistant.agent
 import android.content.Context
 import com.lain.assistant.automation.Attachment
 import com.lain.assistant.automation.AttachmentReader
+import com.lain.assistant.automation.WakeWordService
 import com.lain.assistant.voice.VoiceSession
 import com.lain.assistant.automation.LainAccessibilityService
 import com.lain.assistant.automation.LocalActions
@@ -352,25 +353,60 @@ class ChatEngine(
         if (enabled && !_state.value.isBusy) startVoiceInput()
     }
 
-    fun startVoiceInput() {
-        if (_state.value.isBusy) return
+    /**
+     * Listens for one command.
+     *
+     * @param audioSource a stream to recognise from instead of opening the
+     *   microphone. Hands-free supplies the one its detector already has open, which
+     *   is what keeps the microphone from changing hands — and the privacy indicator
+     *   from blinking — between hearing her name and hearing the instruction. Null
+     *   means take the microphone, which is what a tap on the mic button does.
+     * @param onSourceFinished called once the turn has stopped reading [audioSource].
+     */
+    fun startVoiceInput(
+        audioSource: android.os.ParcelFileDescriptor? = null,
+        onSourceFinished: () -> Unit = {}
+    ) {
+        if (_state.value.isBusy) {
+            onSourceFinished()
+            return
+        }
         // Barge-in: if Lain is mid-sentence and the user hits the mic, she stops talking
         // rather than recording herself.
         silence()
-        // Taken from whoever holds it. This is the one path that is allowed to seize
-        // the microphone rather than negotiate for it, because it is the user asking:
-        // a stale claim from a recogniser that never called back must not be the
-        // reason a deliberate tap does nothing.
-        VoiceSession.forceReleaseMicrophone()
-        VoiceSession.claimMicrophone(VoiceSession.OWNER_COMMAND)
+        if (audioSource == null) {
+            // Taken from whoever holds it. This is the one path that is allowed to
+            // seize the microphone rather than negotiate for it, because it is the
+            // user asking: a stale claim from a recogniser that never called back must
+            // not be the reason a deliberate tap does nothing.
+            VoiceSession.forceReleaseMicrophone()
+            VoiceSession.claimMicrophone(VoiceSession.OWNER_COMMAND)
+        }
         publishVoice(com.lain.assistant.voice.VoiceState.LISTENING_FOR_COMMAND)
         _state.update { it.copy(isListening = true, error = null, statusLine = "Listening…") }
         activeJob = scope.launch {
             // Partial hypotheses go straight into the input box, so the user can see
             // they're being heard instead of watching a static "Listening…".
-            voiceInput.listenOnce(onPartial = { partial ->
-                _state.update { if (it.isListening) it.copy(input = partial) else it }
-            }).fold(
+            val outcome = voiceInput.listenOnce(
+                onPartial = { partial ->
+                    _state.update { if (it.isListening) it.copy(input = partial) else it }
+                },
+                audioSource = audioSource
+            )
+            onSourceFinished()
+
+            // The recogniser refused the piped audio. That is a device that does not
+            // implement EXTRA_AUDIO_SOURCE, not a user who said nothing — so the turn
+            // is retried the ordinary way rather than reported as a failure.
+            if (audioSource != null &&
+                outcome.exceptionOrNull() is com.lain.assistant.automation.PipedAudioRefused
+            ) {
+                _state.update { it.copy(isListening = false, statusLine = null) }
+                startVoiceInput()
+                return@launch
+            }
+
+            outcome.fold(
                 onSuccess = { heard ->
                     VoiceSession.releaseMicrophone(VoiceSession.OWNER_COMMAND)
                     publishVoice(com.lain.assistant.voice.VoiceState.PROCESSING)
@@ -453,6 +489,7 @@ class ChatEngine(
         speakJob = null
         speaker?.stop()
         ttsEngine?.stop()
+        VoiceSession.spokenAloud = ""
         if (_state.value.isSpeaking) _state.update { it.copy(isSpeaking = false) }
     }
 
@@ -484,10 +521,12 @@ class ChatEngine(
      * [VoiceSession] has something to time out against.
      */
     private fun publishVoice(state: com.lain.assistant.voice.VoiceState) {
-        // Only a turn that arrived by voice drives the voice state. A typed one has
-        // no microphone and no spoken reply, and letting it move this state was what
-        // put "Listening…" on screen for someone who had just used the keyboard.
-        if (deliveryMode != DeliveryMode.VOICE && !_state.value.isListening) return
+        // A typed turn has no microphone and no spoken reply, and letting it move
+        // this state was what put "Listening…" on screen for somebody who had just
+        // used the keyboard. Hands-free is the exception: while it is running the
+        // state drives the detector, so it has to see the whole turn.
+        val handsFree = WakeWordService.isRunning || _state.value.conversationMode
+        if (!handsFree && deliveryMode != DeliveryMode.VOICE && !_state.value.isListening) return
         VoiceSession.enter(state)
     }
 
@@ -504,11 +543,14 @@ class ChatEngine(
         // Whatever is mid-sentence stops first, or the two overlap.
         silence()
         _state.update { it.copy(isSpeaking = true) }
+        // The detector reads this so a reply containing her own name cannot wake her.
+        VoiceSession.spokenAloud = spoken
         speakJob = scope.launch {
             try {
                 engine.speak(spoken)
             } finally {
-                        _state.update { it.copy(isSpeaking = false) }
+                VoiceSession.spokenAloud = ""
+                _state.update { it.copy(isSpeaking = false) }
             }
         }
     }
@@ -1520,7 +1562,12 @@ class ChatEngine(
      */
     private fun endVoiceSession() {
         VoiceSession.releaseMicrophone(VoiceSession.OWNER_COMMAND)
-        VoiceSession.enter(com.lain.assistant.voice.VoiceState.IDLE)
+        // Back to the detector when hands-free is on — that is what applies the
+        // cooldown, so the tail of her own reply cannot wake her, and what puts the
+        // state back to "Say Lain". With hands-free off there is nothing to go back
+        // to, so voice simply goes idle.
+        val recover = VoiceSession.onRecover
+        if (recover != null) recover() else VoiceSession.enter(com.lain.assistant.voice.VoiceState.IDLE)
     }
 
     /**
@@ -2090,12 +2137,17 @@ class ChatEngine(
         speakJob?.cancel()
         _state.update { it.copy(isSpeaking = true) }
         publishVoice(com.lain.assistant.voice.VoiceState.SPEAKING)
+        // Handed to the detector: a phone's speaker is the loudest thing its own
+        // microphone hears, so without knowing her own words a reply containing her
+        // name wakes her up mid-sentence.
+        VoiceSession.spokenAloud = spoken
         speakJob = scope.launch {
             try {
                 engine.speak(spoken)
             } finally {
-                        // Covers the natural end, a cancellation from silence(), and a TTS error
-                // alike — the button must never be left showing over silence.
+                // Covers the natural end, a cancellation from silence(), and a TTS
+                // error alike — the button must never be left showing over silence.
+                VoiceSession.spokenAloud = ""
                 _state.update { it.copy(isSpeaking = false) }
             }
         }

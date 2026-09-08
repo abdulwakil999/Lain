@@ -3,14 +3,21 @@ package com.lain.assistant.voice
 /**
  * Where the voice pipeline is, as one value.
  *
- * Before this there was no such value. "Am I listening" lived in ChatEngine and "is
- * she speaking" lived in StreamingSpeaker — two sources that could and did disagree,
- * which is how a voice assistant ends up stuck on "Listening…" with the microphone
- * already released. One state, one owner, one place to put a watchdog.
+ * Before this there was no such value. "Am I listening" lived in ChatEngine, "is the
+ * detector running" lived in a static on the service, and "is she speaking" lived in
+ * StreamingSpeaker — three sources that could and did disagree, which is how a voice
+ * assistant ends up stuck on "Listening…" with the microphone already released. One
+ * state, one owner, one place to put a watchdog.
  */
 enum class VoiceState {
     /** Voice is off entirely. Nothing holds the microphone. */
     IDLE,
+
+    /** Hands-free is on: one open stream, measured for loudness and nothing else. */
+    LISTENING_FOR_WAKE_WORD,
+
+    /** Her name was heard. A momentary state — the chirp plays here. */
+    WAKE_WORD_DETECTED,
 
     /** Recording the command, with full speech recognition. */
     LISTENING_FOR_COMMAND,
@@ -31,6 +38,8 @@ enum class VoiceState {
     val label: String
         get() = when (this) {
             IDLE -> "Tap to talk"
+            LISTENING_FOR_WAKE_WORD -> "Say Lain"
+            WAKE_WORD_DETECTED -> "Listening…"
             LISTENING_FOR_COMMAND -> "Listening…"
             PROCESSING -> "Thinking…"
             EXECUTING -> "Working…"
@@ -40,7 +49,7 @@ enum class VoiceState {
 
     /** True while the microphone is genuinely in use, for the UI and the arbiter. */
     val holdsMicrophone: Boolean
-        get() = this == LISTENING_FOR_COMMAND
+        get() = this == LISTENING_FOR_WAKE_WORD || this == LISTENING_FOR_COMMAND
 
     /**
      * States that must not last.
@@ -51,6 +60,6 @@ enum class VoiceState {
      * hand-maintained one somewhere else.
      */
     val isTransient: Boolean
-        get() = this == LISTENING_FOR_COMMAND || this == PROCESSING ||
-            this == EXECUTING || this == SPEAKING
+        get() = this == WAKE_WORD_DETECTED || this == LISTENING_FOR_COMMAND ||
+            this == PROCESSING || this == EXECUTING || this == SPEAKING
 }

@@ -33,6 +33,8 @@ import androidx.compose.ui.platform.LocalContext
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.lain.assistant.automation.AccessibilityMonitor
@@ -40,6 +42,7 @@ import com.lain.assistant.automation.AccessibilityState
 import com.lain.assistant.automation.LainAccessibilityService
 import com.lain.assistant.automation.LainNotificationListener
 import com.lain.assistant.agent.AlwaysOnService
+import com.lain.assistant.automation.WakeWordService
 import com.lain.assistant.automation.OverlayBubbleService
 import com.lain.assistant.data.Gender
 import com.lain.assistant.data.Provider
@@ -536,6 +539,69 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
                     .clickable { openLink(context, "https://dashboard.audd.io/") }
                     .padding(vertical = 4.dp)
             )
+
+            Spacer(Modifier.height(24.dp))
+            SectionLabel("Hands-free")
+            Text(
+                if (state.wakeWordEnabled) {
+                    "On. Say \"Lain\" — \"hello Lain\", \"hey Lain\", \"sup Lain\", or just her name.\n\n" +
+                        "Nothing is recorded, saved or sent anywhere. Until she hears her name the " +
+                        "audio never leaves this phone and is never turned into words: each 20ms of " +
+                        "it is measured for loudness and thrown away.\n\n" +
+                        "The microphone stays open the whole time this is on, in one steady stream. " +
+                        "That is on purpose — opening and closing it for every sound is what made the " +
+                        "mic indicator blink and drained the battery. A lit indicator means the stream " +
+                        "is open, not that anything is being kept. Pauses while the screen is off."
+                } else {
+                    "Off. Turn it on and she answers to her name without you touching the phone. " +
+                        "The microphone stays open while it's on, and nothing is recorded or sent " +
+                        "anywhere until she actually hears \"Lain\"."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (state.wakeWordEnabled) LainCream else LainMuted
+            )
+            Spacer(Modifier.height(8.dp))
+            // Asked at the point of use, not at install, so the reason for the prompt
+            // is on screen while it appears.
+            val micPermission = rememberLauncherForActivityResult(
+                ActivityResultContracts.RequestPermission()
+            ) { granted ->
+                if (granted) {
+                    viewModel.setWakeWordEnabled(true)
+                    WakeWordService.start(context)
+                } else {
+                    viewModel.setWakeWordEnabled(false)
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                PixelChoiceChip("On", state.wakeWordEnabled, {
+                    micPermission.launch(android.Manifest.permission.RECORD_AUDIO)
+                }, modifier = Modifier.weight(1f))
+                PixelChoiceChip("Off", !state.wakeWordEnabled, {
+                    viewModel.setWakeWordEnabled(false)
+                    WakeWordService.stop(context)
+                }, modifier = Modifier.weight(1f))
+            }
+
+            // Visible while it's on, because "it doesn't work" is true and impossible
+            // to act on. This says whether anything is being heard at all, whether it
+            // reaches the recogniser, and what the recogniser said back.
+            if (state.wakeWordEnabled) {
+                val checks by com.lain.assistant.voice.VoiceSession.checks.collectAsState()
+                val wakes by com.lain.assistant.voice.VoiceSession.wakes.collectAsState()
+                val note by com.lain.assistant.voice.VoiceSession.diagnostic.collectAsState()
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    buildString {
+                        append("Heard-speech checks: ").append(checks)
+                        append(" · wakes: ").append(wakes)
+                        note?.let { append("\nLast: ").append(it) }
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = LainMuted,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                )
+            }
 
             Spacer(Modifier.height(24.dp))
             SectionLabel("Always on")
