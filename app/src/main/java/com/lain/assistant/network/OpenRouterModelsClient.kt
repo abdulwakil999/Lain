@@ -67,6 +67,26 @@ class OpenRouterModelsClient {
         }
     }
 
+    /**
+     * Models that are listed as free and will not actually answer this app.
+     *
+     * OpenRouter gates some free models to apps it has approved — "only available on
+     * agentic harnesses" — and nothing in the catalogue says so: the metadata of a
+     * gated model is indistinguishable from an open one. The refusal only arrives
+     * when somebody tries to use it, by which point they have picked it, saved it and
+     * watched it fail.
+     *
+     * The app learns these at runtime and hides them, so this list is not the only
+     * defence; it exists so the ones already known do not have to be discovered again
+     * by every user in turn. Matched on the vendor prefix because the gating is a
+     * property of the publisher's arrangement with OpenRouter rather than of any one
+     * slug, and the same vendor's next model arrives gated too.
+     */
+    private val gatedVendors = listOf("thinkingmachines/")
+
+    private fun isGated(id: String): Boolean =
+        gatedVendors.any { id.startsWith(it, ignoreCase = true) }
+
     internal fun parse(raw: String): List<ModelInfo> {
         val root = json.parseToJsonElement(raw).jsonObject
         val entries = root["data"]?.jsonArray ?: return emptyList()
@@ -75,16 +95,21 @@ class OpenRouterModelsClient {
             val obj = element.jsonObject
             val id = obj["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
             if (!id.endsWith(":free")) return@mapNotNull null
+            if (isGated(id)) return@mapNotNull null
 
             val pricing = obj["pricing"]?.jsonObject
             val promptPrice = pricing?.get("prompt")?.jsonPrimitive?.contentOrNull
             val completionPrice = pricing?.get("completion")?.jsonPrimitive?.contentOrNull
             if (promptPrice != "0" || completionPrice != "0") return@mapNotNull null
 
-            val supportsTools = obj["supported_parameters"]?.jsonArray
+            val parameters = obj["supported_parameters"]?.jsonArray
                 ?.mapNotNull { it.jsonPrimitive.contentOrNull }
-                ?.contains("tools") == true
-            if (!supportsTools) return@mapNotNull null
+                .orEmpty()
+            if (!parameters.contains("tools")) return@mapNotNull null
+            // Whether it thinks before it answers, which decides how much room a tool
+            // step has to be given. Taken from the catalogue rather than guessed: it
+            // is the one place the answer is stated.
+            val reasons = parameters.contains("reasoning") || parameters.contains("reasoning_effort")
 
             val context = obj["context_length"]?.jsonPrimitive?.intOrNull ?: 0
             if (context < MIN_USABLE_CONTEXT) return@mapNotNull null
@@ -105,7 +130,8 @@ class OpenRouterModelsClient {
                 provider = Provider.OPENROUTER,
                 isFree = true,
                 supportsVision = vision,
-                contextTokens = context
+                contextTokens = context,
+                emitsReasoning = reasons
             )
         }
             // Roomiest first. Context length is the one capability signal the API gives

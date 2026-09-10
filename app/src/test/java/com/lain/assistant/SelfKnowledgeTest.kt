@@ -136,10 +136,32 @@ class SelfKnowledgeTest {
     }
 
     @Test
-    fun `truncation doubles the room rather than nudging it`() {
+    fun `truncation opens the ceiling properly rather than nudging it`() {
+        // Quadruple, not double. Doubling was too timid where it mattered: a model cut
+        // off at the tool-step ceiling got twice as much, spent that thinking too, and
+        // the second failure was reported to the user as "try a shorter request" when
+        // the request was never the problem. Each guess costs a round trip, so the
+        // second one has to clear the bar.
         val first = TokenBudget.forRequest(RequestTuning.TOOL_STEP, strong, "do the thing")
         val second = TokenBudget.afterTruncation(first, strong)
-        assertEquals(first.maxTokens * 2, second.maxTokens)
+        assertEquals(first.maxTokens * 4, second.maxTokens)
+    }
+
+    @Test
+    fun `a thinking model is given room to think before it acts`() {
+        // The failure this fixes: reasoning tokens are generated against the same
+        // ceiling as the answer even when the provider is asked to withhold them, so a
+        // reasoning model on a 700-token tool step spends the lot thinking and emits no
+        // tool call. That is "it ran out of room before it got to the action".
+        val plain = ModelCapabilityRegistry.forModel("anthropic/claude-sonnet-5", Provider.OPENROUTER)
+        val thinker = plain.copy(emitsReasoning = true)
+
+        val direct = TokenBudget.forRequest(RequestTuning.TOOL_STEP, plain, "open whatsapp and text ade")
+        val thinking = TokenBudget.forRequest(RequestTuning.TOOL_STEP, thinker, "open whatsapp and text ade")
+        assertTrue(
+            "a thinking model got ${thinking.maxTokens}, no more than the ${direct.maxTokens} a direct one gets",
+            thinking.maxTokens > direct.maxTokens
+        )
     }
 
     @Test

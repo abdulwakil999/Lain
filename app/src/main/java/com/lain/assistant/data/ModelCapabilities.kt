@@ -41,6 +41,8 @@ data class ModelCapabilities(
     val reasoning: ReasoningTier,
     val speed: SpeedClass,
     val isFree: Boolean,
+    /** True when the model spends part of its budget thinking before it answers. */
+    val emitsReasoning: Boolean = false,
     /** Plain-language caveats, shown to the user rather than hidden. */
     val limitations: List<String> = emptyList()
 ) {
@@ -194,6 +196,7 @@ object ModelCapabilityRegistry {
             reasoning = tier,
             speed = inferSpeed(id, tier, isFree),
             isFree = isFree,
+            emitsReasoning = info?.emitsReasoning ?: false,
             limitations = limitationsFor(tier, isFree, context, vision)
         )
     }

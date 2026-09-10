@@ -831,7 +831,49 @@ object FastRouter {
 
     // -------------------------------------------------------------- identity
 
-    private fun identity(t: String): LocalIntent? = when {
+    /**
+     * A message that tells her to *do* something to the phone.
+     *
+     * This is the guard on every answer-from-a-constant below, and it exists because
+     * of a real failure: "open WhatsApp and tell abdulwakil what's the latest version
+     * of Lewa Coder" contains the words "lewa coder", so the topic matcher claimed it
+     * and she replied with a description of Lewa Coder. The WhatsApp message was
+     * never sent, and nothing said so — the answer looked like an answer.
+     *
+     * The rule that prevents the whole class of it: **a topic is not a command.**
+     * When a sentence carries an instruction, the subject it mentions is the content
+     * of that instruction, not a question being asked. Those messages belong to the
+     * agent loop, which has the tools to carry them out.
+     *
+     * Deliberately narrow. "Tell me about yourself" is a question and must stay one,
+     * so "tell" only counts when it is aimed at somebody who is not her; "what can
+     * you do" survives because there is no verb here at all.
+     */
+    private val instruction = Regex(
+        // Sending something to somebody: "text ade", "tell abdulwakil", "message mum".
+        "\\b(text|message|whatsapp|dm|email|sms|tell|ask|remind|forward)\\s+(?!me\\b|him\\b|her\\b|us\\b|them\\b|you\\b)[a-z]" +
+            // The same, aimed at somebody named after the verb: "send a message to ade".
+            "|\\b(send|write)\\s+.{0,30}\\bto\\s+[a-z]" +
+            // Reaching somebody directly.
+            "|\\b(call|ring|dial|phone)\\s+[a-z]" +
+            // Driving the phone.
+            "|\\b(open|launch|start)\\s+(whatsapp|telegram|instagram|messenger|signal|chrome|spotify|youtube|gmail|settings|camera|maps|the app)\\b" +
+            "|\\b(turn|switch)\\s+(on|off)\\b" +
+            "|\\bset\\s+(an?\\s+)?(alarm|timer|reminder)\\b" +
+            "|\\bplay\\s+[a-z]" +
+            "|\\bschedule\\b" +
+            "|\\btake\\s+(a\\s+)?(photo|picture|screenshot)\\b",
+        RegexOption.IGNORE_CASE
+    )
+
+    /**
+     * True when a topic answer must stand down and let the tools have the sentence.
+     *
+     * Asking her to relay a fact is not asking her for the fact.
+     */
+    internal fun carriesAnInstruction(t: String): Boolean = instruction.containsMatchIn(t)
+
+    private fun identity(t: String): LocalIntent? = if (carriesAnInstruction(t)) null else when {
         Regex("^(what('?s| is) )?my name( again)?\\??$").matches(t) ||
             t == "who am i" || t == "do you know my name" || t == "say my name" ->
             LocalIntent.Identity(IdentityQuestion.USER_NAME)

@@ -42,6 +42,15 @@ object TokenBudget {
      */
     private const val CEILING = 8_000
 
+    /**
+     * What a thinking model spends before its visible answer starts.
+     *
+     * A deliberately generous flat addition rather than a multiplier: the reasoning
+     * a model does to pick one tool call is roughly constant, and it does not scale
+     * with how long the answer that follows is meant to be.
+     */
+    private const val REASONING_HEADROOM = 1_500
+
     /** The user asking for less. Obeyed exactly; this is not a hint. */
     private val WANTS_SHORT = Regex(
         "\\b(brief(ly)?|short(ly)?|quick(ly)?|in one line|one line|one sentence|" +
@@ -76,6 +85,19 @@ object TokenBudget {
     fun forRequest(base: RequestTuning, caps: ModelCapabilities, message: String): RequestTuning {
         var tokens = base.maxTokens
 
+        // Room for the thinking, on models that do it out loud.
+        //
+        // A reasoning model generates its reasoning against the same ceiling as its
+        // answer — asking the provider to withhold it stops it being *shown*, not
+        // being *produced*. So a tool step budgeted at 700 tokens is a reasoning
+        // model spending 700 tokens thinking and emitting no tool call at all, which
+        // is exactly what "it ran out of room before it got to the action" was. Now
+        // nearly every free model reasons, and this is the difference between a free
+        // model that can act and one that cannot.
+        if (caps.emitsReasoning) {
+            tokens = maxOf(tokens, REASONING_HEADROOM + base.maxTokens)
+        }
+
         // A spoken answer is two sentences by design. Nothing in the text should talk
         // it upwards — a model reading four hundred tokens aloud is not what anybody
         // meant by "in detail", and the request came through a microphone.
@@ -99,12 +121,15 @@ object TokenBudget {
     /**
      * More room after a reply was cut off.
      *
-     * Doubling rather than nudging: the ceiling was wrong by an unknown amount, and
-     * each guess costs a whole request to test. Two tries at double should clear
-     * almost anything that was going to fit at all.
+     * Quadrupling rather than doubling. Doubling was too timid where it mattered
+     * most: a reasoning model cut off at 700 got 1,400, spent that thinking too, and
+     * the second failure was reported to the user as "try a shorter request" — when
+     * the request was fine and the ceiling was the problem both times. Each guess
+     * costs a whole round trip, so the second guess should be one that actually
+     * clears the bar.
      */
     fun afterTruncation(previous: RequestTuning, caps: ModelCapabilities): RequestTuning =
-        previous.copy(maxTokens = clamp(previous.maxTokens * 2, caps))
+        previous.copy(maxTokens = clamp(previous.maxTokens * 4, caps))
 
     /**
      * Keeps a budget inside what the model can actually deliver.
